@@ -1,5 +1,4 @@
 """Dependency-free MCP stdio adapter over the shared Buildr queue."""
-import hashlib
 import json
 import math
 import os
@@ -12,8 +11,9 @@ import time
 from . import __version__, advice, completion, plans
 from .metrics import snapshot
 from .plan_output import summary as plan_summary
-from .runner import cancel_job, submit_detached
+from .runner import cancel_job
 from .store import Store
+from .submissions import request_row, request_result, reserve, record, payload_digest, submit
 
 VERSIONS = ('2025-11-25', '2025-06-18')
 MAX_REQUEST = 262144
@@ -77,6 +77,22 @@ TOOLS = [
          dict(plan_id=HANDLE), ('plan_id',)),
     tool('buildr_plan_cancel', 'Explicitly cancel a plan, preventing new stages and requesting cancellation of its active jobs.',
          dict(plan_id=HANDLE), ('plan_id',), read=False),
+    tool('buildr_watch_submit', 'Observe external completion under a durable handle. Only explicitly declared repeatable read-only status probes run; 0 reports complete, 75 confirms pending. Idle watches reserve no build resources. Never use a launch/submission command as the probe.', dict(
+        request_key=KEY, cwd=CWD, external_ref=string(1000), read_only_probe=dict(type='boolean', enum=[True]),
+        command=dict(type='array',minItems=1,maxItems=128,items=dict(type='string',maxLength=4096)),
+        name=string(100), interval=dict(type='number',minimum=.1,maximum=3600),
+        timeout=dict(type='number',minimum=.1,maximum=86400), probe_timeout=dict(type='number',minimum=.1,maximum=300),
+        max_probes=dict(type='integer',minimum=1,maximum=1000),jobs=dict(type='integer',minimum=1,maximum=64),
+        memory_gb=dict(type='number',minimum=.01,maximum=1024),resource_key=string(),track_source=dict(type='boolean')),
+        ('request_key','cwd','external_ref','read_only_probe','command'), read=False),
+    tool('buildr_watch', 'Inspect an external watch, bounded probe history, native exits, idle time and actual local reservations.',
+        dict(watch_id=HANDLE), ('watch_id',)),
+    tool('buildr_watches', 'List bounded external watches without creating state or modifying job reservations.',
+        dict(active=dict(type='boolean',default=False),limit=dict(type='integer',minimum=1,maximum=50,default=10))),
+    tool('buildr_watch_cancel', 'Stop observing this watch and cancel only its active local status probe. The external task is not cancelled.',
+        dict(watch_id=HANDLE), ('watch_id',),read=False),
+    tool('buildr_watch_resume', 'Resume a stopped controller by observing its existing probe handles. Unknown or terminal results are not retried.',
+        dict(watch_id=HANDLE), ('watch_id',),read=False),
 ]
 
 
@@ -125,122 +141,6 @@ def compact(row):
     return result
 
 
-def request_row(store, key):
-    if store.db is None or not store.db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='mcp_requests'").fetchone():
-        raise ValueError('Unknown submission request key')
-    row = store.db.execute('SELECT * FROM mcp_requests WHERE request_key=?', (key,)).fetchone()
-    if row is None:
-        raise ValueError('Unknown submission request key')
-    return dict(row)
-
-
-def request_result(store, row):
-    result = json.loads(row['result'])
-    if row['state'] != 'submitted' and result.get('receipt_path'):
-        path = Path(result['receipt_path'])
-        if path.parent == store.root and path.name.startswith('receipt-mcp-'):
-            try:
-                if path.stat().st_size <= 8192:
-                    receipt = json.loads(path.read_text())
-                    job = store.get(receipt['job_id'])
-                    result.update(job_id=job['id'], log_path=job['log_path'], recovered_from_receipt=True)
-            except (OSError, ValueError, KeyError, TypeError):
-                pass
-    confirmed = row['state'] == 'submitted' or result.get('recovered_from_receipt') is True
-    return dict(request_key=row['request_key'], kind=row['kind'],
-                submission_state='submitted' if confirmed else 'uncertain',
-                replay_safe=True, result=result,
-                note='Keep this handle. Do not create a new request key to retry uncertain work. Disconnecting does not cancel it.')
-
-
-def reserve(store, kind, arguments, initial):
-    digest = payload_digest(kind, arguments)
-    key = arguments['request_key']
-    with store.transaction():
-        previous = store.db.execute('SELECT * FROM mcp_requests WHERE request_key=?', (key,)).fetchone()
-        if previous:
-            if previous['payload_sha256'] != digest or previous['kind'] != kind:
-                raise ValueError('Request key is already bound to different arguments; nothing was submitted')
-            return False
-        store.db.execute('INSERT INTO mcp_requests VALUES (?,?,?,?,?,?)',
-                         (key, kind, digest, time.time(), 'in_flight', json.dumps(initial)))
-    return True
-
-
-def record(store, key, state, result):
-    store.db.execute('UPDATE mcp_requests SET state=?,result=? WHERE request_key=?', (state, json.dumps(result), key))
-
-
-def payload_digest(kind, arguments):
-    return hashlib.sha256(json.dumps(dict(kind=kind, arguments=arguments), sort_keys=True, allow_nan=False).encode()).hexdigest()
-
-
-def submit(name, arguments):
-    if os.environ.get('AGENT_BUILDS_JOB_ID'):
-        raise ValueError('Already inside a queued job. MCP preserves the nested-submission guard.')
-    from .__main__ import parser
-    with_reader = Store(read_only=True)
-    try:
-        # Reconnects must work even if budgets or checkout paths changed after
-        # submission. Compare the original arguments before validating new work.
-        try:
-            previous = request_row(with_reader, arguments['request_key'])
-        except ValueError:
-            previous = None
-        if previous is not None:
-            if previous['payload_sha256'] != payload_digest(name, arguments) or previous['kind'] != name:
-                raise ValueError('Request key is already bound to different arguments; nothing was submitted')
-            return request_result(with_reader, previous)
-        root = Path(arguments['cwd']).expanduser()
-        if not root.is_absolute() or not root.is_dir():
-            raise ValueError('cwd must be an existing absolute directory')
-        config = with_reader.config()
-        if name == 'buildr_plan_submit':
-            definition = plans.validate(arguments['manifest'], root, config)
-        else:
-            if not arguments['command'][0] or sum(len(x) for x in arguments['command']) > 32768:
-                raise ValueError('Command must have an executable and at most 32 KiB of arguments')
-            lane = arguments.get('lane', 'quick')
-            jobs = arguments.get('jobs', config[lane+'_jobs'])
-            memory = arguments.get('memory_gb', 6 if lane == 'heavy' else 2)
-            if jobs > config['cpu_slots'] or memory > config['memory_gb']:
-                raise ValueError('Requested reservation exceeds the current machine budget')
-            if arguments.get('backend') == 'docker' and not arguments.get('image', config['docker_image']):
-                raise ValueError('Docker jobs require an explicit/configured image')
-            args = parser().parse_args(['run', '--', 'placeholder'])
-            for key in ('cwd', 'lane', 'jobs', 'memory_gb', 'timeout', 'backend', 'image', 'resource_key', 'min_free_gb', 'scratch_gb'):
-                if key in arguments:
-                    setattr(args, key, arguments[key])
-            args.lane = lane
-            args.jobs, args.memory_gb = jobs, memory
-            args.track_source = arguments.get('track_source', True)
-            args.command = arguments['command']
-    finally:
-        with_reader.close()
-    store = Store()
-    try:
-        key = arguments['request_key']
-        receipt = store.root/('receipt-mcp-'+hashlib.sha256(key.encode()).hexdigest()+'.json')
-        result = dict(receipt_path=str(receipt)) if name == 'buildr_submit' else {}
-        if reserve(store, name, arguments, result):
-            try:
-                if name == 'buildr_submit':
-                    result.update(submit_detached(args, receipt=receipt, retain_receipt=True))
-                else:
-                    result['plan_id'] = plans.create(store, definition)
-                    # Save the handle before spawning, so a server crash cannot
-                    # cause a reconnect to create the same plan a second time.
-                    record(store, key, 'in_flight', result)
-                    plans.spawn(store, result['plan_id'])
-                record(store, key, 'submitted', result)
-            except Exception as error:
-                result.update(error=str(error)[:1000], automatic_retry=False)
-                record(store, key, 'uncertain', result)
-        return request_result(store, request_row(store, key))
-    finally:
-        store.close()
-
-
 def call(name, args, read_only=False):
     spec = next((item for item in TOOLS if item['name'] == name), None)
     if spec is None:
@@ -248,14 +148,30 @@ def call(name, args, read_only=False):
     validate(args, spec['inputSchema'])
     if read_only and not spec['annotations']['readOnlyHint']:
         raise ValueError('This Buildr MCP server is read-only; nothing was changed')
-    if name in ('buildr_submit', 'buildr_plan_submit'):
+    if name in ('buildr_submit', 'buildr_plan_submit', 'buildr_watch_submit'):
         return submit(name, args)
     store = Store(read_only=spec['annotations']['readOnlyHint'])
     try:
+        if name in ('buildr_watch','buildr_watches','buildr_watch_cancel','buildr_watch_resume'):
+            from . import external
+            if name=='buildr_watches':
+                with store.read_snapshot():
+                    return dict(watches=external.listing(store,args.get('active',False),args.get('limit',10)))
+            if name=='buildr_watch_cancel':
+                external.cancel(store,args['watch_id'])
+            elif name=='buildr_watch_resume':
+                row=external.raw(store,args['watch_id'])
+                from .store import alive
+                if not alive(row['owner_pid'],row['owner_start']):
+                    external.spawn(store,args['watch_id'])
+            with store.read_snapshot():
+                return external.get(store,args['watch_id'])
         if name == 'buildr_status':
+            from .external import counts as watch_counts
             with store.read_snapshot():
                 return dict(initialized=store.db is not None, machine=snapshot(args.get('repo', os.getcwd())),
                     config=store.config(), counts=store.counts(active=args.get('active', True), repo=args.get('repo')),
+                    external_watch_counts=watch_counts(store),
                     jobs=[compact(r) for r in store.rows(active=args.get('active', True), repo=args.get('repo'), limit=args.get('limit', 10))])
         if name == 'buildr_submission':
             return request_result(store, request_row(store, args['request_key']))

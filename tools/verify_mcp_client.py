@@ -52,7 +52,7 @@ async def verify(output):
         async with ClientSession(reader, writer) as session:
             initialized = await session.initialize()
             tools = await session.list_tools()
-            assert len(tools.tools) == 12
+            assert len(tools.tools) == 17
             assert all(tool.inputSchema['type'] == 'object' for tool in tools.tools)
             status = await call(session, 'buildr_status', {})
             assert status['initialized'] is False
@@ -87,9 +87,42 @@ async def verify(output):
                     break
                 await asyncio.sleep(.1)
             assert plan['state'] == 'succeeded' and plan['exit_code'] == 0
+            ready=root/'external-ready'
+            probe=[sys.executable,'-c','import sys; from pathlib import Path; sys.exit(0 if Path({!r}).exists() else 75)'.format(str(ready))]
+            watch_args=dict(request_key=key+'-watch',cwd=str(root),external_ref='fixture:official-sdk-external',
+                read_only_probe=True,command=probe,interval=3,timeout=20,probe_timeout=5,
+                max_probes=3,jobs=1,memory_gb=.25,track_source=False)
+            watch_receipt=await call(session,'buildr_watch_submit',watch_args)
+            watch_handle=watch_receipt['result']['watch_id']
+            repeated_watch=await call(session,'buildr_watch_submit',watch_args)
+            assert repeated_watch['result']['watch_id']==watch_handle
+            deadline=time.monotonic()+15
+            while time.monotonic()<deadline:
+                watch=await call(session,'buildr_watch',dict(watch_id=watch_handle))
+                if watch['state']=='waiting':
+                    break
+                await asyncio.sleep(.05)
+            assert watch['state']=='waiting' and watch['probes'][0]['native_exit_code']==75
+            full_budget=await call(session,'buildr_submit',dict(request_key=key+'-full-budget',cwd=str(root),
+                command=[sys.executable,'-c','print("full CPU budget available during external wait")'],
+                lane='quick',jobs=2,memory_gb=.25,track_source=False))
+            full_result=await call(session,'buildr_wait',dict(job_ids=[full_budget['result']['job_id']],timeout=5))
+            assert full_result['complete'] and full_result['exit_code']==0
+            ready.touch()  # fixture actor changes state; the probe itself only reads
+            while time.monotonic()<deadline:
+                watch=await call(session,'buildr_watch',dict(watch_id=watch_handle))
+                if watch['complete']:
+                    break
+                await asyncio.sleep(.05)
+            assert watch['state']=='succeeded' and watch['probe_count']==2
+            assert watch['external_idle_seconds']>1
     reader = Store(state, read_only=True)
     try:
-        assert len(reader.rows()) == 2  # one job plus one plan stage, never a duplicate
+        assert len(reader.rows()) == 5  # job, plan stage, full-budget job and two probes
+        other=reader.get(full_budget['result']['job_id'])
+        first=reader.get(watch['probes'][0]['job_id'])
+        second=reader.get(watch['probes'][1]['job_id'])
+        assert first['finished']<=other['started']<=other['finished']<=second['started']
     finally:
         reader.close()
     report = dict(schema='buildr-official-mcp-client-check-v1', application_version=__version__,
@@ -97,7 +130,12 @@ async def verify(output):
         tools=len(tools.tools), result='passed', fixture_directory=str(root),
         checks=['handshake', 'tool schemas', 'read-only missing state', 'submission',
                 'server reconnect', 'duplicate prevention', 'native failure', 'bounded logs',
-                'plan validation', 'plan submission', 'plan completion'], production_jobs_submitted=0)
+                'plan validation', 'plan submission', 'plan completion','external pending probe',
+                'external watch duplicate prevention','full CPU budget admitted during external idle',
+                'external completion'], production_jobs_submitted=0,
+        external_watch=dict(wall_seconds=watch['elapsed_seconds'],idle_without_reservation_seconds=watch['external_idle_seconds'],
+            local_reserved_seconds=watch['accounting']['local_reserved_seconds'],probe_count=watch['probe_count'],
+            full_budget_job_started_between_probes=True))
     write_export(output, report)
     print(json.dumps(report, indent=2))
 

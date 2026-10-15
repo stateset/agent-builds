@@ -8,6 +8,11 @@ Agents can use the same queue through MCP: start `buildr mcp serve` as a stdio
 server. It exposes job submission, durable reconnects, bounded logs/waits and
 verification plans. See [MCP setup and tool reference](docs/mcp.md).
 
+Use `buildr watch start` for existing external work: short read-only status
+probes use the shared queue, while the durable watch holds no build reservation
+between probes. CLI, MCP and full/compact TUI views retain the same watch handle.
+See [external completion watches](docs/external-watches.md).
+
 `buildr experiment run` records paired queue/direct fixture outcomes under one
 shared-queue reservation. `buildr optimize prepare` previews anonymized trial
 evidence; `buildr optimize ask` optionally asks an installed local model to rank

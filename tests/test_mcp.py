@@ -148,7 +148,7 @@ class MCPTests(unittest.TestCase):
         args = self.arguments()
         self.assertTrue(mcp.reserve(self.store, 'buildr_submit', args, {}))
         with mock.patch.dict(os.environ, self.env, clear=True), \
-                mock.patch('agent_builds.mcp.submit_detached', side_effect=AssertionError('must not retry')):
+                mock.patch('agent_builds.submissions.submit_detached', side_effect=AssertionError('must not retry')):
             result = mcp.call('buildr_submit', args)
         self.assertEqual(result['submission_state'], 'uncertain')
         self.assertEqual(len(self.store.rows()), 0)
@@ -160,7 +160,7 @@ class MCPTests(unittest.TestCase):
         path.write_text(json.dumps(dict(job_id=handle)))
         mcp.reserve(self.store, 'buildr_submit', args, dict(receipt_path=str(path)))
         with mock.patch.dict(os.environ, self.env, clear=True), \
-                mock.patch('agent_builds.mcp.submit_detached', side_effect=AssertionError('must not retry')):
+                mock.patch('agent_builds.submissions.submit_detached', side_effect=AssertionError('must not retry')):
             result = mcp.call('buildr_submit', args)
         self.assertEqual(result['submission_state'], 'submitted')
         self.assertEqual(result['result']['job_id'], handle)
@@ -172,7 +172,7 @@ class MCPTests(unittest.TestCase):
         mcp.record(self.store, args['request_key'], 'submitted', dict(job_id='abcdefabcdef'))
         with mock.patch.dict(os.environ, self.env, clear=True), \
                 mock.patch('pathlib.Path.is_dir', return_value=False), \
-                mock.patch('agent_builds.mcp.submit_detached', side_effect=AssertionError('must not retry')):
+                mock.patch('agent_builds.submissions.submit_detached', side_effect=AssertionError('must not retry')):
             result = mcp.call('buildr_submit', args)
         self.assertEqual(result['result']['job_id'], 'abcdefabcdef')
 

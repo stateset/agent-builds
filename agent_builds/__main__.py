@@ -229,6 +229,40 @@ def parser():
     mcp_sub = mcp.add_subparsers(dest='mcp_action', required=True)
     mcp_serve = mcp_sub.add_parser('serve', help='Read newline-delimited MCP on stdin; protocol messages only on stdout')
     mcp_serve.add_argument('--read-only', action='store_true', help='Expose inspection tools only')
+    watches = sub.add_parser('watch', help='Observe external completion with short queued read-only probes and no idle reservations')
+    watch_sub = watches.add_subparsers(dest='watch_action', required=True)
+    watch_start = watch_sub.add_parser('start')
+    watch_start.add_argument('--request-key', required=True)
+    watch_start.add_argument('--cwd', default=os.getcwd())
+    watch_start.add_argument('--external-ref', required=True)
+    watch_start.add_argument('--read-only-probe', action='store_true', help='Declare that repeating this foreground status probe has no external side effects')
+    watch_start.add_argument('--name', default='external completion')
+    watch_start.add_argument('--interval', type=float, default=15)
+    watch_start.add_argument('--timeout', type=float, default=3600)
+    watch_start.add_argument('--probe-timeout', type=float, default=30)
+    watch_start.add_argument('--max-probes', type=int, default=120)
+    watch_start.add_argument('--jobs', type=int, default=1)
+    watch_start.add_argument('--memory-gb', type=float, default=.5)
+    watch_start.add_argument('--resource-key')
+    watch_start.add_argument('--no-track-source', action='store_true')
+    watch_start.add_argument('command', nargs=argparse.REMAINDER)
+    watch_list = watch_sub.add_parser('list')
+    watch_list.add_argument('--active', action='store_true')
+    watch_list.add_argument('--limit', type=int, default=20)
+    watch_list.add_argument('--json', action='store_true')
+    for action in ('show', 'wait', 'cancel', 'resume', 'export'):
+        command = watch_sub.add_parser(action)
+        command.add_argument('watch')
+        command.add_argument('--json', action='store_true')
+        if action=='wait':
+            command.add_argument('--timeout', type=float)
+        if action=='export':
+            command.add_argument('--output', required=True)
+    watch_worker = sub.add_parser('watch-worker', help=argparse.SUPPRESS)
+    watch_worker.add_argument('watch')
+    watch_probe = sub.add_parser('watch-probe-worker', help=argparse.SUPPRESS)
+    watch_probe.add_argument('job')
+    watch_probe.add_argument('token')
     return root
 
 
@@ -241,6 +275,48 @@ def main():
     else:
         args = parser().parse_args(arguments)
     try:
+        if args.action == 'watch-worker':
+            from .external import control
+            control(args.watch)
+            return 0
+        if args.action == 'watch-probe-worker':
+            return execute(parser().parse_args(['run', '--', 'true']), external_probe=(args.job, args.token))
+        if args.action == 'watch':
+            from . import external
+            if args.watch_action=='start':
+                from .submissions import submit
+                command = args.command[1:] if args.command[:1]==['--'] else args.command
+                spec = {key:getattr(args,key) for key in ('request_key','cwd','external_ref','read_only_probe','name','interval',
+                    'timeout','probe_timeout','max_probes','jobs','memory_gb','resource_key') if getattr(args,key) is not None}
+                result = submit('buildr_watch_submit', dict(spec, command=command, track_source=not args.no_track_source))
+                print(json.dumps(result, indent=2))
+                return 2 if result['submission_state']=='uncertain' else 0
+            reader = Store(read_only=args.watch_action not in ('cancel','resume'))
+            try:
+                if args.watch_action=='list':
+                    with reader.read_snapshot():
+                        result = external.listing(reader, args.active, args.limit)
+                    print(json.dumps(result,indent=2) if args.json else '\n\n'.join('\n'.join(external.lines(row)) for row in result) or 'No external watches')
+                    return 0
+                if args.watch_action=='cancel':
+                    external.cancel(reader,args.watch)
+                elif args.watch_action=='resume':
+                    external.spawn(reader,args.watch)
+                if args.watch_action=='wait':
+                    result = external.wait(reader,args.watch,args.timeout)
+                    print(json.dumps(result,indent=2) if args.json else '\n'.join(external.lines(result['watch'])))
+                    return result['exit_code']
+                with reader.read_snapshot():
+                    result = external.get(reader,args.watch,limit=1000 if args.watch_action=='export' else 20)
+                if args.watch_action=='export':
+                    from .plans import write_export
+                    write_export(args.output,result)
+                    print(args.output)
+                else:
+                    print(json.dumps(result,indent=2) if args.json else '\n'.join(external.lines(result)))
+                return 0
+            finally:
+                reader.close()
         if args.action == 'mcp':
             from .mcp import serve
             return serve(args.read_only)
@@ -522,12 +598,14 @@ def main():
                 if args.remote_action == 'run' and result['state'] == 'unknown':
                     return 1
             elif args.action == 'status':
+                from .external import counts as watch_counts
                 if not 1 <= args.limit <= 2000:
                     raise ValueError('--limit must be between 1 and 2000')
                 with store.read_snapshot():
                     result = dict(initialized=store.db is not None, state_path=str(store.root),
                                   machine=snapshot(os.getcwd()), config=store.config(),
                                   counts=store.counts(args.active, args.repo),
+                                  external_watch_counts=watch_counts(store),
                                   count_scope=dict(active_only=args.active,
                                       repository=str(Path(args.repo).expanduser().resolve()) if args.repo else None,
                                       limited_by_result_limit=False))
@@ -538,6 +616,7 @@ def main():
                 elif args.summary:
                     print('Machine: ' + json.dumps(result['machine']))
                     print('Jobs: ' + json.dumps(result['counts']))
+                    print('External watches: '+json.dumps(result['external_watch_counts']))
                 else:
                     for row in result['jobs']:
                         print('{} {:11} {:7} {} | {} {}'.format(row['id'], row['state'], row['backend'],

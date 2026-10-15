@@ -152,7 +152,7 @@ def submit_detached(args, receipt=None, retain_receipt=False):
         store.close()
 
 
-def execute(args, prepared=None):
+def execute(args, prepared=None, external_probe=None):
     if os.environ.get('AGENT_BUILDS_JOB_ID'):
         raise ValueError('Already inside queued job {}. Queue the whole driver once, or its individual build steps; do not nest wrappers.'.format(os.environ['AGENT_BUILDS_JOB_ID']))
     if args.detach:
@@ -162,6 +162,9 @@ def execute(args, prepared=None):
     if prepared is not None:
         from .plans import attach_job
         args, job = attach_job(store, *prepared)
+    if external_probe is not None:
+        from .external import attach_job
+        args, job = attach_job(store, *external_probe)
     config = store.config()
     cwd = Path(args.cwd).expanduser().resolve()
     command = list(args.command)

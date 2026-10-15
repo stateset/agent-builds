@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.13.0
+
+- Add durable external completion watches with explicit repeatable read-only
+  probes: exit 75 confirms pending, 0 reports completion, other/unknown outcomes
+  stop progression. Idle watches retain no CPU/RAM/job/output reservations.
+- Prepare each probe job transactionally before worker launch, attach workers
+  once, and preserve existing cancellation, orphan and unknown-result safeguards.
+- Reuse durable submission keys for watch creation; support read-only inspection,
+  bounded waits/history, explicit cancellation/resume and private JSON exports.
+- Add five MCP watch tools and separate external-watch counts. Add full and
+  compact dashboard views with probe logs, idle accounting and guarded actions.
+- Extract shared durable submission handling from the MCP transport and expand
+  official-client verification to prove full-budget admission between probes.
+
 ## 0.12.0
 
 - Add a dependency-free MCP stdio server over the existing queue, with typed

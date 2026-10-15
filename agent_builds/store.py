@@ -93,6 +93,18 @@ class Store:
             detail TEXT, updated REAL NOT NULL,
             PRIMARY KEY (announcement_id,pane))''')
         with self.transaction():
+            self.db.execute('''CREATE TABLE IF NOT EXISTS external_watches (
+                id TEXT PRIMARY KEY, created REAL NOT NULL, finished REAL,
+                definition TEXT NOT NULL, state TEXT NOT NULL, reason TEXT NOT NULL DEFAULT '',
+                owner_pid INTEGER, owner_start TEXT, cancel_requested INTEGER NOT NULL DEFAULT 0,
+                stop_kind TEXT NOT NULL DEFAULT '', exit_code INTEGER,
+                next_probe_at REAL, idle_since REAL, idle_seconds REAL NOT NULL DEFAULT 0)''')
+            self.db.execute('''CREATE TABLE IF NOT EXISTS external_probes (
+                watch_id TEXT NOT NULL, ordinal INTEGER NOT NULL, request_key TEXT NOT NULL UNIQUE,
+                job_id TEXT UNIQUE, created REAL NOT NULL, settled REAL, exit_code INTEGER,
+                launch_token TEXT, launch_attempted INTEGER NOT NULL DEFAULT 0,
+                attached INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (watch_id,ordinal))''')
             self.db.execute('''CREATE TABLE IF NOT EXISTS mcp_requests (
                 request_key TEXT PRIMARY KEY, kind TEXT NOT NULL, payload_sha256 TEXT NOT NULL,
                 created REAL NOT NULL, state TEXT NOT NULL, result TEXT NOT NULL)''')

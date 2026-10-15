@@ -18,6 +18,13 @@ and the same budgets. A faster synthetic fixture alone does not earn an A+ grade
 Multiple explicit output locks remain a follow-up that needs compatibility with
 old runners; this release does not claim support for them.
 
+External completion watches now use ordinary queued probes and retain no build
+reservation during confirmed idle intervals. Gates cover cancellation races,
+unknown launch/results, controller restarts and full-budget admission between
+probes; the official MCP client fixture records the idle and local-reservation
+timings. These are controlled local tests, not remote-provider acceptance or an
+overall coding-productivity claim. See [external watches](external-watches.md).
+
 The v0.11 paired experiment harness adds actual fixture outcomes and costs under
 the same outer reservation. It is a controlled comparison, not a productivity
 claim about autonomous coding. Optional local AI ranks existing evidence-backed

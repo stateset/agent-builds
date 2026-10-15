@@ -94,6 +94,16 @@ is retained. The server itself holds no CPU/RAM build reservation.
 | `buildr_plan_submit` | Submit an inline manifest once per key and return its durable plan handle |
 | `buildr_plan` | Compact per-stage native and verification results |
 | `buildr_plan_cancel` | Explicit plan cancellation, preventing new stage submissions |
+| `buildr_watch_submit` | Durable external completion observation using explicit repeatable read-only probes |
+| `buildr_watch` | Watch status, idle time and bounded probe history |
+| `buildr_watches` | Bounded watch listing, optionally active only |
+| `buildr_watch_cancel` | Stop observation and its active local probe; external task continues |
+| `buildr_watch_resume` | Resume controller monitoring without retrying unknown probe outcomes |
+
+There are 17 tools, including 10 inspection tools in read-only mode. See
+[external completion watches](external-watches.md) for the explicit probe contract,
+native pending exit 75, resource release and recovery behavior. Reconnect clients
+that were already running against an older server to discover the added tools.
 
 Job and plan failures are ordinary structured tool data. A command exiting 7
 does not turn a successful `buildr_wait` observation into an MCP transport error.

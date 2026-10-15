@@ -37,7 +37,7 @@ def paint(screen, y, x, text, attr=0):
         pass
 
 
-def compact_lines(rows, selected, plans, plan_index, view, config, height, width):
+def compact_lines(rows, selected, plans, plan_index, view, config, height, width, watches=None, watch_index=0):
     """A monitor for narrow split panes; editing actions need the full view."""
     lines = ['BUILDR ' + __version__ + (' PAUSED' if config['paused'] else '')]
     if height < 8 or width < 20:
@@ -46,7 +46,17 @@ def compact_lines(rows, selected, plans, plan_index, view, config, height, width
     lines += ['CPU {}/{} reserved'.format(sum(r['slots'] for r in running), config['cpu_slots']),
               'RAM {:.1f}/{}G est.'.format(sum(r['memory_gb'] for r in running), config['memory_gb'])]
     selected_row = None
-    if view == 7:
+    if view == 10:
+        watches=watches or []
+        lines+=['EXTERNAL | {} shown'.format(len(watches))]
+        if watches:
+            row=watches[watch_index]
+            lines += [row['id'],row['state'],row['definition']['external_ref'],
+                      '{} probes | idle {:.1f}s'.format(row['probe_count'],row['external_idle_seconds'])]
+            lines += textwrap.wrap(row['reason'],max(1,width-1))
+        else:
+            lines+=['No external watches']
+    elif view == 7:
         lines += ['PLANS | {} shown'.format(len(plans))]
         if plans:
             selected_row = plans[plan_index]
@@ -149,6 +159,7 @@ def main(screen, cwd):
     group_id = None
     group_offset = 0
     last_groups = 0
+    watch_rows, watch_index, watch_id, watch_offset, last_watches = [], 0, None, 0, 0
     def scan_disk(repository):
         from .disk import inventory
         reader = Store(store.root, read_only=True)
@@ -184,12 +195,19 @@ def main(screen, cwd):
                 group_index=next((i for i,g in enumerate(group_rows) if g['id']==group_id),min(group_index,max(0,len(group_rows)-1)))
                 group_id=group_rows[group_index]['id'] if group_rows else None
                 last_groups=time.monotonic()
+            if view == 10 and time.monotonic()-last_watches >= 1:
+                from .external import listing
+                with store.read_snapshot():
+                    watch_rows=listing(store,limit=20)
+                watch_index=next((i for i,row in enumerate(watch_rows) if row['id']==watch_id),min(watch_index,max(0,len(watch_rows)-1)))
+                watch_id=watch_rows[watch_index]['id'] if watch_rows else None
+                last_watches=time.monotonic()
             active = [r for r in rows if r['state'] in ('running', 'cancelling')]
             screen.erase()
             height, width = screen.getmaxyx()
             compact = height < 15 or width < 65
             if compact:
-                for index, line in enumerate(compact_lines(rows, selected, plan_rows, plan_index, view, config, height, width)):
+                for index, line in enumerate(compact_lines(rows, selected, plan_rows, plan_index, view, config, height, width, watch_rows, watch_index)):
                     paint(screen, index, 0, line)
             else:
                 context = ' | Herdr ' + os.environ.get('HERDR_PANE_ID', '') if os.environ.get('HERDR_ENV') == '1' else ''
@@ -328,6 +346,20 @@ def main(screen, cwd):
                     group_offset=min(max(0,group_offset),max(0,len(lines)-visible))
                     for index,line in enumerate(lines[group_offset:group_offset+visible]):
                         paint(screen,log_top+index,0,line)
+                elif view == 10:
+                    from .external import lines as watch_lines
+                    paint(screen,log_top-1,0,'EXTERNAL COMPLETION | idle watches hold no build reservations',curses.A_BOLD)
+                    lines=['No external watches. Use buildr watch start or MCP buildr_watch_submit.']
+                    if watch_rows:
+                        watch=watch_rows[watch_index]
+                        lines=watch_lines(watch)
+                        if not watch['complete'] and not watch['controller_alive']:
+                            lines+=['Controller stopped; r resumes observation of existing probe handles.']
+                    lines=[part for line in lines for part in (textwrap.wrap(line,max(1,width-1)) or [''])]
+                    visible=max(1,height-log_top-3)
+                    watch_offset=min(max(0,watch_offset),max(0,len(lines)-visible))
+                    for index,line in enumerate(lines[watch_offset:watch_offset+visible]):
+                        paint(screen,log_top+index,0,line)
                 elif view == 8:
                     from .advice import report, lines as advice_lines
                     if advice_result is None or time.monotonic()-last_advice >= 2:
@@ -385,6 +417,8 @@ def main(screen, cwd):
                         paint(screen, log_top + offset + index, 0, line)
                 paint(screen, height - 2, 0, message)
                 paint(screen, height - 1, 0, 'o plan  t task  i details  h advisor  v views  q quit' if view != 7 else 'o plan  c cancel plan  r resume  e export  PgUp/PgDn scroll  v views  q quit')
+                if view==10:
+                    paint(screen,height-1,0,'c stop observation  r resume controller  e export  Enter probe log  v views  q quit')
             screen.refresh()
             key = screen.getch()
             if key in (ord('q'), 27):
@@ -397,9 +431,18 @@ def main(screen, cwd):
             if view == 9 and not compact and key not in (ord('j'),ord('k'),curses.KEY_DOWN,curses.KEY_UP,
                 curses.KEY_NPAGE,curses.KEY_PPAGE,ord('v'),ord('h'),ord('e'),10,13,curses.KEY_ENTER):
                 continue
+            if view == 10 and not compact and key not in (ord('j'),ord('k'),curses.KEY_DOWN,curses.KEY_UP,
+                curses.KEY_NPAGE,curses.KEY_PPAGE,ord('v'),ord('h'),ord('e'),ord('r'),ord('c'),10,13,curses.KEY_ENTER):
+                continue
+            if view==10 and not watch_rows and key not in (ord('v'),ord('h')):
+                continue
             selected_id = rows[selected]['id'] if rows else None
             if key in (ord('j'), curses.KEY_DOWN):
-                if view == 9 and not compact:
+                if view == 10:
+                    watch_index=min(watch_index+1,max(0,len(watch_rows)-1))
+                    watch_id=watch_rows[watch_index]['id'] if watch_rows else None
+                    watch_offset=0
+                elif view == 9 and not compact:
                     group_index=min(group_index+1,max(0,len(group_rows)-1))
                     group_id=group_rows[group_index]['id'] if group_rows else None
                     group_offset=0
@@ -413,7 +456,11 @@ def main(screen, cwd):
                     selected = min(selected + 1, max(0, len(rows) - 1))
                     selected_id = rows[selected]['id'] if rows else None
             elif key in (ord('k'), curses.KEY_UP):
-                if view == 9 and not compact:
+                if view == 10:
+                    watch_index=max(0,watch_index-1)
+                    watch_id=watch_rows[watch_index]['id'] if watch_rows else None
+                    watch_offset=0
+                elif view == 9 and not compact:
                     group_index=max(0,group_index-1)
                     group_id=group_rows[group_index]['id'] if group_rows else None
                     group_offset=0
@@ -427,7 +474,7 @@ def main(screen, cwd):
                     selected = max(0, selected - 1)
                     selected_id = rows[selected]['id'] if rows else None
             elif key == ord('v'):
-                view = (0 if view == 7 else 7) if compact else (view + 1) % 10
+                view = ({0:7,7:10,10:0}.get(view,0)) if compact else (view + 1) % 11
             elif key == ord('h'):
                 view = 0 if view == 8 else 8
                 advice_offset, last_advice = 0, 0
@@ -435,6 +482,39 @@ def main(screen, cwd):
                 advice_offset += max(1, height-10)*(1 if key == curses.KEY_NPAGE else -1)
             elif view == 9 and key in (curses.KEY_NPAGE,curses.KEY_PPAGE):
                 group_offset+=max(1,height-10)*(1 if key==curses.KEY_NPAGE else -1)
+            elif view == 10 and key in (curses.KEY_NPAGE,curses.KEY_PPAGE):
+                watch_offset+=max(1,height-10)*(1 if key==curses.KEY_NPAGE else -1)
+            elif view == 10 and watch_rows and key in (ord('c'),ord('r'),ord('e')):
+                from . import external
+                from .plans import write_export
+                handle=watch_rows[watch_index]['id']
+                try:
+                    if key==ord('c'):
+                        if prompt(screen,'Stop observing {}? type yes'.format(handle))=='yes':
+                            child=external.cancel(store,handle)
+                            if child is not None:
+                                children.append(child)
+                            message='Watch observation cancelled; external task continues'
+                    elif key==ord('r'):
+                        children.append(external.spawn(store,handle))
+                        message='Watch controller resumed; existing probe handles retained'
+                    else:
+                        path=prompt(screen,'New watch evidence JSON file','/tmp/buildr-watch-'+handle+'.json')
+                        if path:
+                            write_export(path,external.get(store,handle,limit=1000))
+                            message='Watch evidence exported to '+path
+                    last_watches=0
+                except (ValueError,OSError) as error:
+                    message='Watch action failed: '+str(error)
+            elif view == 10 and watch_rows and key in (10,13,curses.KEY_ENTER):
+                probes=watch_rows[watch_index]['probes']
+                if probes and probes[-1]['job_id']:
+                    handle=probes[-1]['job_id']
+                    target=next((i for i,row in enumerate(rows) if row['id']==handle),None)
+                    if target is None:
+                        message='Probe log: buildr logs '+handle
+                    else:
+                        selected,selected_id,view=target,handle,0
             elif view == 9 and group_rows and key==ord('e'):
                 from .groups import export
                 from .plans import write_export
