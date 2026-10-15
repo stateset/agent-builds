@@ -198,8 +198,8 @@ def execute(args, prepared=None):
         previous[sig] = signal.signal(sig, on_signal)
     child = None
     try:
-        last_reason = None
-        last_wait_update = 0
+        from .waits import WaitUpdates
+        wait_updates = WaitUpdates()
         while True:
             store.recover()
             row = store.get(job)
@@ -211,15 +211,14 @@ def execute(args, prepared=None):
                 break
             row = store.get(job)
             reason = row['reason']
-            if reason != last_reason or time.monotonic() - last_wait_update >= 10:
+            if wait_updates.due(reason, row['wait_context'], time.monotonic()):
                 context = row['wait_context']
                 blocker = context.get('blocking_job')
                 detail = ' | blocker: ' + blocker['command_display'] if blocker else ''
                 detail += ' | disk {:.1f}/{:.1f} GiB (free/required)'.format(context.get('disk_free_gb', 0), context.get('required_free_gb', 0))
                 event('waiting', 'waiting {} ({:.1f}s): {}{}'.format(job, row['wait_seconds'], reason, detail),
-                      wait_seconds=row['wait_seconds'], reason=reason, resources=context)
-                last_reason = reason
-                last_wait_update = time.monotonic()
+                      wait_seconds=row['wait_seconds'], reason=reason, resources=context,
+                      wait_breakdown=row['wait_breakdown'])
             time.sleep(0.3)
         row = store.get(job)
         event('running', 'running {} after {:.1f}s waiting | log {}'.format(job, row['wait_seconds'], row['log_path']),

@@ -1,5 +1,9 @@
 # Agent Builds
 
+Queue wait diagnostics preserve primary blocker timings and observation coverage;
+see [wait diagnostics](docs/wait-diagnostics.md). Narrow terminal splits now use
+a compact jobs/plans monitor automatically.
+
 A standalone terminal dashboard and shared build queue for a Linux workstation
 running several coding agents. Works inside Ghostty, Herdr, and tmux. Python 3.8+
 and the standard library are sufficient; no npm install or Cargo build is needed.

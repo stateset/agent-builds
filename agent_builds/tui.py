@@ -6,6 +6,7 @@ import shlex
 import subprocess
 import sys
 import time
+import textwrap
 from concurrent.futures import ThreadPoolExecutor
 
 from .metrics import ProcessSampler, snapshot
@@ -34,6 +35,39 @@ def paint(screen, y, x, text, attr=0):
         screen.addnstr(y, x, clean, max(0, width - x - 1), attr)
     except curses.error:
         pass
+
+
+def compact_lines(rows, selected, plans, plan_index, view, config, height, width):
+    """A monitor for narrow split panes; editing actions need the full view."""
+    lines = ['BUILDS ' + __version__ + (' PAUSED' if config['paused'] else '')]
+    if height < 8 or width < 20:
+        return lines + ['Resize: 20x8 min', 'q quit; jobs continue']
+    running = [r for r in rows if r['state'] in ('running', 'cancelling')]
+    lines += ['CPU {}/{} reserved'.format(sum(r['slots'] for r in running), config['cpu_slots']),
+              'RAM {:.1f}/{}G est.'.format(sum(r['memory_gb'] for r in running), config['memory_gb'])]
+    selected_row = None
+    if view == 7:
+        lines += ['PLANS | {} shown'.format(len(plans))]
+        if plans:
+            selected_row = plans[plan_index]
+            lines += [selected_row['id'], selected_row['state'], selected_row['name']]
+            lines += ['{} {}'.format(s['name'], s['state']) for s in selected_row['stages']]
+            if selected_row['reason']:
+                lines += textwrap.wrap(selected_row['reason'], width-1)
+        else:
+            lines += ['No plans yet']
+    else:
+        lines += ['JOBS | {} shown'.format(len(rows))]
+        if rows:
+            selected_row = rows[selected]
+            lines += [selected_row['id'], selected_row['state'], Path(selected_row['cwd']).name,
+                      'Wait {:.1f}s run {:.1f}s'.format(selected_row['wait_seconds'], selected_row['elapsed_seconds'])]
+            if selected_row['reason']:
+                lines += textwrap.wrap(selected_row['reason'], width-1)
+            lines += tail(Path(selected_row['log_path']), max(1, height-len(lines)-2))
+        else:
+            lines += ['No jobs yet']
+    return lines[:height-1] + ['j/k move v views q']
 
 
 def prompt(screen, title, initial=''):
@@ -138,9 +172,10 @@ def main(screen, cwd):
             active = [r for r in rows if r['state'] in ('running', 'cancelling')]
             screen.erase()
             height, width = screen.getmaxyx()
-            if height < 15 or width < 65:
-                paint(screen, 0, 0, 'Agent Builds needs a terminal at least 65 columns x 15 rows.')
-                paint(screen, 2, 0, 'Resize, or press q to exit. Jobs keep running.')
+            compact = height < 15 or width < 65
+            if compact:
+                for index, line in enumerate(compact_lines(rows, selected, plan_rows, plan_index, view, config, height, width)):
+                    paint(screen, index, 0, line)
             else:
                 context = ' | Herdr ' + os.environ.get('HERDR_PANE_ID', '') if os.environ.get('HERDR_ENV') == '1' else ''
                 title = 'AGENT BUILDS v' + __version__ + (' [PAUSED]' if config['paused'] else '')
@@ -204,6 +239,9 @@ def main(screen, cwd):
                             'RSS is sampled, may include shared pages, and may miss short peaks.']
                     else:
                         lines += ['Job resource usage has not been measured.']
+                    from .waits import summary
+                    lines += ['Wait breakdown: ' + summary(row['wait_breakdown']),
+                              'Observed {:.0%}; gaps and legacy waits are unobserved.'.format(row['wait_breakdown']['coverage'])]
                     if row['source']:
                         source = row['source']
                         lines += ['Source: submitted {} | started {}'.format(
@@ -312,6 +350,8 @@ def main(screen, cwd):
             key = screen.getch()
             if key in (ord('q'), 27):
                 break
+            if compact and key not in (ord('j'), ord('k'), curses.KEY_DOWN, curses.KEY_UP, ord('v')):
+                continue
             selected_id = rows[selected]['id'] if rows else None
             if key in (ord('j'), curses.KEY_DOWN):
                 if view == 7:
@@ -330,7 +370,7 @@ def main(screen, cwd):
                     selected = max(0, selected - 1)
                     selected_id = rows[selected]['id'] if rows else None
             elif key == ord('v'):
-                view = (view + 1) % 8
+                view = (0 if view == 7 else 7) if compact else (view + 1) % 8
             elif key == ord('o') and height >= 15 and width >= 65:
                 try:
                     from .plans import create, read_manifest, spawn as spawn_plan

@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.8.0
+
+- Preserve bounded per-job wait observations, category totals and recent blocker
+  transitions through admission, cancellation and recovery. Explicitly mark
+  legacy history and long observation gaps as unobserved.
+- Expose wait breakdowns and coverage in CLI inspection, statistics, plan
+  evidence and TUI details without changing scheduling or resource budgets.
+- Coalesce stable CLI wait messages to one heartbeat per minute while emitting
+  category and blocking-job changes promptly.
+- Add a compact jobs/plans monitor for narrow terminal splits, with hidden
+  editing controls disabled until the pane is large enough for the full view.
+
 ## 0.7.0
 
 - Add durable dependency-aware verification plans with per-stage queue budgets,

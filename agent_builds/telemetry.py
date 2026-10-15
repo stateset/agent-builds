@@ -103,5 +103,17 @@ def statistics(store, repo=None, limit=1000):
         waits = sorted(r['wait_seconds'] for r in matched)
         policies.append(dict(policy_version=policy, lane=lane, jobs=len(matched),
             wait_p95_seconds=waits[max(0, math.ceil(len(waits)*.95)-1)] if waits else None))
-    return dict(groups=result, lanes=lanes, policies=policies, history_limit=limit, suggestions_applied=False,
+    from .waits import NOTE
+    completed = [r for r in rows if r['state'] in ('succeeded', 'failed', 'cancelled', 'lost')]
+    blockers = {}
+    for row in completed:
+        for kind, seconds in row['wait_breakdown']['seconds'].items():
+            blockers[kind] = blockers.get(kind, 0) + seconds
+    total_wait = sum(r['wait_seconds'] for r in completed)
+    observed_wait = sum(r['wait_breakdown']['observed_seconds'] for r in completed)
+    wait_breakdown = dict(seconds=blockers, total_seconds=total_wait, observed_seconds=observed_wait,
+                          coverage=observed_wait/total_wait if total_wait > 0 else 0,
+                          recorded_jobs=sum(r['wait_breakdown']['recorded'] for r in completed),
+                          jobs=len(completed), note=NOTE)
+    return dict(groups=result, lanes=lanes, policies=policies, wait_breakdown=wait_breakdown, history_limit=limit, suggestions_applied=False,
                 note='Memory suggestions require three measured jobs; allow extra margin for unsampled peaks.')

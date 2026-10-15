@@ -12,6 +12,7 @@ import uuid
 from .metrics import snapshot
 from .budgets import worker_budget
 from .scheduler import POLICY_VERSION, choose
+from . import waits
 
 DEFAULTS = dict(cpu_slots=6, max_running=3, max_heavy=2, memory_gb=16,
                 min_free_gb=10, quick_jobs=2, heavy_jobs=3, nice=10,
@@ -77,7 +78,8 @@ class Store:
                                      ('wait_context', "TEXT NOT NULL DEFAULT '{}'"),
                                      ('usage', "TEXT NOT NULL DEFAULT '{}'"),
                                      ('policy_version', "TEXT NOT NULL DEFAULT ''"),
-                                     ('source', "TEXT NOT NULL DEFAULT '{}'")]:
+                                     ('source', "TEXT NOT NULL DEFAULT '{}'"),
+                                     ('wait_history', "TEXT NOT NULL DEFAULT '{}'")]:
                 if name not in columns:
                     self.db.execute('ALTER TABLE jobs ADD COLUMN ' + name + ' ' + definition)
         self.db.execute('''CREATE TABLE IF NOT EXISTS announcements (
@@ -207,6 +209,9 @@ class Store:
             if 'required_memory_gb' in context:
                 context.setdefault('memory_headroom_gb', max(0, context['required_memory_gb'] - row['memory_gb']))
         row['wait_seconds'] = max(0, (row['started'] or row['finished'] or time.time()) - row['created'])
+        row['wait_history'] = json.loads(row.get('wait_history') or '{}')
+        row['wait_breakdown'] = waits.describe(row['wait_history'], row['created'],
+                                              row['created'] + row['wait_seconds'])
         row['elapsed_seconds'] = max(0, (row['finished'] or time.time()) - row['started']) if row['started'] else 0
         row['age_seconds'] = max(0, (row['finished'] or time.time()) - row['created'])
         if row['state'] == 'queued':
@@ -275,13 +280,14 @@ class Store:
                    ('remote_request_id', 'AGENT_BUILDS_REMOTE_REQUEST_ID')]
                   if os.environ.get(name)}
         origin.update(herdr or {})
+        created = time.time()
         self.db.execute('''INSERT INTO jobs
             (id,state,created,owner_pid,owner_start,cwd,command,backend,lane,
-             slots,memory_gb,resource_key,image,timeout,herdr,min_free_gb,scratch_gb,policy_version)
-            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
-            (job, 'queued', time.time(), os.getpid(), identity(os.getpid()), str(cwd),
+             slots,memory_gb,resource_key,image,timeout,herdr,min_free_gb,scratch_gb,policy_version,wait_history)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+            (job, 'queued', created, os.getpid(), identity(os.getpid()), str(cwd),
              json.dumps(command), backend, lane, slots, memory, resource_key, image,
-             timeout, json.dumps(origin), min_free_gb, scratch_gb, POLICY_VERSION))
+             timeout, json.dumps(origin), min_free_gb, scratch_gb, POLICY_VERSION, json.dumps(waits.begin(created))))
         return job
 
     def recover(self):
@@ -299,8 +305,7 @@ class Store:
                     self.db.execute("UPDATE jobs SET reason='owner exited; child still running' WHERE id=?", (row['id'],))
                     continue
                 state = 'cancelled' if row['cancel_requested'] else 'lost'
-                self.db.execute('UPDATE jobs SET state=?,finished=?,reason=? WHERE id=?',
-                    (state, time.time(), 'owner exited; inspect logs before retrying', row['id']))
+                self.finish(row['id'], state, None, 'owner exited; inspect logs before retrying')
 
     def claim(self, job):
         config = self.config()
@@ -365,10 +370,19 @@ class Store:
                 reason += ' [' + blocker['id'] + ']'
             if reason:
                 previous = row['wait_context']
-                if reason != row['reason'] or context['measured_at'] - previous.get('measured_at', 0) >= 2:
-                    self.db.execute('UPDATE jobs SET reason=?,wait_context=? WHERE id=?', (reason, json.dumps(context), job))
+                kind = waits.category(reason)
+                blocker_id = blocker['id'] if blocker else None
+                history = row['wait_history']
+                changed = (kind, blocker_id) != (history.get('current_category'), history.get('current_blocker'))
+                if changed or reason != row['reason'] or context['measured_at'] - previous.get('measured_at', 0) >= 2:
+                    history = waits.advance(history, context['measured_at'], kind, blocker_id) if history else {}
+                    self.db.execute('UPDATE jobs SET reason=?,wait_context=?,wait_history=? WHERE id=?',
+                                    (reason, json.dumps(context), json.dumps(history), job))
                 return False
-            self.db.execute("UPDATE jobs SET state='running',started=?,reason='',wait_context='{}' WHERE id=?", (time.time(), job))
+            now = time.time()
+            history = waits.advance(row['wait_history'], now) if row['wait_history'] else {}
+            self.db.execute("UPDATE jobs SET state='running',started=?,reason='',wait_context='{}',wait_history=? WHERE id=?",
+                            (now, json.dumps(history), job))
             self._reservation_cache = None
             return True
 
@@ -400,8 +414,13 @@ class Store:
             return True
 
     def finish(self, job, state, code, reason=''):
-        self.db.execute('UPDATE jobs SET state=?,exit_code=?,finished=?,reason=? WHERE id=?',
-                        (state, code, time.time(), reason, job))
+        row = self.db.execute('SELECT started,wait_history FROM jobs WHERE id=?', (job,)).fetchone()
+        now = time.time()
+        history = json.loads(row['wait_history'] or '{}')
+        if history and not row['started']:
+            history = waits.advance(history, now)
+        self.db.execute('UPDATE jobs SET state=?,exit_code=?,finished=?,reason=?,wait_history=? WHERE id=?',
+                        (state, code, now, reason, json.dumps(history), job))
         self._reservation_cache = None
 
     def record_usage(self, job, usage):

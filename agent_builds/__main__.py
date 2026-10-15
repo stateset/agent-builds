@@ -294,6 +294,9 @@ def main():
                             row['jobs'], row['wait_p95_seconds'], row['average_runtime_seconds'],
                             '{:.2f}'.format(row['sampled_peak_rss_gb']) if row['sampled_peak_rss_gb'] is not None else 'unmeasured',
                             row['command_display']))
+                    from .waits import summary
+                    print('Primary wait blockers: ' + summary(result['wait_breakdown']))
+                    print(result['wait_breakdown']['note'])
                     print(result['note'])
             elif args.action in ('disk', 'clean'):
                 from .disk import inventory, clean_logs
@@ -408,6 +411,9 @@ def main():
                     print('{} {} | {}'.format(row['id'], row['state'], row['command_display']))
                     print('directory: {}\nlog: {}\nwaited: {:.1f}s | elapsed: {:.1f}s | exit: {}'.format(
                         row['cwd'], row['log_path'], row['wait_seconds'], row['elapsed_seconds'], row['exit_code']))
+                    from .waits import summary
+                    print('Wait breakdown: ' + summary(row['wait_breakdown']))
+                    print(row['wait_breakdown']['note'])
                     if row['reason']:
                         print('waiting: ' + row['reason'])
                         print(json.dumps(row['wait_context'], indent=2))
