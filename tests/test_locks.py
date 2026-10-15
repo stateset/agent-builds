@@ -244,9 +244,9 @@ class LockTests(unittest.TestCase):
         (shadow/'agent_builds').mkdir(parents=True)
         (shadow/'agent_builds'/'__init__.py').write_text('raise RuntimeError("wrong Buildr package")\n')
         result = subprocess.run([sys.executable, str(ROOT/'buildr'), 'run', '--detach', '--events-json',
-            '--cwd', str(shadow), '--lane', 'quick', '--jobs', '1', '--memory-gb', '.25', '--',
+            '--cwd', '.', '--lane', 'quick', '--jobs', '1', '--memory-gb', '.25', '--',
             sys.executable, '-c', 'import os; print(os.getcwd()); raise SystemExit(7)'],
-            cwd=str(shadow), env=self.env, capture_output=True, timeout=8)
+            cwd=str(shadow), env=dict(self.env, AGENT_BUILDS_STATE='../state'), capture_output=True, timeout=8)
         self.assertEqual(result.returncode, 0, result.stderr)
         job = json.loads(result.stderr)['job_id']
         result = subprocess.run([sys.executable, str(ROOT/'buildr'), 'wait', job, '--timeout', '8'],

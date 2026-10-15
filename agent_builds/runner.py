@@ -117,7 +117,9 @@ def submit_detached(args, receipt=None, retain_receipt=False):
     env = os.environ.copy()
     root = str(Path(__file__).resolve().parent.parent)
     env['PYTHONPATH'] = root + os.pathsep + env.get('PYTHONPATH', '')
-    command = [sys.executable, '-m', 'agent_builds', 'run', '--cwd', args.cwd,
+    env['AGENT_BUILDS_STATE'] = str(store.root)
+    cwd = str(Path(args.cwd).expanduser().resolve())
+    command = [sys.executable, '-m', 'agent_builds', 'run', '--cwd', cwd,
                '--lane', args.lane, '--backend', args.backend, '--receipt-file', str(receipt),
                '--min-free-gb', str(args.min_free_gb), '--scratch-gb', str(args.scratch_gb)]
     for name, value in [('jobs', args.jobs), ('memory-gb', args.memory_gb), ('timeout', args.timeout),
