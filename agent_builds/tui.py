@@ -94,7 +94,7 @@ def compact_lines(rows, selected, plans, plan_index, view, config, height, width
             lines += tail(Path(selected_row['log_path']), max(1, height-len(lines)-2))
         else:
             lines += ['No jobs yet']
-    return lines[:height-1] + ['j/k scroll r back q' if view==12 else 'j/k scroll u back q' if view==11 else 'j/k move r workbench v q']
+    return lines[:height-1] + ['j/k scroll r back q' if view==12 else 'j/k scroll u back q' if view==11 else 'j/k move v views q']
 
 
 def prompt(screen, title, initial=''):
