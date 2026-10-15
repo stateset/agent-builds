@@ -135,6 +135,14 @@ modern `server/discover` probe, allowing clients that support legacy MCP to use
 their documented fallback. Modern-only clients are not supported in this release.
 No HTTP endpoint is exposed. Only protocol messages are written to stdout.
 
+The normal regression suite includes real stdio sessions with isolated state.
+An optional interoperability check uses the official Python client SDK v1 in a
+separate Python 3.10+ environment (`mcp<2`): queue
+`/path/to/sdk-python tools/verify_mcp_client.py --output /tmp/new-mcp-check.json`.
+It verifies discovery, reconnects, duplicate prevention, native failures and a
+complete plan without submitting production fixture jobs. The SDK is a test-only
+dependency; the server continues to run on Python 3.8+ with the standard library.
+
 Input messages are limited to 256 KiB; oversize input closes the connection after
 an error. Responses are capped at 2 MiB, status results at 50 jobs, and argv at
 128 entries/32 KiB. Inspection opens are read-only and never initialize/migrate
