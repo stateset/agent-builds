@@ -1,0 +1,3 @@
+#!/usr/bin/env python3
+from agent_builds.__main__ import main
+raise SystemExit(main())
