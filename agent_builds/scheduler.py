@@ -3,7 +3,7 @@ import time
 
 from .locks import keys, overlaps
 
-POLICY_VERSION = 'quick-aging-locks-v3'
+POLICY_VERSION = 'protected-verification-v4'
 
 
 def capacity_reason(row, running, config, now):
@@ -16,9 +16,9 @@ def capacity_reason(row, running, config, now):
     if row['lane'] == 'heavy':
         if sum(r['lane'] == 'heavy' for r in running) >= config['max_heavy']:
             return 'heavy job budget'
-        if now-row['created'] < config['aging_seconds']:
+        if config.get('protected_quick') or now-row['created'] < config['aging_seconds']:
             if sum(r['slots'] for r in running if r['lane']=='heavy') + row['slots'] > config['cpu_slots']-config['quick_reserve_slots']:
-                return 'capacity reserved for quick checks; heavy jobs gain priority with age'
+                return 'protected capacity reserved for quick checks' if config.get('protected_quick') else 'capacity reserved for quick checks; heavy jobs gain priority with age'
             if sum(r['lane']=='heavy' for r in running)+1 > config['max_running']-config['quick_reserve_jobs']:
                 return 'job capacity reserved for quick checks'
             if sum(r['memory_gb'] for r in running if r['lane']=='heavy')+row['memory_gb'] > config['memory_gb']-config['quick_reserve_memory_gb']:
@@ -80,7 +80,7 @@ def choose(queued, running, config, available_gb, disk_free, allow_backfill=True
             return row, skipped
         skipped[row['id']] = reason
         # Let existing jobs drain for the oldest aged job. Do not preempt them.
-        if aged(row):
+        if aged(row) and not (config.get('protected_quick') and 'reserved for quick checks' in reason):
             if allow_backfill:
                 for candidate in ordered:
                     if candidate['id'] == row['id'] or candidate['lane'] != 'quick' or candidate['scratch_gb']:

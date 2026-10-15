@@ -61,7 +61,7 @@ def payload_digest(kind, arguments):
 
 
 def submit(name, arguments):
-    if name not in ('buildr_submit', 'buildr_plan_submit', 'buildr_watch_submit'):
+    if name not in ('buildr_submit', 'buildr_batch_submit', 'buildr_plan_submit', 'buildr_watch_submit'):
         raise ValueError('Unsupported durable submission kind')
     if not isinstance(arguments.get('request_key'), str) or not re.fullmatch(r'[A-Za-z0-9._:-]{8,128}', arguments['request_key']):
         raise ValueError('Request key must be 8 to 128 letters, numbers, dots, underscores, colons or hyphens')
@@ -90,11 +90,17 @@ def submit(name, arguments):
         elif name == 'buildr_plan_submit':
             definition = plans.validate(arguments['manifest'], root, config)
         else:
-            if not arguments['command'][0] or sum(len(x) for x in arguments['command']) > 32768:
+            batch_mode = name=='buildr_batch_submit'
+            if batch_mode:
+                from .batch import command
+                submitted_command=command(arguments['manifest'])
+            else:
+                submitted_command=arguments['command']
+            if not submitted_command[0] or sum(len(x) for x in submitted_command) > (40000 if batch_mode else 32768):
                 raise ValueError('Command must have an executable and at most 32 KiB of arguments')
             lane = arguments.get('lane', 'quick')
-            jobs = arguments.get('jobs', config[lane+'_jobs'])
-            memory = arguments.get('memory_gb', 6 if lane == 'heavy' else 2)
+            jobs = arguments.get('jobs', 1 if batch_mode else config[lane+'_jobs'])
+            memory = arguments.get('memory_gb', 1 if batch_mode else 6 if lane == 'heavy' else 2)
             if jobs > config['cpu_slots'] or memory > config['memory_gb']:
                 raise ValueError('Requested reservation exceeds the current machine budget')
             if arguments.get('backend') == 'docker' and not arguments.get('image', config['docker_image']):
@@ -108,17 +114,21 @@ def submit(name, arguments):
             args.lane = lane
             args.jobs, args.memory_gb = jobs, memory
             args.track_source = arguments.get('track_source', True)
-            args.command = arguments['command']
+            if batch_mode:
+                args.timeout=arguments.get('timeout',60)
+            from .protection import validate_job
+            validate_job(dict(config,protected_quick=config['protected_quick_requested']),lane,jobs,memory)
+            args.command = submitted_command
     finally:
         with_reader.close()
     store = Store()
     try:
         key = arguments['request_key']
         receipt = store.root/('receipt-mcp-'+hashlib.sha256(key.encode()).hexdigest()+'.json')
-        result = dict(receipt_path=str(receipt)) if name == 'buildr_submit' else {}
+        result = dict(receipt_path=str(receipt)) if name in ('buildr_submit','buildr_batch_submit') else {}
         if reserve(store, name, arguments, result):
             try:
-                if name == 'buildr_submit':
+                if name in ('buildr_submit','buildr_batch_submit'):
                     result.update(submit_detached(args, receipt=receipt, retain_receipt=True))
                 elif name == 'buildr_watch_submit':
                     result['watch_id'] = external.create(store, definition)

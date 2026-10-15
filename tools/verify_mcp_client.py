@@ -53,7 +53,7 @@ async def verify(output):
         async with ClientSession(reader, writer) as session:
             initialized = await session.initialize()
             tools = await session.list_tools()
-            assert len(tools.tools) == 17
+            assert len(tools.tools) == 19
             assert all(tool.inputSchema['type'] == 'object' for tool in tools.tools)
             status = await call(session, 'buildr_status', {})
             assert status['initialized'] is False
@@ -128,9 +128,22 @@ async def verify(output):
                 command=[sys.executable,'-c','print("serialized shared output")']))
             lock_result=await call(session,'buildr_wait',dict(job_ids=[first_lock['result']['job_id'],second_lock['result']['job_id']],timeout=5))
             assert lock_result['complete'] and lock_result['exit_code']==0
+            batch_args=dict(request_key=key+'-batch',cwd=str(root),manifest=dict(checks=[
+                dict(name='first',command=[sys.executable,'-c','print("first")']),
+                dict(name='native-failure',command=[sys.executable,'-c','raise SystemExit(7)']),
+                dict(name='last',command=[sys.executable,'-c','print("last")'])]))
+            batched=await call(session,'buildr_batch_submit',batch_args)
+            again=await call(session,'buildr_batch_submit',batch_args)
+            assert again['result']['job_id']==batched['result']['job_id']
+            batch_result=await call(session,'buildr_wait',dict(job_ids=[batched['result']['job_id']],timeout=5))
+            assert batch_result['complete'] and batch_result['exit_code']==7
+            batch_job=await call(session,'buildr_job',dict(job_id=batched['result']['job_id']))
+            assert [check['exit_code'] for check in batch_job['batch']['checks']]==[0,7,0]
+            latency=await call(session,'buildr_latency',dict(target_seconds=30))
+            assert latency['changes_applied'] is False and latency['cohorts']
     reader = Store(state, read_only=True)
     try:
-        assert len(reader.rows()) == 7  # prior five jobs plus two shared-output jobs
+        assert len(reader.rows()) == 8  # prior seven jobs plus one three-check batch
         other=reader.get(full_budget['result']['job_id'])
         first=reader.get(watch['probes'][0]['job_id'])
         second=reader.get(watch['probes'][1]['job_id'])
@@ -151,7 +164,8 @@ async def verify(output):
                 'plan validation', 'plan submission', 'plan completion','external pending probe',
                 'external watch duplicate prevention','full CPU budget admitted during external idle',
                 'external completion','additional locks survive server reconnect',
-                'competing checkouts serialize on shared additional output'], production_jobs_submitted=0,
+                'competing checkouts serialize on shared additional output',
+                'batch duplicate prevention and per-check native outcomes','read-only latency report'], production_jobs_submitted=0,
         shared_output_locks=dict(first_job_id=lock_a['id'],second_job_id=lock_b['id'],
             competing_submission=True,overlap=False,second_wait_seconds=lock_b['wait_seconds']),
         external_watch=dict(wall_seconds=watch['elapsed_seconds'],idle_without_reservation_seconds=watch['external_idle_seconds'],

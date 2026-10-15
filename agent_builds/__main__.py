@@ -39,6 +39,27 @@ def parser():
     run.add_argument('--detach', action='store_true', help='Return a durable job handle and keep the runner alive after this terminal exits')
     run.add_argument('--receipt-file', help=argparse.SUPPRESS)
     run.add_argument('command', nargs=argparse.REMAINDER)
+    batches = sub.add_parser('batch', help='Run related short checks in one local reservation')
+    batch_sub = batches.add_subparsers(dest='batch_action', required=True)
+    batch_run = batch_sub.add_parser('run')
+    batch_run.add_argument('manifest')
+    batch_run.add_argument('--cwd', default=os.getcwd())
+    batch_run.add_argument('--jobs', type=int, default=1)
+    batch_run.add_argument('--memory-gb', type=float, default=1)
+    batch_run.add_argument('--timeout', type=float, default=60)
+    batch_run.add_argument('--resource-key')
+    batch_run.add_argument('--lock', dest='locks', action='append', default=[])
+    batch_run.add_argument('--detach', action='store_true')
+    batch_run.add_argument('--events-json', action='store_true')
+    batch_show = batch_sub.add_parser('show')
+    batch_show.add_argument('job')
+    batch_worker = sub.add_parser('batch-worker', help=argparse.SUPPRESS)
+    batch_worker.add_argument('definition')
+    latency = sub.add_parser('latency', help='Read queue latency, slow checks and measured reservation trials')
+    latency.add_argument('--hours', type=float, default=24)
+    latency.add_argument('--target-seconds', type=float, default=30)
+    latency.add_argument('--repo')
+    latency.add_argument('--json', action='store_true')
     status = sub.add_parser('status', help='Show jobs and machine pressure')
     status.add_argument('--json', action='store_true')
     status.add_argument('--summary', action='store_true', help='Only machine resources, budgets and job counts')
@@ -278,6 +299,32 @@ def main():
     else:
         args = parser().parse_args(arguments)
     try:
+        if args.action == 'batch-worker':
+            from .batch import run
+            return run(args.definition)
+        if args.action == 'batch':
+            from . import batch
+            if args.batch_action=='show':
+                reader=Store(read_only=True)
+                try:
+                    print(json.dumps(reader.get(args.job)['batch'],indent=2))
+                finally:
+                    reader.close()
+                return 0
+            if args.timeout>300:
+                raise ValueError('Batch timeout must be at most 300 seconds')
+            with Path(args.manifest).expanduser().open('rb') as manifest:
+                raw=manifest.read(32769)
+            if len(raw)>32768:
+                raise ValueError('Batch manifest exceeds 32 KiB')
+            definition=batch.validate(json.loads(raw))
+            run_args=parser().parse_args(['run','--','placeholder'])
+            for key in ('cwd','jobs','memory_gb','timeout','resource_key','locks','detach','events_json'):
+                setattr(run_args,key,getattr(args,key))
+            run_args.lane='quick'
+            run_args.track_source=True
+            run_args.command=batch.command(definition)
+            return execute(run_args)
         if args.action == 'watch-worker':
             from .external import control
             control(args.watch)
@@ -362,7 +409,7 @@ def main():
             from .announce import work
             work(args.announcement)
             return 0
-        inspection = (args.action in ('status', 'logs', 'show', 'wait', 'announcements', 'processes', 'doctor', 'stats', 'disk', 'advise', 'simulate')
+        inspection = (args.action in ('latency', 'status', 'logs', 'show', 'wait', 'announcements', 'processes', 'doctor', 'stats', 'disk', 'advise', 'simulate')
             or (args.action == 'config' and not args.init and not args.set)
             or (args.action == 'clean' and not args.apply)
             or (args.action == 'task' and args.task_action == 'list')
@@ -473,7 +520,10 @@ def main():
                         else:
                             print(json.dumps(result, indent=2))
                     return result['exit_code'] if args.plan_action == 'wait' else 0
-            if args.action == 'config':
+            if args.action == 'latency':
+                from .latency import report
+                print(json.dumps(report(store,args.hours,args.target_seconds,args.repo),indent=2))
+            elif args.action == 'config':
                 if args.set:
                     changes = {}
                     for entry in args.set:

@@ -18,7 +18,7 @@ from . import __version__
 DEFAULTS = dict(cpu_slots=6, max_running=3, max_heavy=2, memory_gb=16,
                 min_free_gb=10, quick_jobs=2, heavy_jobs=3, nice=10,
                 timeout_seconds=7200, docker_image='', min_available_gb=4, paused=False,
-                quick_reserve_slots=2, quick_reserve_jobs=1, quick_reserve_memory_gb=2, aging_seconds=120)
+                quick_reserve_slots=2, quick_reserve_jobs=1, quick_reserve_memory_gb=2, aging_seconds=120, protected_quick=False)
 TERMINAL = ('succeeded', 'failed', 'cancelled', 'lost')
 STATES = ('queued', 'running', 'cancelling', 'succeeded', 'failed', 'cancelled', 'lost')
 
@@ -83,9 +83,17 @@ class Store:
                                      ('wait_history', "TEXT NOT NULL DEFAULT '{}'"),
                                      ('runner_version', "TEXT NOT NULL DEFAULT ''"),
                                      ('lock_protocol', 'INTEGER NOT NULL DEFAULT 0'),
-                                     ('resource_keys', "TEXT NOT NULL DEFAULT '[]'")]:
+                                     ('resource_keys', "TEXT NOT NULL DEFAULT '[]'"),
+                                     ('batch', "TEXT NOT NULL DEFAULT '{}'"),
+                                     ('admission', "TEXT NOT NULL DEFAULT '{}'"),
+                                     ('reserve_protocol', 'INTEGER NOT NULL DEFAULT 0')]:
                 if name not in columns:
                     self.db.execute('ALTER TABLE jobs ADD COLUMN ' + name + ' ' + definition)
+            self.db.execute('CREATE TABLE IF NOT EXISTS admission_policy (id INTEGER PRIMARY KEY CHECK(id=1), requested INTEGER NOT NULL DEFAULT 0, effective INTEGER NOT NULL DEFAULT 0)')
+            self.db.execute('INSERT OR IGNORE INTO admission_policy (id) VALUES (1)')
+            self.db.execute("""CREATE TRIGGER IF NOT EXISTS protected_policy_guard BEFORE INSERT ON jobs
+                WHEN NEW.reserve_protocol!=1 AND (SELECT effective FROM admission_policy WHERE id=1)=1
+                BEGIN SELECT RAISE(ABORT, 'Protected quick capacity active; use the installed Buildr runner'); END""")
             self.db.execute('CREATE TABLE IF NOT EXISTS job_locks (job_id TEXT NOT NULL, resource_key TEXT NOT NULL, PRIMARY KEY(job_id,resource_key))')
             # Old workers ignore additional locks. A legacy insertion on an
             # active extra key must fail BEFORE it creates any work or handle.
@@ -140,7 +148,12 @@ class Store:
         result = dict(DEFAULTS)
         if self.config_path.exists():
             result.update(json.loads(self.config_path.read_text()))
-        return self.validate_config(result)
+        self.validate_config(result)
+        from .protection import exists
+        row = self.db.execute('SELECT requested,effective FROM admission_policy WHERE id=1').fetchone() if exists(self) else (0, 0)
+        result.update(protected_quick=bool(row[1]), protected_quick_requested=bool(row[0]),
+                      protected_quick_pending=bool(row[0] and not row[1]))
+        return result
 
     @staticmethod
     def validate_config(result):
@@ -161,6 +174,8 @@ class Store:
             raise ValueError('quick_reserve_memory_gb must be below the total memory budget')
         if type(result['nice']) is not int or not 0 <= result['nice'] <= 19:
             raise ValueError('nice must be an integer between zero and 19')
+        if not isinstance(result['protected_quick'], bool):
+            raise ValueError('protected_quick must be true or false')
         if not isinstance(result['paused'], bool):
             raise ValueError('paused must be true or false')
         if not isinstance(result['docker_image'], str):
@@ -172,6 +187,23 @@ class Store:
             result = self.config()
             result.update(changes)
             self.validate_config(result)
+            from .protection import activate, status, validate_job
+            control = status(self, result)
+            requested = changes.get('protected_quick', control['requested'])
+            if control['effective']:
+                # Reject reserve edits that would invalidate active reservations.
+                if any(key in changes for key in ('cpu_slots','max_running','memory_gb','quick_reserve_slots','quick_reserve_jobs','quick_reserve_memory_gb')):
+                    for row in self.db.execute("SELECT * FROM jobs WHERE state IN ('queued','held','running','cancelling')"):
+                        validate_job(dict(result, protected_quick=True), row['lane'], row['slots'], row['memory_gb'])
+                    heavy = list(self.db.execute("SELECT * FROM jobs WHERE state IN ('running','cancelling') AND lane='heavy'"))
+                    if (sum(row['slots'] for row in heavy)>result['cpu_slots']-result['quick_reserve_slots'] or
+                            sum(row['memory_gb'] for row in heavy)>result['memory_gb']-result['quick_reserve_memory_gb'] or
+                            len(heavy)>result['max_running']-result['quick_reserve_jobs']):
+                        raise ValueError('Wait for active heavy reservations to drain before changing protected reserves')
+            self.db.execute('UPDATE admission_policy SET requested=?,effective=CASE WHEN ?=0 THEN 0 ELSE effective END WHERE id=1', (int(requested), int(requested)))
+            activate(self, result)
+            result = {key:value for key,value in result.items() if key not in ('protected_quick_requested','protected_quick_pending')}
+            result['protected_quick'] = requested
             temporary = self.root / ('config-' + uuid.uuid4().hex + '.tmp')
             try:
                 with temporary.open('x') as handle:
@@ -233,6 +265,10 @@ class Store:
         row['origin'] = json.loads(row.get('herdr') or '{}')
         row['usage'] = json.loads(row.get('usage') or '{}')
         row['source'] = json.loads(row.get('source') or '{}')
+        row['admission'] = json.loads(row.get('admission') or '{}')
+        row['batch'] = json.loads(row.get('batch') or '{}')
+        from .batch import summary
+        row['batch'] = summary(row)
         row['runner_version'] = row.get('runner_version') or 'unrecorded'
         row['worker_budget'] = worker_budget(row['argv'], row['slots'])
         if row['state'] == 'queued' and row['wait_context']:
@@ -258,7 +294,7 @@ class Store:
                 age_priority=row['wait_seconds'] >= config['aging_seconds'] if known_policy else None,
                 aging_seconds=config['aging_seconds'], quick_reserve_slots=config['quick_reserve_slots'],
                 quick_reserve_jobs=config['quick_reserve_jobs'], quick_reserve_memory_gb=config['quick_reserve_memory_gb'],
-                preemption=False, note='Age grants admission priority, not a guaranteed start time. Only aged jobs may borrow quick capacity.' if known_policy else
+                preemption=False, note=('Age grants admission priority, not a guaranteed start time. Protected quick capacity cannot be borrowed.' if config['protected_quick'] else 'Age grants admission priority, not a guaranteed start time. Only aged jobs may borrow quick capacity.') if known_policy else
                 'Runner policy is unrecorded or unknown. Current configuration may not apply to this already-loaded runner.')
         if row['state'] in ('queued', 'running', 'cancelling'):
             # A read-only client may be inside an agent PID namespace. Its
@@ -324,13 +360,21 @@ class Store:
         # The job and all its locks become visible atomically. Prepared plan
         # and watch jobs already hold an enclosing write transaction.
         with contextlib.nullcontext() if self.db.in_transaction else self.transaction():
+            from .protection import activate, validate_job
+            activate(self)
+            current = self.config()
+            # Revalidate against policy activation or configuration changes that
+            # committed while submission was preparing its argv/source snapshot.
+            if slots>current['cpu_slots'] or memory>current['memory_gb']:
+                raise ValueError('Job reservation exceeds current machine budget')
+            validate_job(dict(current, protected_quick=current['protected_quick_requested']), lane, slots, memory)
             self.db.execute('''INSERT INTO jobs
                 (id,state,created,owner_pid,owner_start,cwd,command,backend,lane,
-                 slots,memory_gb,resource_key,image,timeout,herdr,min_free_gb,scratch_gb,policy_version,wait_history,runner_version,lock_protocol,resource_keys)
-                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+                 slots,memory_gb,resource_key,image,timeout,herdr,min_free_gb,scratch_gb,policy_version,wait_history,runner_version,lock_protocol,resource_keys,reserve_protocol)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
                 (job, 'held' if len(resources)>1 else 'queued', created, os.getpid(), identity(os.getpid()), str(cwd),
                  json.dumps(command), backend, lane, slots, memory, resource_key, image,
-                 timeout, json.dumps(origin), min_free_gb, scratch_gb, POLICY_VERSION, json.dumps(waits.begin(created)), __version__, 1, json.dumps(resources)))
+                 timeout, json.dumps(origin), min_free_gb, scratch_gb, POLICY_VERSION, json.dumps(waits.begin(created)), __version__, 1, json.dumps(resources), 1))
             self.db.executemany('INSERT INTO job_locks VALUES (?,?)', [(job, key) for key in resources])
         return job
 
@@ -352,8 +396,10 @@ class Store:
                 self.finish(row['id'], state, None, 'owner exited; inspect logs before retrying')
 
     def claim(self, job):
-        config = self.config()
         with self.transaction():
+            from .protection import activate
+            activate(self)
+            config = self.config()
             row = self.get(job)
             if row['cancel_requested']:
                 return False
@@ -430,8 +476,10 @@ class Store:
                 return False
             now = time.time()
             history = waits.advance(row['wait_history'], now) if row['wait_history'] else {}
-            self.db.execute("UPDATE jobs SET state='running',started=?,reason='',wait_context='{}',wait_history=? WHERE id=?",
-                            (now, json.dumps(history), job))
+            admission={key:config[key] for key in ('cpu_slots','max_running','max_heavy','memory_gb',
+                'quick_reserve_slots','quick_reserve_jobs','quick_reserve_memory_gb','protected_quick','aging_seconds')}
+            self.db.execute("UPDATE jobs SET state='running',started=?,reason='',wait_context='{}',wait_history=?,admission=? WHERE id=?",
+                            (now, json.dumps(history), json.dumps(admission), job))
             self._reservation_cache = None
             return True
 

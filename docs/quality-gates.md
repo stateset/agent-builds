@@ -32,3 +32,13 @@ The v0.11 paired experiment harness adds actual fixture outcomes and costs under
 the same outer reservation. It is a controlled comparison, not a productivity
 claim about autonomous coding. Optional local AI ranks existing evidence-backed
 trials; it cannot apply settings. See [measuring and optimizing](optimization.md).
+
+
+v0.15 adds guarded protected reserves, batched per-check acceptance results and
+actual admission snapshots. Release checks cover activation while old work is
+queued/running, old insert rejection before creation, heavy progress, native
+failures, cancellation, timeout and read-only behavior. Counterbalanced fixtures
+measure quick latency alongside the heavy completion cost and batching overhead;
+publication requires reporting both gains and costs. An A+ productivity claim
+still requires prospective matched real coding tasks, rather than a higher test
+count alone. See [verification](verification.md).

@@ -56,6 +56,13 @@ TOOLS = [
         backend=dict(type='string', enum=['local', 'docker'], default='local'), image=string(), resource_key=string(), locks=LOCKS,
         track_source=dict(type='boolean', default=True), min_free_gb=dict(type='number', minimum=0), scratch_gb=dict(type='number', minimum=0)),
         ('request_key', 'cwd', 'command'), read=False),
+    tool('buildr_batch_submit', 'Run up to 32 related foreground checks under one local quick reservation, preserving per-check native outcomes. Use the same request key and exact arguments after reconnecting.', dict(
+        request_key=KEY,cwd=CWD,manifest=dict(type='object'),
+        jobs=dict(type='integer',minimum=1,maximum=64),memory_gb=dict(type='number',exclusiveMinimum=0,maximum=1024),
+        timeout=dict(type='number',exclusiveMinimum=0,maximum=300),resource_key=string(),locks=LOCKS,
+        track_source=dict(type='boolean',default=True)),('request_key','cwd','manifest'),read=False),
+    tool('buildr_latency', 'Inspect queue latency targets, active overdue work, policy cohorts and evidence-backed reservation trials. Does not tune budgets.', dict(
+        hours=dict(type='number',exclusiveMinimum=0,maximum=8760,default=24),target_seconds=dict(type='number',exclusiveMinimum=0,maximum=3600,default=30),repo=CWD)),
     tool('buildr_submission', 'Inspect a durable submission key after reconnecting. Does not submit, recover jobs or change state.',
          dict(request_key=KEY), ('request_key',)),
     tool('buildr_job', 'Inspect one stable job handle, native result, reservations, source observations and wait explanation.',
@@ -135,7 +142,7 @@ def validate(value, spec, path='arguments'):
 def compact(row):
     fields = ('id', 'state', 'cwd', 'backend', 'lane', 'slots', 'memory_gb', 'resource_key', 'resource_keys', 'lock_protocol', 'exit_code',
               'reason', 'wait_seconds', 'elapsed_seconds', 'log_path', 'usage', 'runner_version', 'policy_version',
-              'origin', 'source', 'wait_breakdown', 'worker_budget')
+              'origin', 'source', 'admission', 'batch', 'wait_context', 'wait_breakdown', 'worker_budget')
     result = {key: row[key] for key in fields if key in row}
     result['command_display'] = row['command_display'][:4096]
     result['command_display_truncated'] = len(row['command_display']) > 4096
@@ -149,7 +156,7 @@ def call(name, args, read_only=False):
     validate(args, spec['inputSchema'])
     if read_only and not spec['annotations']['readOnlyHint']:
         raise ValueError('This Buildr MCP server is read-only; nothing was changed')
-    if name in ('buildr_submit', 'buildr_plan_submit', 'buildr_watch_submit'):
+    if name in ('buildr_submit', 'buildr_batch_submit', 'buildr_plan_submit', 'buildr_watch_submit'):
         return submit(name, args)
     store = Store(read_only=spec['annotations']['readOnlyHint'])
     try:
@@ -167,6 +174,9 @@ def call(name, args, read_only=False):
                     external.spawn(store,args['watch_id'])
             with store.read_snapshot():
                 return external.get(store,args['watch_id'])
+        if name == 'buildr_latency':
+            from .latency import report
+            return report(store,args.get('hours',24),args.get('target_seconds',30),args.get('repo'))
         if name == 'buildr_status':
             from .external import counts as watch_counts
             with store.read_snapshot():

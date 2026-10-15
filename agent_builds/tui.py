@@ -212,6 +212,7 @@ def main(screen, cwd):
             else:
                 context = ' | Herdr ' + os.environ.get('HERDR_PANE_ID', '') if os.environ.get('HERDR_ENV') == '1' else ''
                 title = 'BUILDR v' + __version__ + (' [PAUSED]' if config['paused'] else '')
+                title += ' [quick protected]' if config.get('protected_quick') else ' [protection draining]' if config.get('protected_quick_pending') else ''
                 paint(screen, 0, 0, title + ' | shared queue' + context, curses.A_BOLD | curses.color_pair(1))
                 paint(screen, 1, 0, 'CPU {} logical | load {:.1f} | RAM available {:.1f}/{:.1f} GiB | disk free {:.1f} GiB'.format(
                     metrics['cpus'], metrics['load'], metrics['available_gb'], metrics['total_gb'], metrics['free_gb']))
@@ -266,6 +267,8 @@ def main(screen, cwd):
                         'Cargo build setting: {} ({})'.format(workers['cargo_build']['configured_value'], workers['cargo_build']['source']),
                         'Rust test setting: {} ({})'.format(workers['rust_tests']['configured_value'], workers['rust_tests']['source']),
                         'Worker settings describe configuration; runtime concurrency is not measured.']
+                    for check in row.get('batch',{}).get('checks',[]):
+                        lines += ['Check {}: {} | native exit {}'.format(check['name'],check['state'],check['exit_code'])]
                     usage = row['usage']
                     if usage:
                         lines += ['Measured CPU {:.2f}s | sampled peak RSS {:.3f} GiB | {} samples'.format(

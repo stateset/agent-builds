@@ -437,3 +437,12 @@ examples, exact-key semantics and compatibility with older running workers.
 Detached workers now launch from their own package directory, so another
 checkout named `agent_builds` cannot replace the worker implementation. The
 build command still executes in the explicitly selected working directory.
+
+## v0.15.0: verification responsiveness
+
+`buildr batch run checks.json` submits related short checks under one reservation
+with separate native outcomes. `buildr latency --json` reports target attainment,
+active overdue jobs and measured reservation trials. Protected quick capacity is
+requested with `buildr config --set protected_quick=true`; activation waits for
+incompatible workers to drain and keeps total CPU/RAM/job budgets unchanged.
+See [verification](docs/verification.md) for tradeoffs, examples and evidence limits.

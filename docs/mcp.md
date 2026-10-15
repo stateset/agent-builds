@@ -173,3 +173,14 @@ and are acquired atomically. Inline plan stages accept the same field.
 `buildr_job` and compact status jobs expose `resource_keys` and `lock_protocol`.
 Use exactly the same arguments, including locks, when reconnecting with a
 submission key. See [resource locks](resource-locks.md) for mixed-version behavior.
+
+### Verification tools (v0.15)
+
+`buildr_batch_submit` accepts `request_key`, `cwd` and an inline `manifest` with
+named foreground `checks`; optional `jobs`, `memory_gb`, `timeout`, `resource_key`
+and `locks` describe one local quick reservation. It defaults to one CPU, 1 GiB
+and a 60-second total timeout. Native results appear in the existing `buildr_job`
+and `buildr_wait` outputs under `batch`. Reuse the exact submission key/arguments
+after disconnecting. `buildr_latency` is read-only and accepts `hours`, `repo`
+and `target_seconds`. There are now 19 tools, 11 available in read-only mode.
+See [verification](verification.md) for protected-mode behavior and limitations.

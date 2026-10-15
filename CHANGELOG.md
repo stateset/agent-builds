@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.15.0
+
+- Add protected quick reserves with transactional activation after incompatible
+  workers drain. Prevent old inserts from bypassing the active policy; retain
+  existing hardware budgets, locks, cancellation and uncertain-result safeguards.
+- Add one-reservation batches with per-check native results, fail-fast/continue
+  behavior, durable handles and process-group cancellation/timeout.
+- Add read-only latency targets, censored waiting observations, actual admission
+  snapshots and evidence-backed reservation trials without automatic tuning.
+- Add MCP batch submission and latency inspection, dashboard check outcomes and
+  protection state, plus controlled counterbalanced latency/overhead comparisons.
+
 ## 0.14.0
 
 - Add atomic acquisition of a primary resource key and up to 15 additional
