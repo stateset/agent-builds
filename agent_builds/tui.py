@@ -195,7 +195,8 @@ def main(screen, cwd):
                         lines += ['Job resource usage has not been measured.']
                     if row.get('scheduling'):
                         policy = row['scheduling']
-                        lines += ['Age priority: {} | threshold {}s | quick reserve {} CPU / {} jobs / {} GiB'.format(
+                        lines += ['Runner policy: {}'.format(policy['policy_version']),
+                            'Age priority: {} | threshold {}s | current quick reserve {} CPU / {} jobs / {} GiB'.format(
                             policy['age_priority'], policy['aging_seconds'], policy['quick_reserve_slots'],
                             policy['quick_reserve_jobs'], policy['quick_reserve_memory_gb']), policy['note']]
                     if context:

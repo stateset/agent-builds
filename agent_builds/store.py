@@ -11,7 +11,7 @@ import uuid
 
 from .metrics import snapshot
 from .budgets import worker_budget
-from .scheduler import choose
+from .scheduler import POLICY_VERSION, choose
 
 DEFAULTS = dict(cpu_slots=6, max_running=3, max_heavy=2, memory_gb=16,
                 min_free_gb=10, quick_jobs=2, heavy_jobs=3, nice=10,
@@ -75,7 +75,8 @@ class Store:
             for name, definition in [('min_free_gb', 'REAL NOT NULL DEFAULT 0'),
                                      ('scratch_gb', 'REAL NOT NULL DEFAULT 0'),
                                      ('wait_context', "TEXT NOT NULL DEFAULT '{}'"),
-                                     ('usage', "TEXT NOT NULL DEFAULT '{}'")]:
+                                     ('usage', "TEXT NOT NULL DEFAULT '{}'"),
+                                     ('policy_version', "TEXT NOT NULL DEFAULT ''")]:
                 if name not in columns:
                     self.db.execute('ALTER TABLE jobs ADD COLUMN ' + name + ' ' + definition)
         self.db.execute('''CREATE TABLE IF NOT EXISTS announcements (
@@ -197,10 +198,13 @@ class Store:
         row['age_seconds'] = max(0, (row['finished'] or time.time()) - row['created'])
         if row['state'] == 'queued':
             config = self.config()
-            row['scheduling'] = dict(age_priority=row['wait_seconds'] >= config['aging_seconds'],
+            known_policy = row.get('policy_version') == POLICY_VERSION
+            row['scheduling'] = dict(policy_version=row.get('policy_version') or 'unrecorded', policy_known=known_policy,
+                age_priority=row['wait_seconds'] >= config['aging_seconds'] if known_policy else None,
                 aging_seconds=config['aging_seconds'], quick_reserve_slots=config['quick_reserve_slots'],
                 quick_reserve_jobs=config['quick_reserve_jobs'], quick_reserve_memory_gb=config['quick_reserve_memory_gb'],
-                preemption=False, note='Age grants admission priority, not a guaranteed start time. Only aged jobs may borrow quick capacity.')
+                preemption=False, note='Age grants admission priority, not a guaranteed start time. Only aged jobs may borrow quick capacity.' if known_policy else
+                'Runner policy is unrecorded or unknown. Current configuration may not apply to this already-loaded runner.')
         if row['state'] in ('queued', 'running', 'cancelling'):
             # A read-only client may be inside an agent PID namespace. Its
             # /proc view cannot establish that a host runner has exited.
@@ -260,11 +264,11 @@ class Store:
         origin.update(herdr or {})
         self.db.execute('''INSERT INTO jobs
             (id,state,created,owner_pid,owner_start,cwd,command,backend,lane,
-             slots,memory_gb,resource_key,image,timeout,herdr,min_free_gb,scratch_gb)
-            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+             slots,memory_gb,resource_key,image,timeout,herdr,min_free_gb,scratch_gb,policy_version)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
             (job, 'queued', time.time(), os.getpid(), identity(os.getpid()), str(cwd),
              json.dumps(command), backend, lane, slots, memory, resource_key, image,
-             timeout, json.dumps(origin), min_free_gb, scratch_gb))
+             timeout, json.dumps(origin), min_free_gb, scratch_gb, POLICY_VERSION))
         return job
 
     def recover(self):

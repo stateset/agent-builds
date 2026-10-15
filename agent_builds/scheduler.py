@@ -1,6 +1,8 @@
 """Admission ordering; callers hold the queue's SQLite write transaction."""
 import time
 
+POLICY_VERSION = 'quick-aging-v1'
+
 
 def choose(queued, running, config, available_gb, disk_free):
     now = time.time()

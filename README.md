@@ -123,6 +123,9 @@ Dedicated SSH workers are opt-in; see [worker setup](docs/workers.md). Nothing
 connects or offloads automatically. Existing Hetzner infrastructure is untouched.
 After an upgrade, already-running and queued runner processes keep their loaded
 policy; newly submitted jobs use the new policy. No runners are restarted.
+New jobs record their scheduler policy version. Old queued runners show an
+unrecorded policy and unknown age eligibility rather than claiming that the new
+rules apply to them.
 
 ## v0.5.0: understand the work using capacity
 

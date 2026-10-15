@@ -18,6 +18,8 @@
   tails, group statistics by lane/reservation, and mark active caches in inventory.
 - Retain explicit output-directory locks in task shortcuts; reject invalid budget
   types and zero worker counts without silently replacing them with defaults.
+- Record scheduler policy on new submissions; report legacy runner policy as
+  unknown rather than attributing new aging rules to already-loaded old runners.
 
 ## 0.5.0
 

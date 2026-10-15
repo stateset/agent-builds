@@ -200,6 +200,15 @@ class ImprovementTests(unittest.TestCase):
         finally:
             reader.close()
 
+    def test_legacy_runners_are_not_claimed_to_use_the_new_policy(self):
+        job = self.job('legacy')
+        self.age(job)
+        self.store.db.execute("UPDATE jobs SET policy_version='' WHERE id=?", (job,))
+        policy = self.store.get(job)['scheduling']
+        self.assertFalse(policy['policy_known'])
+        self.assertIsNone(policy['age_priority'])
+        self.assertEqual(policy['policy_version'], 'unrecorded')
+
     def test_config_cli_validates_updates_without_partial_write(self):
         good = self.cli('config', '--set', 'quick_reserve_slots=1', '--set', 'aging_seconds=45')
         self.assertEqual(good.returncode, 0, good.stderr)
