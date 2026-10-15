@@ -46,8 +46,10 @@ async def verify(output):
         return result.structuredContent
 
     key = 'official-sdk-'+uuid.uuid4().hex
+    helper = root/'declared-helper'
+    helper.write_text('original SDK helper')
     arguments = dict(request_key=key, cwd=str(root), lane='quick', jobs=1, memory_gb=.25,
-        resource_key='sdk-checkout', locks=['sdk-output'],
+        resource_key='sdk-checkout', locks=['sdk-output'], input_files=['declared-helper'],
         track_source=False, command=[sys.executable, '-c', 'import time; print("official-client-fixture"); time.sleep(.2); raise SystemExit(7)'])
     async with stdio_client(parameters) as (reader, writer):
         async with ClientSession(reader, writer) as session:
@@ -69,6 +71,7 @@ async def verify(output):
             receipt = await call(session, 'buildr_submit', arguments)
             handle = receipt['result']['job_id']
     # A fresh server process must recover the same durable result after disconnect.
+    helper.write_text('changed after original submission')
     async with stdio_client(parameters) as (reader, writer):
         async with ClientSession(reader, writer) as session:
             await session.initialize()
@@ -78,9 +81,11 @@ async def verify(output):
             assert result['complete'] and result['exit_code'] == 7
             job = await call(session, 'buildr_job', dict(job_id=handle))
             assert job['resource_keys'] == ['sdk-checkout', 'sdk-output']
+            import hashlib
+            assert job['source']['submission']['inputs']['files'][0]['sha256'] == hashlib.sha256(b'original SDK helper').hexdigest()
             logs = await call(session, 'buildr_logs', dict(job_id=handle, lines=10))
             assert any('official-client-fixture' in line for line in logs['lines'])
-            manifest = dict(version=1, stages=[dict(name='verify', jobs=1, memory_gb=.25, locks=['sdk-output'],
+            manifest = dict(version=1, input_files=['declared-helper'], stages=[dict(name='verify', jobs=1, memory_gb=.25, locks=['sdk-output'],
                 command=[sys.executable, '-c', 'print("plan verified")'])])
             assert (await call(session, 'buildr_plan_validate', dict(cwd=str(root), manifest=manifest)))['valid']
             plan_receipt = await call(session, 'buildr_plan_submit', dict(request_key=key+'-plan', cwd=str(root), manifest=manifest))
@@ -165,6 +170,7 @@ async def verify(output):
         tools=len(tools.tools), result='passed', fixture_directory=str(root),
         checks=['handshake', 'tool schemas', 'read-only missing state', 'submission',
                 'server reconnect', 'duplicate prevention', 'native failure', 'bounded logs',
+                'declared input hashes survive server reconnect and file changes', 'plan declared input propagation',
                 'plan validation', 'plan submission', 'plan completion','external pending probe',
                 'external watch duplicate prevention','full CPU budget admitted during external idle',
                 'external completion','additional locks survive server reconnect',

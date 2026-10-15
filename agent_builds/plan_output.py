@@ -44,7 +44,9 @@ def summary(plan, tail_lines=0):
                   state=plan['state'], complete=plan['state'] in PLAN_TERMINAL, exit_code=plan['exit_code'],
                   elapsed_seconds=plan['elapsed_seconds'], stage_counts=counts, stages=stages,
                   source=dict(status=plan['source'].get('status', 'unavailable'),
-                              head=plan['source'].get('head'), dirty=plan['source'].get('dirty')))
+                              head=plan['source'].get('head'), dirty=plan['source'].get('dirty'),
+                              declared_input_count=len(plan['source'].get('inputs', {}).get('files', [])),
+                              declared_inputs_status=plan['source'].get('inputs', {}).get('status', 'not_requested')))
     result['verification_failed_after_command_success'] = any(s['state']=='failed' and s['command_exit_code']==0 for s in stages)
     return result
 

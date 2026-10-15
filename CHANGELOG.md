@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.17.0
+
+- Fingerprint explicitly declared helper/input files at submission, start and
+  finish through jobs, batches, saved tasks and MCP. Record hashes, sizes, modes
+  and incomplete evidence within bounded reads, without storing file contents.
+- Add plan-wide `input_files`: strict verification rejects changed or unverifiable
+  helpers before launch, and preserves native command results for post-run drift.
+- Reject ownership takeover by actual older controllers/workers for input-aware
+  plans, without changing scheduler protocol 2 or protected quick ordering.
+- Preserve durable MCP request identities and original submission hashes across
+  reconnects and helper changes. Document scope, limits and live-checkout gaps.
+
 ## 0.16.1
 
 - Fix a priority cycle between already-loaded v0.15 and v0.16 schedulers found

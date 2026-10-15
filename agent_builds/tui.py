@@ -312,6 +312,14 @@ def main(screen, cwd):
                             source.get('submission', {}).get('head', 'unavailable'), source.get('start', {}).get('head', 'not captured')),
                             'Source drift: before start {} | during command {}'.format(
                                 source.get('changed_since_submission', 'unknown'), source.get('changed_during_run', 'unknown'))]
+                        observed = source.get('finish', source.get('start', source.get('submission', {})))
+                        inputs = observed.get('inputs', {})
+                        if inputs:
+                            lines += ['Declared inputs: {} | {} files (latest observation)'.format(
+                                inputs.get('status', 'unavailable'), len(inputs.get('files', [])))]
+                            for item in inputs.get('files', [])[:16]:
+                                lines += ['  {} | {} | {}'.format(item['path'], item['status'],
+                                    (item.get('sha256') or 'no hash')[:12])]
                     if row.get('scheduling'):
                         policy = row['scheduling']
                         lines += ['Runner policy: {}'.format(policy['policy_version']),

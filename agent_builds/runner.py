@@ -13,6 +13,7 @@ import uuid
 
 from .store import Store, TERMINAL, alive, identity
 from .telemetry import JobSampler
+from .source import capture, normalize_inputs
 
 
 def resource_key(cwd):
@@ -119,6 +120,7 @@ def submit_detached(args, receipt=None, retain_receipt=False):
     env['PYTHONPATH'] = root + os.pathsep + env.get('PYTHONPATH', '')
     env['AGENT_BUILDS_STATE'] = str(store.root)
     cwd = str(Path(args.cwd).expanduser().resolve())
+    input_files = normalize_inputs(cwd, getattr(args, 'input_files', []))
     command = [sys.executable, '-m', 'agent_builds', 'run', '--cwd', cwd,
                '--lane', args.lane, '--backend', args.backend, '--receipt-file', str(receipt),
                '--min-free-gb', str(args.min_free_gb), '--scratch-gb', str(args.scratch_gb)]
@@ -128,6 +130,8 @@ def submit_detached(args, receipt=None, retain_receipt=False):
             command += ['--' + name, str(value)]
     for key in getattr(args, 'locks', []):
         command += ['--lock', key]
+    for path in input_files:
+        command += ['--input-file', path]
     if args.notify:
         command.append('--notify')
     if getattr(args, 'track_source', False):
@@ -182,15 +186,13 @@ def execute(args, prepared=None, external_probe=None):
     image = args.image or config['docker_image']
     if args.backend == 'docker' and ',' in str(cwd):
         raise ValueError('Docker bind paths containing commas are unsupported')
-    track_source = getattr(args, 'track_source', False)
+    input_files = normalize_inputs(cwd, getattr(args, 'input_files', []))
+    track_source = getattr(args, 'track_source', False) or bool(input_files)
     if job is None:
-        from .source import capture
-        source = {'submission': capture(cwd)} if track_source else {}
+        source = {'submission': capture(cwd, input_files)} if track_source else {}
         job = store.submit(cwd, command, args.backend, args.lane, slots, memory,
                            args.resource_key or resource_key(cwd), image, timeout,
-                           min_free_gb=args.min_free_gb, scratch_gb=args.scratch_gb, locks=getattr(args, 'locks', []))
-        if source:
-            store.record_source(job, source)
+                           min_free_gb=args.min_free_gb, scratch_gb=args.scratch_gb, locks=getattr(args, 'locks', []), source=source)
     if args.receipt_file:
         receipt = Path(args.receipt_file)
         if receipt.parent != store.root or not receipt.name.startswith('receipt-'):
@@ -249,8 +251,8 @@ def execute(args, prepared=None, external_probe=None):
               wait_seconds=row['wait_seconds'])
         source = row['source']
         if track_source:
-            from .source import capture, changed
-            source.update(start=capture(cwd), command_started=False)
+            from .source import changed
+            source.update(start=capture(cwd, input_files), command_started=False)
             source['changed_since_submission'] = changed(source.get('submission', {}), source['start'])
             store.record_source(job, source)
             if getattr(args, 'source_policy', 'report') == 'require_unchanged' and source['changed_since_submission'] is not False:
@@ -331,7 +333,7 @@ def execute(args, prepared=None, external_probe=None):
         if sampler is not None:
             store.record_usage(job, sampler.result(finished=True))
         if track_source:
-            source['finish'] = capture(cwd)
+            source['finish'] = capture(cwd, input_files)
             source['changed_during_run'] = changed(source['start'], source['finish'])
             store.record_source(job, source)
         if row['backend'] == 'docker' and not docker_stopped(row):

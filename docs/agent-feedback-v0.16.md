@@ -37,3 +37,9 @@ common soft ordering; the queue progressed without cancellation or
 resubmission. The v0.16 installed smoke `1139d7474da7` subsequently passed.
 v0.16.1 adds protocol-2 activation/insertion barriers and actual loaded-version
 tests for that cycle. Pre-release single-version tests alone had missed it.
+
+The v0.17 follow-up adds explicit helper-file fingerprints across CLI, MCP and
+strict plans for the Sandbox `/tmp` helper drift report. See
+[declared input evidence](declared-inputs.md). This supplements Git capture; it
+does not claim to solve NSR’s oversized whole-checkout fingerprints or freeze
+mutable files.

@@ -33,6 +33,7 @@ def parser():
     run.add_argument('--timeout', type=float)
     run.add_argument('--notify', action='store_true', help='Notify the current Herdr session on completion')
     run.add_argument('--track-source', action='store_true', help='Record bounded source fingerprints at submission/start/finish')
+    run.add_argument('--input-file', dest='input_files', action='append', default=[], help='Fingerprint a literal file (repeat, max 16); enables source tracking')
     run.add_argument('--min-free-gb', type=float, default=0, help='Minimum free disk space required before starting')
     run.add_argument('--scratch-gb', type=float, default=0, help='Conservative additional disk reservation while running')
     run.add_argument('--events-json', action='store_true', help='Emit JSON lifecycle events on stderr; command output stays on stdout')
@@ -49,6 +50,7 @@ def parser():
     batch_run.add_argument('--timeout', type=float, default=60)
     batch_run.add_argument('--resource-key')
     batch_run.add_argument('--lock', dest='locks', action='append', default=[])
+    batch_run.add_argument('--input-file', dest='input_files', action='append', default=[])
     batch_run.add_argument('--detach', action='store_true')
     batch_run.add_argument('--events-json', action='store_true')
     batch_show = batch_sub.add_parser('show')
@@ -132,6 +134,7 @@ def parser():
     task_add.add_argument('--lane', choices=['quick', 'heavy'], default='quick')
     task_add.add_argument('--backend', choices=['local', 'docker'], default='local')
     task_add.add_argument('--jobs', type=int)
+    task_add.add_argument('--input-file', dest='input_files', action='append', default=[])
     task_add.add_argument('--resource-key', help='Explicit output-directory lock; omit to keep repository serialization')
     task_add.add_argument('--lock', dest='locks', action='append', default=[], help='Additional exact resource key; repeat to protect multiple outputs')
     task_add.add_argument('--memory-gb', type=float)
@@ -327,7 +330,7 @@ def main():
                 raise ValueError('Batch manifest exceeds 32 KiB')
             definition=batch.validate(json.loads(raw))
             run_args=parser().parse_args(['run','--','placeholder'])
-            for key in ('cwd','jobs','memory_gb','timeout','resource_key','locks','detach','events_json'):
+            for key in ('cwd','jobs','memory_gb','timeout','resource_key','locks','input_files','detach','events_json'):
                 setattr(run_args,key,getattr(args,key))
             run_args.lane='quick'
             run_args.track_source=True

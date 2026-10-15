@@ -11,7 +11,7 @@ import time
 import uuid
 
 from .profiles import name as valid_name
-from .source import capture, changed, digest_file
+from .source import capture, changed, digest_file, normalize_inputs
 from .store import Store, TERMINAL, alive, identity
 from . import __version__
 
@@ -20,8 +20,8 @@ PLAN_TERMINAL = ('succeeded', 'failed', 'cancelled')
 
 
 def validate(definition, cwd, config):
-    if not isinstance(definition, dict) or set(definition) - {'version', 'name', 'stages', 'max_parallel', 'source_policy'}:
-        raise ValueError('Plan must be an object with version, name, stages, max_parallel and/or source_policy')
+    if not isinstance(definition, dict) or set(definition) - {'version', 'name', 'stages', 'max_parallel', 'source_policy', 'input_files'}:
+        raise ValueError('Plan must be an object with version, name, stages, max_parallel, source_policy and/or input_files')
     if type(definition.get('version', 1)) is not int or definition.get('version', 1) != 1:
         raise ValueError('Unsupported plan version')
     root = Path(cwd).expanduser().resolve()
@@ -122,7 +122,8 @@ def validate(definition, cwd, config):
         done.add(name)
     for name in graph:
         visit(name, set())
-    return dict(version=1, name=title, cwd=str(root), max_parallel=parallel, source_policy=policy, stages=stages)
+    return dict(version=1, name=title, cwd=str(root), max_parallel=parallel, source_policy=policy,
+                input_files=normalize_inputs(root, definition.get('input_files', [])), stages=stages)
 
 
 def read_manifest(path, cwd, config):
@@ -179,11 +180,12 @@ def exit_code(plan):
 def create(store, definition):
     if os.environ.get('AGENT_BUILDS_JOB_ID'):
         raise ValueError('Do not run a plan inside a queued job. The plan queues each stage itself.')
-    source = capture(definition['cwd'])
+    source = capture(definition['cwd'], definition.get('input_files', []))
     plan = uuid.uuid4().hex[:12]
     with store.transaction():
-        store.db.execute('INSERT INTO plans (id,name,cwd,definition,created,state,source,reserve_protocol) VALUES (?,?,?,?,?,?,?,2)',
-            (plan, definition['name'], definition['cwd'], json.dumps(definition), time.time(), 'queued', json.dumps(source)))
+        store.db.execute('INSERT INTO plans (id,name,cwd,definition,created,state,source,reserve_protocol,input_protocol) VALUES (?,?,?,?,?,?,?,2,?)',
+            (plan, definition['name'], definition['cwd'], json.dumps(definition), time.time(), 'queued', json.dumps(source),
+             int(bool(definition.get('input_files')))))
         for index, stage in enumerate(definition['stages']):
             store.db.execute('INSERT INTO plan_stages (plan_id,name,ordinal,definition) VALUES (?,?,?,?)',
                              (plan, stage['name'], index, json.dumps(stage)))
@@ -219,14 +221,15 @@ def attach_job(store, job, token):
         if row['state'] != 'queued':
             raise ValueError('Prepared stage outcome changed; work will not be retried')
         store.db.execute('UPDATE plan_stages SET attached=1 WHERE job_id=?', (job,))
-        store.db.execute('UPDATE jobs SET owner_pid=?,owner_start=?,runner_version=?,policy_version=? WHERE id=?',
+        store.db.execute('UPDATE jobs SET owner_pid=?,owner_start=?,runner_version=?,policy_version=?,input_owner_epoch=input_owner_epoch+1 WHERE id=?',
                          (os.getpid(), identity(os.getpid()), __version__, POLICY_VERSION, job))
     definition = json.loads(stage['definition'])
     return Namespace(cwd=row['cwd'], command=row['argv'], lane=row['lane'], backend=row['backend'],
         jobs=row['slots'], memory_gb=row['memory_gb'], timeout=row['timeout'], image=row['image'],
         resource_key=row['resource_key'], min_free_gb=row['min_free_gb'], scratch_gb=row['scratch_gb'],
         detach=False, events_json=True, notify=False, receipt_file=None, track_source=True,
-        source_policy=definition['source_policy'], quiet_output=True), job
+        source_policy=definition['source_policy'], quiet_output=True,
+        input_files=[item['path'] for item in row['source'].get('submission', {}).get('inputs', {}).get('files', [])]), job
 
 
 def prepare(store, plan, stage):
@@ -241,8 +244,8 @@ def prepare(store, plan, stage):
             return None
         job = store.submit(Path(spec['cwd']), spec['command'], spec['backend'], spec['lane'],
             spec['jobs'], spec['memory_gb'], resource, spec['image'], spec['timeout'],
-            min_free_gb=spec['min_free_gb'], scratch_gb=spec['scratch_gb'], locks=spec.get('locks', []))
-        store.db.execute('UPDATE jobs SET source=? WHERE id=?', (json.dumps({'submission': plan['source']}), job))
+            min_free_gb=spec['min_free_gb'], scratch_gb=spec['scratch_gb'], locks=spec.get('locks', []),
+            source={'submission': plan['source']})
         store.db.execute("UPDATE plan_stages SET state='launching',job_id=?,launch_token=? WHERE plan_id=? AND name=?",
                          (job, token, plan['id'], stage['name']))
     return job, token
@@ -302,7 +305,7 @@ def control(plan_id):
                 return
             if alive(plan['owner_pid'], plan['owner_start']):
                 raise ValueError('Another controller owns this plan')
-            store.db.execute("UPDATE plans SET owner_pid=?,owner_start=?,state='running',reason='',reserve_protocol=2,runner_version=? WHERE id=?",
+            store.db.execute("UPDATE plans SET owner_pid=?,owner_start=?,state='running',reason='',reserve_protocol=2,runner_version=?,input_owner_epoch=input_owner_epoch+1 WHERE id=?",
                 (os.getpid(), identity(os.getpid()), __version__, plan_id))
         def on_signal(signum, frame):
             cancelled[0] = True

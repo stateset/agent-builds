@@ -174,6 +174,18 @@ class Store:
                   EXISTS (SELECT 1 FROM plans WHERE state NOT IN ('succeeded','failed','cancelled') AND reserve_protocol!=2) OR
                   EXISTS (SELECT 1 FROM external_watches WHERE state NOT IN ('succeeded','failed','cancelled','uncertain','timed_out','exhausted') AND reserve_protocol!=2))
                 BEGIN UPDATE admission_policy SET effective=0,effective_at=NULL WHERE id=NEW.id; END""")
+            # A per-takeover proof prevents already-loaded older controllers or
+            # stage workers from silently dropping declared input semantics.
+            # This capability is independent of scheduler reserve protocols.
+            for table in ('jobs', 'plans'):
+                columns = {row[1] for row in self.db.execute('PRAGMA table_info('+table+')')}
+                for field in ('input_protocol', 'input_owner_epoch'):
+                    if field not in columns:
+                        self.db.execute('ALTER TABLE '+table+' ADD COLUMN '+field+' INTEGER NOT NULL DEFAULT 0')
+                self.db.execute('''CREATE TRIGGER IF NOT EXISTS declared_inputs_'''+table+'''_guard
+                    BEFORE UPDATE OF owner_pid ON '''+table+''' WHEN OLD.input_protocol=1
+                      AND NEW.input_owner_epoch!=OLD.input_owner_epoch+1
+                    BEGIN SELECT RAISE(ABORT, 'Declared input files require the installed Buildr controller/worker'); END''')
 
     def close(self):
         if self.db is not None:
@@ -372,7 +384,7 @@ class Store:
         return counts
 
     def submit(self, cwd, command, backend, lane, slots, memory, resource_key,
-               image, timeout, herdr=None, min_free_gb=0, scratch_gb=0, locks=None):
+               image, timeout, herdr=None, min_free_gb=0, scratch_gb=0, locks=None, source=None):
         config = self.config()
         if slots < 1 or slots > config['cpu_slots']:
             raise ValueError('Job CPU slots exceed machine budget')
@@ -409,11 +421,12 @@ class Store:
             validate_job(dict(current, protected_quick=current['protected_quick_requested']), lane, slots, memory)
             self.db.execute('''INSERT INTO jobs
                 (id,state,created,owner_pid,owner_start,cwd,command,backend,lane,
-                 slots,memory_gb,resource_key,image,timeout,herdr,min_free_gb,scratch_gb,policy_version,wait_history,runner_version,lock_protocol,resource_keys,reserve_protocol)
-                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+                 slots,memory_gb,resource_key,image,timeout,herdr,min_free_gb,scratch_gb,policy_version,wait_history,runner_version,lock_protocol,resource_keys,reserve_protocol,source,input_protocol)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
                 (job, 'held' if len(resources)>1 else 'queued', created, os.getpid(), identity(os.getpid()), str(cwd),
                  json.dumps(command), backend, lane, slots, memory, resource_key, image,
-                 timeout, json.dumps(origin), min_free_gb, scratch_gb, POLICY_VERSION, json.dumps(waits.begin(created)), __version__, 1, json.dumps(resources), 2))
+                 timeout, json.dumps(origin), min_free_gb, scratch_gb, POLICY_VERSION, json.dumps(waits.begin(created)), __version__, 1, json.dumps(resources), 2,
+                 json.dumps(source or {}), int(bool((source or {}).get('submission', {}).get('inputs')))))
             self.db.executemany('INSERT INTO job_locks VALUES (?,?)', [(job, key) for key in resources])
         return job
 

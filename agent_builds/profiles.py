@@ -62,6 +62,8 @@ def save_task(store, args):
     normalize(values['resource_key'] or 'default', additional)
     values['locks'] = additional
     values.update(command=command, cwd=str(Path(args.cwd).expanduser().resolve()), name=name(args.name))
+    from .source import normalize_inputs
+    values['input_files'] = normalize_inputs(values['cwd'], getattr(args, 'input_files', []))
     config = store.config()
     import math
     if values['jobs'] is not None and not 1 <= values['jobs'] <= config['cpu_slots']:

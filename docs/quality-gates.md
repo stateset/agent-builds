@@ -57,3 +57,9 @@ measure quick latency alongside the heavy completion cost and batching overhead;
 publication requires reporting both gains and costs. An A+ productivity claim
 still requires prospective matched real coding tasks, rather than a higher test
 count alone. See [verification](verification.md).
+
+v0.17 adds bounded declared-input evidence with strict before/during execution
+gates, native-result preservation, durable MCP reconnects and actual v0.16.1
+controller/worker downgrade rejection. Read-only old-schema inspection remains
+nonmutating. Whole-checkout capture limits and time-of-check gaps remain explicit;
+see [declared inputs](declared-inputs.md).

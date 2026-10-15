@@ -114,6 +114,8 @@ def submit(name, arguments):
             args.lane = lane
             args.jobs, args.memory_gb = jobs, memory
             args.track_source = arguments.get('track_source', True)
+            from .source import normalize_inputs
+            args.input_files = normalize_inputs(root, arguments.get('input_files', []))
             if batch_mode:
                 args.timeout=arguments.get('timeout',60)
             from .protection import validate_job

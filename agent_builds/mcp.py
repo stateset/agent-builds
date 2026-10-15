@@ -35,6 +35,7 @@ KEY = dict(
     type='string', minLength=8, maxLength=128, pattern='^[A-Za-z0-9._:-]+$')
 CWD = string(description='Existing absolute working directory; commands run with this user\'s permissions.')
 LOCKS = dict(type='array', maxItems=15, items=string(), description='Additional exact resource keys acquired atomically with the primary key.')
+INPUTS = dict(type='array', maxItems=16, items=string(), description='Literal local input files to hash at submission/start/finish; relative to cwd. Enables source tracking. Report-only for jobs and batches.')
 TAIL = dict(type='integer', minimum=1, maximum=200, default=40)
 
 
@@ -56,13 +57,13 @@ TOOLS = [
         jobs=dict(type='integer', minimum=1, maximum=64), memory_gb=dict(type='number', exclusiveMinimum=0, maximum=1024),
         timeout=dict(type='number', exclusiveMinimum=0, maximum=86400),
         backend=dict(type='string', enum=['local', 'docker'], default='local'), image=string(), resource_key=string(), locks=LOCKS,
-        track_source=dict(type='boolean', default=True), min_free_gb=dict(type='number', minimum=0), scratch_gb=dict(type='number', minimum=0)),
+        track_source=dict(type='boolean', default=True), input_files=INPUTS, min_free_gb=dict(type='number', minimum=0), scratch_gb=dict(type='number', minimum=0)),
         ('request_key', 'cwd', 'command'), read=False),
     tool('buildr_batch_submit', 'Run up to 32 related foreground checks under one local quick reservation, preserving per-check native outcomes. Use the same request key and exact arguments after reconnecting.', dict(
         request_key=KEY,cwd=CWD,manifest=dict(type='object'),
         jobs=dict(type='integer',minimum=1,maximum=64),memory_gb=dict(type='number',exclusiveMinimum=0,maximum=1024),
         timeout=dict(type='number',exclusiveMinimum=0,maximum=300),resource_key=string(),locks=LOCKS,
-        track_source=dict(type='boolean',default=True)),('request_key','cwd','manifest'),read=False),
+        track_source=dict(type='boolean',default=True),input_files=INPUTS),('request_key','cwd','manifest'),read=False),
     tool('buildr_latency', 'Inspect queue latency targets, active overdue work, policy cohorts and evidence-backed reservation trials. Does not tune budgets.', dict(
         hours=dict(type='number',exclusiveMinimum=0,maximum=8760,default=24),target_seconds=dict(type='number',exclusiveMinimum=0,maximum=3600,default=30),repo=CWD)),
     tool('buildr_submission', 'Inspect a durable submission key after reconnecting. Does not submit, recover jobs or change state.',

@@ -41,7 +41,7 @@ def git(cwd, arguments, deadline, limit=16*1024**2):
         child.stdout.close()
 
 
-def capture(cwd):
+def capture_repository(cwd):
     result = dict(captured_at=time.time(), status='unavailable',
         scope='Git HEAD, tracked diff, and nonignored untracked files; ignored files, environment and external inputs are excluded')
     deadline = time.monotonic()+6
@@ -91,11 +91,74 @@ def capture(cwd):
     return result
 
 
+def normalize_inputs(cwd, paths):
+    """Normalize literal paths without resolving a missing file or leaf symlink."""
+    if not isinstance(paths, (list, tuple)) or len(paths) > 16:
+        raise ValueError('input_files must be an array of at most 16 literal file paths')
+    result = set()
+    for value in paths:
+        if not isinstance(value, str) or not value or len(value) > 4096 or '\0' in value:
+            raise ValueError('Input file paths must contain 1 to 4096 characters without NUL')
+        path = os.path.expanduser(value)
+        path = os.path.abspath(os.path.join(str(cwd), path))
+        if len(path) > 4096:
+            raise ValueError('Normalized input file path exceeds 4096 characters')
+        result.add(path)
+    return sorted(result)
+
+
+def capture(cwd, input_files=()):
+    paths = normalize_inputs(cwd, input_files)
+    result = capture_repository(cwd)
+    if not paths:
+        return result
+    result['repository_status'] = result['status']
+    deadline = time.monotonic()+3
+    remaining = 16*1024**2
+    files = []
+    for path in paths:
+        if time.monotonic() >= deadline:
+            evidence = dict(path=path, status='capture_limit', sha256=None)
+        else:
+            evidence = digest_file(path, limit=min(8*1024**2, remaining),
+                                   seconds=max(0, deadline-time.monotonic()))
+        remaining = max(0, remaining-evidence.get('read_bytes', 0))
+        files.append(evidence)
+    complete = all(item['status'] == 'captured' for item in files)
+    result['inputs'] = dict(status='captured' if complete else 'incomplete', files=files,
+        max_files=16, max_file_bytes=8*1024**2, max_total_bytes=16*1024**2, max_seconds=3)
+    result['scope'] = ('Git HEAD, tracked diff, nonignored untracked files and explicitly declared input files; '
+                       'other ignored files, environment and undeclared external inputs are excluded')
+    if not complete:
+        result.update(status='unavailable', reason='Declared input capture incomplete')
+    return result
+
+
 def changed(first, second):
-    if first.get('status') != 'captured' or second.get('status') != 'captured':
-        return None
-    keys = ('repository', 'head', 'tracked_diff_sha256', 'untracked_sha256')
-    return any(first.get(key) != second.get(key) for key in keys)
+    """True means definite drift; None means incomplete required observations."""
+    complete = True
+    if (first.get('repository_status', first.get('status')) == 'captured' and
+            second.get('repository_status', second.get('status')) == 'captured'):
+        keys = ('repository', 'head', 'tracked_diff_sha256', 'untracked_sha256')
+        if any(first.get(key) != second.get(key) for key in keys):
+            return True
+    else:
+        complete = False
+    left, right = first.get('inputs', {}), second.get('inputs', {})
+    a = {item['path']: item for item in left.get('files', [])}
+    b = {item['path']: item for item in right.get('files', [])}
+    if set(a) != set(b):
+        return True
+    for path in a:
+        if a[path].get('status') == b[path].get('status') == 'captured':
+            if any(a[path].get(key) != b[path].get(key) for key in ('sha256', 'bytes', 'mode')):
+                return True
+        else:
+            complete = False
+    if ((left and left.get('status') != 'captured') or
+            (right and right.get('status') != 'captured')):
+        complete = False
+    return False if complete else None
 
 
 def digest_file(path, limit=256*1024**2, seconds=5):
@@ -104,6 +167,7 @@ def digest_file(path, limit=256*1024**2, seconds=5):
     try:
         info = path.lstat()
         result['bytes'] = info.st_size
+        result['mode'] = stat.S_IMODE(info.st_mode)
         if not stat.S_ISREG(info.st_mode):
             result['status'] = 'not_regular_file'
             return result
@@ -115,22 +179,24 @@ def digest_file(path, limit=256*1024**2, seconds=5):
         total = 0
         descriptor = os.open(str(path), os.O_RDONLY | os.O_NONBLOCK | getattr(os, 'O_NOFOLLOW', 0))
         opened = os.fstat(descriptor)
-        if not stat.S_ISREG(opened.st_mode) or (opened.st_dev, opened.st_ino) != (info.st_dev, info.st_ino):
+        identity = lambda value: (value.st_dev, value.st_ino, value.st_size, value.st_mtime_ns, value.st_ctime_ns, value.st_mode)
+        if not stat.S_ISREG(opened.st_mode) or identity(opened) != identity(info):
             os.close(descriptor)
             result['status'] = 'changed_during_capture'
             return result
         with os.fdopen(descriptor, 'rb') as source:
-            while True:
-                chunk = source.read(65536)
+            while total < limit:
+                chunk = source.read(min(65536, limit-total))
                 if not chunk:
                     break
                 total += len(chunk)
+                result['read_bytes'] = total
                 if total > limit or time.monotonic() > deadline:
                     result['status'] = 'capture_limit'
                     return result
                 digest.update(chunk)
         current = path.lstat()
-        if (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns) != (current.st_dev, current.st_ino, current.st_size, current.st_mtime_ns):
+        if identity(info) != identity(current) or total != info.st_size or time.monotonic() > deadline:
             result['status'] = 'changed_during_capture'
         else:
             result.update(status='captured', sha256=digest.hexdigest())

@@ -192,3 +192,11 @@ recorded blocker chains, observation freshness and policy drain conditions.
 It performs no recovery, activation, tuning or cache deletion. `buildr_status`
 also includes bounded protection details. See [operational diagnostics](diagnostics.md).
 See [verification](verification.md) for protected-mode behavior and limitations.
+
+### Declared local inputs (v0.17)
+
+`buildr_submit` and `buildr_batch_submit` accept optional `input_files` arrays
+(maximum 16 literal file paths, relative to `cwd`). They enable report-only source
+tracking. Plan manifests accept a plan-wide `input_files` array for existing strict
+source gates. Same-key reconnects retain original handles and submission hashes.
+See [declared input evidence](declared-inputs.md) for bounds and unknown outcomes.

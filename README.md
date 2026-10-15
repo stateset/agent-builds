@@ -452,3 +452,7 @@ active overdue jobs and measured reservation trials. Protected quick capacity is
 requested with `buildr config --set protected_quick=true`; activation waits for
 incompatible workers to drain and keeps total CPU/RAM/job budgets unchanged.
 See [verification](docs/verification.md) for tradeoffs, examples and evidence limits.
+
+Explicit helper files outside Git can be recorded with repeated `--input-file`
+flags or plan-wide `input_files`. See [declared input evidence](docs/declared-inputs.md)
+for strict gates, MCP usage, limits and live-checkout caveats.
