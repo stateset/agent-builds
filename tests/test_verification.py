@@ -120,7 +120,7 @@ class VerificationTests(unittest.TestCase):
         from agent_builds.plans import validate
         self.store.update_config(dict(protected_quick=True))
         with self.assertRaisesRegex(ValueError,'protected quick reserves'):
-            validate(dict(stages=[dict(name='large',command=['true'],lane='heavy',jobs=2)]),self.root,self.store.config())
+            validate(dict(stages=[dict(name='large',command=['true'],lane='heavy',jobs=2,memory_gb=.25)]),self.root,self.store.config())
 
     def test_future_old_insert_fails_before_it_can_borrow_protected_capacity(self):
         self.store.update_config(dict(protected_quick=True))
