@@ -1,5 +1,10 @@
 # Agent Builds
 
+Use `agent-builds advise` (or `h` in the full TUI) for evidence-based queue and
+reservation findings. `agent-builds simulate --fixture` compares conservative
+quick backfill with the prior policy without executing commands or changing
+settings. See [advisor and replay](docs/advisor.md) and [quality gates](docs/quality-gates.md).
+
 Queue wait diagnostics preserve primary blocker timings and observation coverage;
 see [wait diagnostics](docs/wait-diagnostics.md). Narrow terminal splits now use
 a compact jobs/plans monitor automatically.

@@ -141,6 +141,9 @@ def main(screen, cwd):
     plan_id = None
     plan_offset = 0
     last_plans = 0
+    advice_result = None
+    advice_offset = 0
+    last_advice = 0
     def scan_disk(repository):
         from .disk import inventory
         reader = Store(store.root, read_only=True)
@@ -301,6 +304,18 @@ def main(screen, cwd):
                     lines += ['Old queue logs: agent-builds clean (preview); --apply deletes eligible logs.']
                     for index, line in enumerate(lines[:max(1, height - log_top - 3)]):
                         paint(screen, log_top + index, 0, line)
+                elif view == 8:
+                    from .advice import report, lines as advice_lines
+                    if advice_result is None or time.monotonic()-last_advice >= 2:
+                        advice_result = report(store)
+                        last_advice = time.monotonic()
+                    lines = [part for line in advice_lines(advice_result)
+                             for part in (textwrap.wrap(line, max(1, width-1)) or [''])]
+                    paint(screen, log_top-1, 0, 'QUEUE ADVISOR | global | scroll with arrows / PgUp / PgDn | h returns to logs', curses.A_BOLD)
+                    visible = max(1, height-log_top-3)
+                    advice_offset = min(max(0, advice_offset), max(0, len(lines)-visible))
+                    for index, line in enumerate(lines[advice_offset:advice_offset+visible]):
+                        paint(screen, log_top+index, 0, line)
                 elif view == 7:
                     paint(screen, log_top-1, 0, 'VERIFICATION PLANS | arrows select | Enter opens a stage log', curses.A_BOLD)
                     lines = ['No plans yet. Press o to submit a JSON verification plan.']
@@ -345,16 +360,21 @@ def main(screen, cwd):
                     for index, line in enumerate(tail(store.log_path(row['id']), max(1, height - log_top - offset - 3))):
                         paint(screen, log_top + offset + index, 0, line)
                 paint(screen, height - 2, 0, message)
-                paint(screen, height - 1, 0, 'o plan  t task  i details  d disk  v views  q quit' if view != 7 else 'o plan  c cancel plan  r resume  e export  PgUp/PgDn scroll  v views  q quit')
+                paint(screen, height - 1, 0, 'o plan  t task  i details  h advisor  v views  q quit' if view != 7 else 'o plan  c cancel plan  r resume  e export  PgUp/PgDn scroll  v views  q quit')
             screen.refresh()
             key = screen.getch()
             if key in (ord('q'), 27):
                 break
             if compact and key not in (ord('j'), ord('k'), curses.KEY_DOWN, curses.KEY_UP, ord('v')):
                 continue
+            if view == 8 and not compact and key not in (ord('j'), ord('k'), curses.KEY_DOWN, curses.KEY_UP,
+                                                       curses.KEY_NPAGE, curses.KEY_PPAGE, ord('v'), ord('h')):
+                continue
             selected_id = rows[selected]['id'] if rows else None
             if key in (ord('j'), curses.KEY_DOWN):
-                if view == 7:
+                if view == 8 and not compact:
+                    advice_offset += 1
+                elif view == 7:
                     plan_index = min(plan_index+1, max(0, len(plan_rows)-1))
                     plan_id = plan_rows[plan_index]['id'] if plan_rows else None
                     plan_offset = 0
@@ -362,7 +382,9 @@ def main(screen, cwd):
                     selected = min(selected + 1, max(0, len(rows) - 1))
                     selected_id = rows[selected]['id'] if rows else None
             elif key in (ord('k'), curses.KEY_UP):
-                if view == 7:
+                if view == 8 and not compact:
+                    advice_offset = max(0, advice_offset-1)
+                elif view == 7:
                     plan_index = max(0, plan_index-1)
                     plan_id = plan_rows[plan_index]['id'] if plan_rows else None
                     plan_offset = 0
@@ -370,7 +392,12 @@ def main(screen, cwd):
                     selected = max(0, selected - 1)
                     selected_id = rows[selected]['id'] if rows else None
             elif key == ord('v'):
-                view = (0 if view == 7 else 7) if compact else (view + 1) % 8
+                view = (0 if view == 7 else 7) if compact else (view + 1) % 9
+            elif key == ord('h'):
+                view = 0 if view == 8 else 8
+                advice_offset, last_advice = 0, 0
+            elif view == 8 and key in (curses.KEY_NPAGE, curses.KEY_PPAGE):
+                advice_offset += max(1, height-10)*(1 if key == curses.KEY_NPAGE else -1)
             elif key == ord('o') and height >= 15 and width >= 65:
                 try:
                     from .plans import create, read_manifest, spawn as spawn_plan

@@ -9,6 +9,7 @@ import unittest
 from unittest import mock
 
 from agent_builds import waits
+from agent_builds import __version__
 from agent_builds.store import Store
 from agent_builds.telemetry import statistics
 from agent_builds.tui import compact_lines
@@ -205,7 +206,7 @@ class WaitTests(unittest.TestCase):
         lines = compact_lines([row], 0, [], 0, 0, self.store.config(), 40, 21)
         self.assertIn(job, lines)
         self.assertIn('queued', lines)
-        self.assertIn('0.8.0', lines[0])
+        self.assertIn(__version__, lines[0])
         self.assertEqual(lines[-1], 'j/k move v views q')
         self.assertLessEqual(len(lines), 40)
         plan = dict(id='plan-handle', state='running', name='Check', stages=[dict(name='test', state='queued')], reason='')

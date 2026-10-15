@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.9.0
+
+- Add a read-only queue advisor with evidence-linked lane, memory and CPU trials,
+  current blocker findings, bounded history and explicit observation coverage.
+- Add a scrollable advisor view in the TUI; disable editing controls in that
+  view and wrap findings to the available terminal width.
+- Allow conservative quick backfill past an aged head only when every subset
+  of running completions preserves the head's reservation eligibility. Retain
+  global budgets, checkout locks, aging and uncertain reservations.
+- Record `quick-aging-backfill-v2` on new jobs while preserving older policy
+  attribution. Already-running older workers continue using their loaded code.
+- Add read-only deterministic history/fixture replay against the prior policy,
+  explicit modeling assumptions, randomized reservation checks and finite
+  workload completion gates. No commands or profiles are executed by replay.
+- Document agent feedback disposition and measurable gates toward an A+ queue.
+
 ## 0.8.0
 
 - Preserve bounded per-job wait observations, category totals and recent blocker

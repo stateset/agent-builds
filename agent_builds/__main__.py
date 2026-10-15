@@ -74,6 +74,17 @@ def parser():
     stats = sub.add_parser('stats', help='Summarize wait times and measured local job resources')
     stats.add_argument('--repo')
     stats.add_argument('--json', action='store_true')
+    advise = sub.add_parser('advise', help='Read-only queue findings and resource trials supported by job history')
+    advise.add_argument('--repo')
+    advise.add_argument('--hours', type=float, default=24)
+    advise.add_argument('--limit', type=int, default=200)
+    advise.add_argument('--json', action='store_true')
+    simulate = sub.add_parser('simulate', help='Compare reservation policies without executing commands or changing state')
+    simulate.add_argument('--repo')
+    simulate.add_argument('--hours', type=float, default=24)
+    simulate.add_argument('--limit', type=int, default=100)
+    simulate.add_argument('--fixture', action='store_true', help='Use the documented spare-capacity benchmark')
+    simulate.add_argument('--json', action='store_true')
     disk = sub.add_parser('disk', help='Inventory known build caches without deleting them')
     disk.add_argument('--repo')
     disk.add_argument('--path', action='append', default=[], help='Also inventory an explicitly selected cache directory')
@@ -192,7 +203,7 @@ def main():
             from .announce import work
             work(args.announcement)
             return 0
-        inspection = (args.action in ('status', 'logs', 'show', 'wait', 'announcements', 'processes', 'doctor', 'stats', 'disk')
+        inspection = (args.action in ('status', 'logs', 'show', 'wait', 'announcements', 'processes', 'doctor', 'stats', 'disk', 'advise', 'simulate')
             or (args.action == 'config' and not args.init and not args.set)
             or (args.action == 'clean' and not args.apply)
             or (args.action == 'task' and args.task_action == 'list')
@@ -283,6 +294,22 @@ def main():
                     if result['timed_out']:
                         print('Wait timed out; jobs continue.')
                 return result['exit_code']
+            elif args.action == 'simulate':
+                from .simulation import compare, fixture, history
+                result = compare(*fixture()) if args.fixture else history(store, args.repo, args.hours, args.limit)
+                if args.json:
+                    print(json.dumps(result,indent=2))
+                else:
+                    for name in ('baseline','candidate'):
+                        entry=result[name]
+                        print('{} {} | {} completed | {:.1f}s modeled makespan'.format(name, entry['policy_version'], entry['completed'], entry['makespan_seconds']))
+                        for lane in entry['lanes']:
+                            print('  {}: p95 wait {}s'.format(lane['lane'], lane['wait_p95_seconds']))
+                    print(result['note'])
+            elif args.action == 'advise':
+                from .advice import report, lines
+                result = report(store, args.repo, args.hours, args.limit)
+                print(json.dumps(result, indent=2) if args.json else '\n'.join(lines(result)))
             elif args.action == 'stats':
                 from .telemetry import statistics
                 result = statistics(store, args.repo)

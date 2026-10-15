@@ -362,7 +362,8 @@ class PlanTests(unittest.TestCase):
         self.assertEqual(result['groups'][0]['observed_cpu_seconds'],1)
         self.assertEqual(result['groups'][0]['reserved_cpu_seconds'],2)
         self.assertEqual(result['groups'][0]['observed_to_reserved_cpu_ratio'],.5)
-        self.assertEqual(result['policies'][0]['policy_version'],'quick-aging-v1')
+        from agent_builds.scheduler import POLICY_VERSION
+        self.assertEqual(result['policies'][0]['policy_version'],POLICY_VERSION)
         self.assertEqual(self.store.config(),before)
 
     def test_cli_validate_run_show_logs_and_evidence_export(self):

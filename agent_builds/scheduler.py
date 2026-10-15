@@ -1,11 +1,48 @@
 """Admission ordering; callers hold the queue's SQLite write transaction."""
 import time
 
-POLICY_VERSION = 'quick-aging-v1'
+POLICY_VERSION = 'quick-aging-backfill-v2'
 
 
-def choose(queued, running, config, available_gb, disk_free):
-    now = time.time()
+def capacity_reason(row, running, config, now):
+    if len(running) >= config['max_running']:
+        return 'machine concurrency budget'
+    if sum(r['slots'] for r in running) + row['slots'] > config['cpu_slots']:
+        return 'CPU slot budget'
+    if sum(r['memory_gb'] for r in running) + row['memory_gb'] > config['memory_gb']:
+        return 'memory reservation budget'
+    if row['lane'] == 'heavy':
+        if sum(r['lane'] == 'heavy' for r in running) >= config['max_heavy']:
+            return 'heavy job budget'
+        if now-row['created'] < config['aging_seconds']:
+            if sum(r['slots'] for r in running if r['lane']=='heavy') + row['slots'] > config['cpu_slots']-config['quick_reserve_slots']:
+                return 'capacity reserved for quick checks; heavy jobs gain priority with age'
+            if sum(r['lane']=='heavy' for r in running)+1 > config['max_running']-config['quick_reserve_jobs']:
+                return 'job capacity reserved for quick checks'
+            if sum(r['memory_gb'] for r in running if r['lane']=='heavy')+row['memory_gb'] > config['memory_gb']-config['quick_reserve_memory_gb']:
+                return 'memory capacity reserved for quick checks'
+    return ''
+
+
+def safe_backfill(head, candidate, running, config, now):
+    """Adding a quick job must preserve head eligibility after ANY completion subset.
+
+    This proves reservation feasibility only, not runtime or external pressure.
+    Large configurations conservatively retain draining instead of exponential work.
+    """
+    if len(running) > 8 or candidate['lane'] != 'quick' or candidate['scratch_gb']:
+        return False
+    if candidate['resource_key'] == head['resource_key'] or capacity_reason(candidate, running, config, now):
+        return False
+    for mask in range(1 << len(running)):
+        remaining = [row for index, row in enumerate(running) if mask & (1 << index)]
+        if not capacity_reason(head, remaining, config, now) and capacity_reason(head, remaining+[candidate], config, now):
+            return False
+    return True
+
+
+def choose(queued, running, config, available_gb, disk_free, allow_backfill=True, now=None):
+    now = time.time() if now is None else now
     busy = {r['resource_key'] for r in running}
     heads = {}
     for row in sorted(queued, key=lambda r: (r['created'], r['id'])):
@@ -16,26 +53,9 @@ def choose(queued, running, config, available_gb, disk_free):
     def priority(row):
         return (0 if aged(row) else 1 if row['lane'] == 'quick' else 2,
                 row['created'], row['id'])
-    def fits(row):
-        if len(running) >= config['max_running']:
-            return 'machine concurrency budget'
-        if sum(r['slots'] for r in running) + row['slots'] > config['cpu_slots']:
-            return 'CPU slot budget'
-        if sum(r['memory_gb'] for r in running) + row['memory_gb'] > config['memory_gb']:
-            return 'memory reservation budget'
-        if row['lane'] == 'heavy':
-            if sum(r['lane'] == 'heavy' for r in running) >= config['max_heavy']:
-                return 'heavy job budget'
-            heavy_slots = sum(r['slots'] for r in running if r['lane'] == 'heavy')
-            if not aged(row) and heavy_slots + row['slots'] > config['cpu_slots'] - config['quick_reserve_slots']:
-                return 'capacity reserved for quick checks; heavy jobs gain priority with age'
-            if not aged(row) and sum(r['lane'] == 'heavy' for r in running) + 1 > config['max_running'] - config['quick_reserve_jobs']:
-                return 'job capacity reserved for quick checks'
-            if not aged(row) and sum(r['memory_gb'] for r in running if r['lane'] == 'heavy') + row['memory_gb'] > config['memory_gb'] - config['quick_reserve_memory_gb']:
-                return 'memory capacity reserved for quick checks'
-        return ''
+    ordered = sorted(heads.values(), key=priority)
     skipped = {}
-    for row in sorted(heads.values(), key=priority):
+    for row in ordered:
         # An impossible or externally blocked job must not freeze other repos.
         required = max(config['min_free_gb'], row['min_free_gb']) + row['scratch_gb'] + sum(r['scratch_gb'] for r in running)
         if disk_free(row) < required:
@@ -47,11 +67,22 @@ def choose(queued, running, config, available_gb, disk_free):
         if row['slots'] > config['cpu_slots'] or row['memory_gb'] > config['memory_gb']:
             skipped[row['id']] = 'job exceeds current machine budget'
             continue
-        reason = fits(row)
+        reason = capacity_reason(row, running, config, now)
         if not reason:
             return row, skipped
         skipped[row['id']] = reason
         # Let existing jobs drain for the oldest aged job. Do not preempt them.
         if aged(row):
+            if allow_backfill:
+                for candidate in ordered:
+                    if candidate['id'] == row['id'] or candidate['lane'] != 'quick' or candidate['scratch_gb']:
+                        continue
+                    required_disk = max(config['min_free_gb'], candidate['min_free_gb'])+candidate['scratch_gb']+sum(r['scratch_gb'] for r in running)
+                    # Keep RAM headroom for both jobs, and never borrow scratch.
+                    if available_gb < row['memory_gb']+candidate['memory_gb']+config['min_available_gb'] or disk_free(candidate) < required_disk:
+                        continue
+                    if safe_backfill(row, candidate, running, config, now):
+                        skipped.pop(candidate['id'], None)
+                        return candidate, skipped
             return row, skipped
     return None, skipped
