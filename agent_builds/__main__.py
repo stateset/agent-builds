@@ -25,6 +25,7 @@ def preflight_options(command, batch=False):
     command.add_argument('--min-free-gb',type=float,default=0)
     command.add_argument('--scratch-gb',type=float,default=0)
     command.add_argument('--compare-jobs',type=int,action='append',default=[])
+    command.add_argument('--compare-memory-gb',type=float,action='append',default=[])
     command.add_argument('--json',action='store_true')
     if not batch:
         command.add_argument('--lane',choices=['quick','heavy'],default='heavy')
@@ -36,7 +37,7 @@ def preflight_options(command, batch=False):
 def preflight_command(args):
     from .preflight import report, lines
     fields=('cwd','lane','backend','jobs','memory_gb','timeout','image','resource_key','locks',
-            'min_free_gb','scratch_gb','compare_jobs')
+            'min_free_gb','scratch_gb','compare_jobs','compare_memory_gb')
     values={key:getattr(args,key) for key in fields if getattr(args,key,None) is not None}
     if args.action=='batch':
         with Path(args.manifest).expanduser().open('rb') as source:
@@ -65,7 +66,7 @@ def parser():
     sub = root.add_subparsers(dest='action')
     tui = sub.add_parser('tui', help='Open the terminal dashboard (default)')
     tui.add_argument('--cwd', default=os.getcwd())
-    preflight_options(sub.add_parser('preflight',help='Compare resource requests before submission; read only, no reservation or execution'))
+    preflight_options(sub.add_parser('preflight',help='Compare CPU/RAM requests before submission; read only, no reservation or execution'))
     run = sub.add_parser('run', help='Queue work, stream output and preserve its exit code')
     run.add_argument('--cwd', default=os.getcwd())
     run.add_argument('--lane', choices=['quick', 'heavy'], default='heavy')
@@ -87,7 +88,7 @@ def parser():
     run.add_argument('command', nargs=argparse.REMAINDER)
     batches = sub.add_parser('batch', help='Run related short checks in one local reservation')
     batch_sub = batches.add_subparsers(dest='batch_action', required=True)
-    batch_preview=batch_sub.add_parser('preflight',help='Inspect a batch and compare CPU reservations without submitting it')
+    batch_preview=batch_sub.add_parser('preflight',help='Inspect a batch and compare CPU/RAM reservations without submitting it')
     batch_preview.add_argument('manifest')
     preflight_options(batch_preview,batch=True)
     batch_run = batch_sub.add_parser('run')

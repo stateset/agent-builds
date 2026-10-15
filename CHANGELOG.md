@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.20.0
+
+- Compare explicit RAM alternatives as well as CPU in CLI and MCP preflight.
+  Evaluate each combination independently against one bounded queue snapshot,
+  retaining ordering, protected-pool limits, batch CPU minimums and uncertainty.
+- Bound comparisons to 25 unique CPU/RAM combinations and eight alternatives
+  per dimension. Report each case's reservation and fresh RAM headroom/deficit.
+- Keep comparisons read-only: no automatic downsizing, retries, reservations,
+  scheduler-policy change or claim that all fitting alternatives can run together.
+
 ## 0.19.0
 
 - Add read-only CLI and MCP preflight projections before submission, with explicit

@@ -59,6 +59,98 @@ class PreflightTests(unittest.TestCase):
         self.store.finish(busy,'succeeded',0)
         self.assertTrue(self.store.claim(two))
 
+    def test_memory_and_cpu_comparisons_agree_with_actual_admission(self):
+        busy=self.job(slots=1,memory=2.5)
+        self.assertTrue(self.store.claim(busy))
+        result=preflight.report(self.store,self.request(jobs=2,memory_gb=2,compare_jobs=[1],compare_memory_gb=[1]))
+        self.assertEqual([(case['jobs'],case['memory_gb']) for case in result['cases']],[(2,2),(2,1),(1,2),(1,1)])
+        self.assertEqual([case['fits_now'] for case in result['cases']],[False,True,False,True])
+        self.assertIn('global memory GiB',result['cases'][0]['blocking_facts'])
+        self.assertNotIn('global CPU slots',result['cases'][0]['blocking_facts'])
+        large=self.job('two-memory',slots=2,memory=2)
+        self.assertFalse(self.store.claim(large))
+        small=self.job('one-memory',slots=2,memory=1)
+        self.assertTrue(self.store.claim(small))
+        self.store.finish(small,'succeeded',0)
+        self.store.finish(busy,'succeeded',0)
+        self.assertTrue(self.store.claim(large))
+
+    def test_memory_alternatives_obey_protected_pool_and_submission_rules(self):
+        self.store.update_config(dict(quick_reserve_slots=1,quick_reserve_jobs=1,
+                                      quick_reserve_memory_gb=1,protected_quick=True))
+        busy=self.job(slots=1,memory=2,lane='heavy')
+        self.assertTrue(self.store.claim(busy))
+        result=preflight.report(self.store,self.request(lane='heavy',memory_gb=2,compare_memory_gb=[1,4,5]))
+        self.assertEqual([case['submission_acceptable'] for case in result['cases']],[True,True,False,False])
+        self.assertEqual([case['fits_now'] for case in result['cases']],[False,True,False,False])
+        self.assertIn('heavy pool memory GiB',result['cases'][0]['blocking_facts'])
+        self.assertEqual(result['request']['memory_gb'],2)
+
+    def test_host_memory_headroom_is_recomputed_for_each_explicit_alternative(self):
+        self.store.update_config(dict(min_available_gb=.5))
+        with mock.patch('agent_builds.preflight.snapshot',return_value=dict(available_gb=2)):
+            result=preflight.report(self.store,self.request(memory_gb=2,compare_memory_gb=[1]))
+        self.assertEqual([case['fits_now'] for case in result['cases']],[False,True])
+        self.assertEqual([case['ram']['deficit_gb'] for case in result['cases']],[.5,0])
+        text='\n'.join(preflight.lines(result))
+        self.assertIn('1 CPU slots / 2 GiB RAM',text)
+        self.assertIn('RAM 2.000 GiB available / 2.500 required; deficit 0.500',text)
+
+    def test_batch_memory_alternatives_keep_aggregate_ram_and_parallel_cpu_minimum(self):
+        manifest=dict(max_parallel=2,checks=[dict(name=str(i),command=['true']) for i in range(2)])
+        result=preflight.report(self.store,self.request(jobs=2,memory_gb=2,compare_jobs=[1],
+                                                      compare_memory_gb=[1],manifest=manifest))
+        self.assertEqual([case['submission_acceptable'] for case in result['cases']],[True,True,False,False])
+        self.assertEqual([case['ram']['required_gb'] for case in result['cases']],[2,1,2,1])
+        self.assertTrue(all(case['batch']['memory_scope']=='one aggregate reservation' for case in result['cases']))
+        self.assertEqual([case['batch']['slots_per_check'] for case in result['cases']],[1,1,None,None])
+
+    def test_comparison_grid_is_deduplicated_and_bounded_before_host_probes(self):
+        with mock.patch('agent_builds.preflight.snapshot') as machine:
+            with self.assertRaisesRegex(ValueError,'25 unique combinations'):
+                preflight.report(self.store,self.request(jobs=1,compare_jobs=list(range(2,10)),
+                    memory_gb=1,compare_memory_gb=list(range(2,10))))
+            machine.assert_not_called()
+        result=preflight.report(self.store,self.request(jobs=1,compare_jobs=[1,2,3,4,5],memory_gb=.25,
+            compare_memory_gb=[.25,.5,.75,1,1.25]))
+        self.assertEqual(result['comparisons']['cases'],25)
+        self.assertEqual(result['comparisons']['max_cases'],25)
+        self.assertEqual(result['comparisons']['jobs'],[1,2,3,4,5])
+        self.assertEqual(result['cases'][0]['memory_gb'],.25)
+        self.assertEqual(result['cases'][-1]['memory_gb'],1.25)
+        self.assertEqual(self.store.rows(),[])
+
+    def test_invalid_memory_comparisons_do_not_write_or_probe_host(self):
+        for values in ([True],[0],[-1],[float('nan')],[float('inf')],['1'],[None],None,(1,),[1]*9):
+            before=self.store.db.total_changes
+            with mock.patch('agent_builds.preflight.snapshot') as machine:
+                with self.assertRaises(ValueError):
+                    preflight.report(self.store,self.request(compare_memory_gb=values))
+                machine.assert_not_called()
+            self.assertEqual(self.store.db.total_changes,before)
+
+    def test_unknown_measurements_remain_unknown_for_all_cpu_and_ram_alternatives(self):
+        with mock.patch('agent_builds.preflight.snapshot',return_value=dict(available_gb=None)):
+            result=preflight.report(self.store,self.request(jobs=2,compare_jobs=[1],memory_gb=2,compare_memory_gb=[1]))
+        self.assertEqual(len(result['cases']),4)
+        self.assertTrue(all(case['fits_now'] is None for case in result['cases']))
+        self.assertTrue(all(case['ram']['deficit_gb'] is None for case in result['cases']))
+
+    def test_cpu_ram_grid_uses_one_snapshot_and_never_executes_commands(self):
+        marker=self.root/'must-not-execute-grid'
+        before=self.store.db.total_changes
+        with mock.patch('agent_builds.preflight.snapshot',return_value=dict(available_gb=32)) as machine, \
+                mock.patch.object(self.store,'read_snapshot',wraps=self.store.read_snapshot) as queue:
+            result=preflight.report(self.store,self.request(jobs=2,compare_jobs=[1],memory_gb=2,compare_memory_gb=[1],
+                command=[sys.executable,'-c','from pathlib import Path; Path({!r}).touch()'.format(str(marker))]))
+            machine.assert_called_once()
+            queue.assert_called_once()
+        self.assertEqual(self.store.db.total_changes,before)
+        self.assertEqual(self.store.rows(),[])
+        self.assertFalse(marker.exists())
+        self.assertEqual(result['comparisons']['cases'],4)
+        self.assertFalse(result['commands_submitted'])
+
     def test_aged_head_draining_agrees_with_real_claim(self):
         busy=self.job('busy',slots=2,lane='heavy')
         self.assertTrue(self.store.claim(busy))
@@ -220,11 +312,13 @@ class PreflightTests(unittest.TestCase):
         manifest=self.root/'checks.json'
         manifest.write_text(json.dumps(dict(max_parallel=2,checks=[dict(name='one',command=['true'])])))
         env=dict(AGENT_BUILDS_STATE=str(self.store.root),AGENT_BUILDS_JOB_ID='outer-test-job')
-        for argv in (['preflight','--cwd',str(self.root),'--lane','quick','--jobs','1','--json'],
-                     ['batch','preflight',str(manifest),'--cwd',str(self.root),'--jobs','2','--compare-jobs','1','--json']):
+        for argv in (['preflight','--cwd',str(self.root),'--lane','quick','--jobs','1','--compare-memory-gb','.5','--json'],
+                     ['batch','preflight',str(manifest),'--cwd',str(self.root),'--jobs','2','--compare-jobs','1','--compare-memory-gb','.5','--json']):
             with mock.patch.dict(os.environ,env),mock.patch('sys.argv',['buildr']+argv),mock.patch('sys.stdout',new_callable=io.StringIO) as output:
                 self.assertEqual(main(),0)
-            self.assertEqual(json.loads(output.getvalue())['schema'],'buildr-preflight-v1')
+            result=json.loads(output.getvalue())
+            self.assertEqual(result['schema'],'buildr-preflight-v1')
+            self.assertEqual(result['comparisons']['memory_gb'][-1],.5)
         self.assertEqual(self.store.rows(),[])
 
     def test_invalid_shapes_do_not_write(self):
@@ -278,11 +372,12 @@ class PreflightMCPTests(unittest.TestCase):
     def test_read_only_server_preflight_keeps_missing_state_and_returns_batch_comparisons(self):
         missing=self.root/'missing'
         client=self.client(read_only=True,env=dict(self.env,AGENT_BUILDS_STATE=str(missing)))
-        result=self.invoke(client,'buildr_preflight',dict(cwd=str(self.root),jobs=2,compare_jobs=[1],
+        result=self.invoke(client,'buildr_preflight',dict(cwd=str(self.root),jobs=2,compare_jobs=[1],compare_memory_gb=[.5],
             manifest=dict(max_parallel=2,checks=[dict(name='one',command=['true'])])))['result']
         self.assertFalse(result['isError'],result)
         report=result['structuredContent']
-        self.assertEqual([c['submission_acceptable'] for c in report['cases']],[True,False])
+        self.assertEqual([c['submission_acceptable'] for c in report['cases']],[True,True,False,False])
+        self.assertEqual([c['memory_gb'] for c in report['cases']],[1,.5,1,.5])
         self.assertFalse(report['initialized'])
         self.assertFalse(missing.exists())
         self.assertFalse(report['commands_submitted'])

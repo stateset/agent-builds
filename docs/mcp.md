@@ -190,11 +190,16 @@ and `target_seconds`.
 
 ### Preflight before submission (v0.19)
 
-`buildr_preflight` compares explicit CPU counts with current ordering, locks,
+`buildr_preflight` compares explicit CPU/RAM budgets with current ordering, locks,
 protected budgets and disk/RAM headroom. It accepts a literal command or inline
 batch manifest without executing it. It needs no request key and is available
 in read-only mode. `fits_now` can be unknown; a positive projection reserves
 nothing and does not prove downsizing is safe. See [preflight](preflight.md).
+
+As of v0.20, optional `compare_memory_gb` combines with `compare_jobs` to inspect
+at most 25 unique CPU/RAM alternatives against the same queue snapshot. Each
+case includes its own `memory_gb`. Alternatives do not reserve capacity and do
+not represent multiple jobs that can all start together.
 
 ### Operational diagnostics (v0.16)
 

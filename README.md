@@ -10,7 +10,8 @@ verification plans. See [MCP setup and tool reference](docs/mcp.md).
 
 Use `buildr preflight --cwd /absolute/repo --lane quick --jobs 2 --compare-jobs 1`
 to inspect resource budgets, queue ordering, locks and host headroom before
-submitting. `buildr batch preflight checks.json --jobs 2 --compare-jobs 1`
+submitting. Add `--memory-gb 4 --compare-memory-gb 2` to compare RAM as well as CPU
+against one snapshot. `buildr batch preflight checks.json --jobs 2 --compare-jobs 1`
 also checks the batch's parallel CPU minimum and explicit Cargo worker flags.
 The read-only MCP equivalent is `buildr_preflight`. These projections reserve
 nothing and do not establish that downsizing is safe. See [preflight](docs/preflight.md).

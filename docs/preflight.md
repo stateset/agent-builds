@@ -7,6 +7,7 @@ an existing database. It can run inside an existing queued job for inspection.
 
 ```sh
 buildr preflight --cwd /absolute/repo --lane quick --jobs 2 --compare-jobs 1 --memory-gb 2 -- cargo check
+buildr preflight --cwd /absolute/repo --lane quick --jobs 2 --compare-jobs 1 --memory-gb 4 --compare-memory-gb 2 --json
 buildr preflight --cwd /absolute/repo --lane heavy --jobs 3 --compare-jobs 2 --json
 buildr batch preflight checks.json --cwd /absolute/repo --jobs 2 --compare-jobs 1 --json
 ```
@@ -21,8 +22,25 @@ Supply the same working directory, primary `--resource-key`, repeated `--lock`,
 An omitted primary key uses the same repository/output inference as submission.
 Ordinary preflight also accepts `--backend docker` and `--image`.
 
-Repeat `--compare-jobs` up to eight times; the requested budget appears first and
-duplicates are removed. Every case keeps the other budgets and command unchanged.
+Repeat `--compare-jobs` and `--compare-memory-gb` up to eight times each. The
+requested budget appears first, duplicates are removed, and every unique CPU/RAM
+combination is inspected. At most 25 combinations are allowed; larger requests
+fail before host probes without creating anything. CPU-only requests retain their
+existing ordering. Within each CPU count, requested RAM appears first, followed
+by RAM alternatives in supplied order. The JSON `comparisons` object records the
+unique dimension values, case count and limit. Each case includes its own `jobs`
+and `memory_gb`; the top-level request retains the original RAM budget.
+
+For example, two CPU slots and 4 GiB compared with one slot and 2 GiB produces
+four cases: (2, 4), (2, 2), (1, 4), (1, 2). These are alternatives for **one job**,
+not four simultaneous reservations. A case may fit when another does not, even
+with the same CPU count, because global RAM or protected heavy RAM is full.
+Each case preserves the other budgets, locks and command. Host RAM requirements
+include the request plus configured available-memory headroom. CPU/RAM reservations
+are scheduling estimates for local jobs, not process limits or measured needs.
+Use repeated representative measurements and [advisor trials](advisor.md) before
+choosing a smaller reservation; the comparison cannot establish its sufficiency.
+
 For batches, `max_parallel` must fit the CPU count, and the report shows the worker
 slots allocated to each simultaneous check. Explicit direct Cargo `-j` and Rust
 test-thread flags can override those hints; warnings identify oversubscription
@@ -64,13 +82,14 @@ is safe. Submit through the queue normally and retain its durable handle. Use
 
 `buildr_preflight` requires `cwd` and accepts optional `command` (literal argv) or
 `manifest` (inline batch), plus `lane`, `jobs`, `memory_gb`, `timeout`, `backend`,
-`image`, `resource_key`, `locks`, `min_free_gb`, `scratch_gb` and `compare_jobs`.
+`image`, `resource_key`, `locks`, `min_free_gb`, `scratch_gb`, `compare_jobs` and
+`compare_memory_gb` (up to eight positive finite RAM values; same 25-case limit).
 Command and manifest are mutually exclusive; omit both for a resource-only check.
 The tool is included in `buildr mcp serve --read-only` and needs no request key.
 
 ```json
 {"cwd":"/absolute/repo","lane":"quick","jobs":2,"compare_jobs":[1],
- "memory_gb":2,"command":["cargo","check"]}
+ "memory_gb":4,"compare_memory_gb":[2],"command":["cargo","check"]}
 ```
 
 Reconnect an already running MCP client to discover the added tool. Inspection

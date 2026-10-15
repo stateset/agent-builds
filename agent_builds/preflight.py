@@ -1,5 +1,6 @@
 """Read-only projections before submission; never reserve capacity or execute argv."""
 import json
+from itertools import product
 import math
 import os
 from pathlib import Path
@@ -15,8 +16,10 @@ from .runner import resource_key
 from .scheduler import POLICY_VERSION, choose
 
 MAX_ACTIVE = 200
+MAX_CASES = 25
 NOTE = ('Projection of the loaded scheduler over one bounded queue snapshot and current host observations. '
         'It is not admission, a reservation, an ETA or evidence that a smaller budget is safe. '
+        'Each case is an alternative for one job, not simultaneous reservations. '
         'Queue state, policy and host pressure can change before submission. No submitted command is executed; '
         'no jobs, request keys, files, settings or reservations are changed.')
 
@@ -75,7 +78,7 @@ def _worker_warnings(argv, slots, label='command'):
 
 def report(store, arguments):
     allowed = {'cwd','lane','jobs','memory_gb','timeout','backend','image','resource_key','locks',
-               'min_free_gb','scratch_gb','command','manifest','compare_jobs'}
+               'min_free_gb','scratch_gb','command','manifest','compare_jobs','compare_memory_gb'}
     if not isinstance(arguments,dict) or set(arguments)-allowed:
         raise ValueError('Unsupported preflight fields')
     if not isinstance(arguments.get('cwd'),str) or not arguments['cwd'] or '\0' in arguments['cwd']:
@@ -98,11 +101,15 @@ def report(store, arguments):
     comparisons = arguments.get('compare_jobs',[])
     if not isinstance(comparisons,list) or len(comparisons)>8 or any(type(x) is not int or not 1<=x<=64 for x in comparisons):
         raise ValueError('compare_jobs must contain at most eight CPU counts from 1 to 64')
+    memory_comparisons = arguments.get('compare_memory_gb',[])
+    if not isinstance(memory_comparisons,list) or len(memory_comparisons)>8:
+        raise ValueError('compare_memory_gb must contain at most eight positive finite RAM reservations')
+    for value in memory_comparisons:
+        _number(value,'compare_memory_gb')
     primary = arguments.get('resource_key')
     if primary is None:
         primary = resource_key(cwd)
     resources = locks.normalize(primary, arguments.get('locks',[]))
-    now = time.time()
     with store.read_snapshot():
         config = store.config()
         active, total, totals = _active(store)
@@ -110,7 +117,11 @@ def report(store, arguments):
     slots = arguments.get('jobs', 1 if manifest is not None else config[lane+'_jobs'])
     if type(slots) is not int or not 1<=slots<=64:
         raise ValueError('jobs must be an integer from 1 to 64')
-    memory = _number(arguments.get('memory_gb',1 if manifest is not None else 6 if lane=='heavy' else 2),'memory_gb')
+    requested_memory = _number(arguments.get('memory_gb',1 if manifest is not None else 6 if lane=='heavy' else 2),'memory_gb')
+    cpu_counts = list(dict.fromkeys([slots]+comparisons))
+    memory_counts = list(dict.fromkeys([requested_memory]+memory_comparisons))
+    if len(cpu_counts)*len(memory_counts)>MAX_CASES:
+        raise ValueError('CPU/RAM comparisons exceed {} unique combinations; request fewer alternatives'.format(MAX_CASES))
     timeout = _number(arguments.get('timeout',60 if manifest is not None else config['timeout_seconds']),'timeout')
     minimum = _number(arguments.get('min_free_gb',0),'min_free_gb',True)
     scratch = _number(arguments.get('scratch_gb',0),'scratch_gb',True)
@@ -143,8 +154,9 @@ def report(store, arguments):
     queued = [r for r in active if r['state'] in ('queued','held') and not r['cancel_requested']]
     pending_policy = bool(config.get('protected_quick_requested') and not config.get('protected_quick'))
     complete = total<=MAX_ACTIVE
+    now = time.time()
     cases = []
-    for count in dict.fromkeys([slots]+comparisons):
+    for count,memory in product(cpu_counts,memory_counts):
         row = dict(id='~preflight',state='queued',created=now,cwd=str(cwd),lane=lane,slots=count,memory_gb=memory,
                    resource_key=primary,resource_keys=resources,lock_protocol=1,cancel_requested=0,
                    min_free_gb=minimum,scratch_gb=scratch)
@@ -197,7 +209,7 @@ def report(store, arguments):
             selected = 'candidate' if choice is not None and choice['id']==row['id'] else choice['id'] if choice else None
             fits = selected=='candidate' and not skipped.get(row['id'])
             reason = '' if fits else skipped.get(row['id'], 'another queued job selected' if selected else 'waiting for scheduling capacity')
-        case = dict(jobs=count,submission_acceptable=not errors,submission_issues=errors,
+        case = dict(jobs=count,memory_gb=memory,submission_acceptable=not errors,submission_issues=errors,
             fits_now=fits,reason=reason,selected=selected,blocking_facts=facts,lock_blockers=blockers,
             reservation_arithmetic=arithmetic,
             disk=dict(available_gb=free,required_gb=required,deficit_gb=max(0,required-free) if free is not None else None),
@@ -217,8 +229,9 @@ def report(store, arguments):
         cases.append(case)
     return dict(schema='buildr-preflight-v1',observed_at=now,initialized=store.db is not None,
         current_policy_version=POLICY_VERSION,config=config,machine=machine,
-        request=dict(cwd=str(cwd),lane=lane,backend=backend,memory_gb=memory,timeout=timeout,
+        request=dict(cwd=str(cwd),lane=lane,backend=backend,memory_gb=requested_memory,timeout=timeout,
                      resource_keys=resources,min_free_gb=minimum,scratch_gb=scratch,command_provided=argv is not None),
+        comparisons=dict(jobs=cpu_counts,memory_gb=memory_counts,cases=len(cases),max_cases=MAX_CASES),
         active_matching=total,active_sampled=len(active),snapshot_complete=complete,policy_pending=pending_policy,
         protocol_compatible=compatible,
         global_reservations=totals,state_probe_path=str(probe),state_probe_errors=probe_errors,cases=cases,
@@ -229,7 +242,7 @@ def lines(result):
     yield 'BUILDR preflight | read only | no submission or reservation'
     for case in result['cases']:
         state = 'fits snapshot' if case['fits_now'] is True else 'blocked in snapshot' if case['fits_now'] is False else 'unknown'
-        yield '{} CPU slots: {} | {}'.format(case['jobs'],state,case['reason'])
+        yield '{} CPU slots / {:g} GiB RAM: {} | {}'.format(case['jobs'],case['memory_gb'],state,case['reason'])
         for issue in case['submission_issues']:
             yield '  Submission issue: '+issue
         for fact in case['blocking_facts']:
@@ -239,6 +252,9 @@ def lines(result):
         disk = case['disk']
         if disk['available_gb'] is not None:
             yield '  Disk {:.3f} GiB free / {:.3f} required; deficit {:.3f}'.format(disk['available_gb'],disk['required_gb'],disk['deficit_gb'])
+        ram = case['ram']
+        if ram['available_gb'] is not None:
+            yield '  RAM {:.3f} GiB available / {:.3f} required; deficit {:.3f}'.format(ram['available_gb'],ram['required_gb'],ram['deficit_gb'])
         if 'batch' in case:
             yield '  Batch: {} checks, parallel limit {}, {} CPU worker slots per check'.format(
                 case['batch']['checks'],case['batch']['effective_max_parallel'],case['batch']['slots_per_check'])
