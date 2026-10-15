@@ -137,3 +137,7 @@ retry. TUI job details show the parallel limit and divided worker hints.
 Measure this strategy on representative checks before adopting it. It amortizes
 per-submission overhead and allows independent verification to overlap; it does
 not make every build faster or guarantee higher useful throughput.
+
+Resource-advisor CPU trials preserve the requested parallel limit, including when
+the check count makes effective concurrency lower. Incomplete legacy batch request
+metadata does not justify reducing CPU slots. Trials remain advisory.

@@ -231,3 +231,34 @@ class AdviceTests(unittest.TestCase):
         finding=next(f for f in result['findings'] if f['code']=='tiny_check_trial')
         self.assertEqual(finding['suggested_trial'],{'jobs':1})
         self.assertNotIn('memory_trial',self.codes(result))
+
+
+    def test_parallel_batch_cpu_trials_preserve_requested_limit_even_for_one_check(self):
+        from agent_builds.batch import command
+        for count in (1,2):
+            argv=command(dict(max_parallel=2,checks=[dict(name=str(i),command=['true']) for i in range(count)]))
+            for unused in range(3):
+                job=self.completed(duration=2,slots=2,command=argv)
+                self.store.db.execute('UPDATE jobs SET batch=? WHERE id=?',
+                    (json.dumps(dict(max_parallel=min(count,2),checks=[])),job))
+        result=report(self.store)
+        self.assertNotIn('tiny_check_trial',self.codes(result))
+        self.assertNotIn('low_average_cpu',self.codes(result))
+
+    def test_parallel_batch_can_trial_fewer_slots_without_breaking_its_limit(self):
+        from agent_builds.batch import command
+        argv=command(dict(max_parallel=2,checks=[dict(name='one',command=['true']),dict(name='two',command=['true'])]))
+        for unused in range(3):
+            job=self.completed(duration=2,slots=3,command=argv)
+            self.store.db.execute('UPDATE jobs SET batch=? WHERE id=?',(json.dumps(dict(max_parallel=2,checks=[])),job))
+        result=report(self.store)
+        self.assertNotIn('tiny_check_trial',self.codes(result))
+        trial=next(f['suggested_trial'] for f in result['findings'] if f['code']=='low_average_cpu')
+        self.assertEqual(trial,dict(jobs=2))
+
+    def test_unknown_batch_request_does_not_support_cpu_downsizing(self):
+        for unused in range(3):
+            job=self.completed(duration=2,slots=3,command=['unknown-legacy-wrapper'])
+            self.store.db.execute('UPDATE jobs SET batch=? WHERE id=?',(json.dumps(dict(checks=[])),job))
+        self.assertNotIn('tiny_check_trial',self.codes())
+        self.assertNotIn('low_average_cpu',self.codes())

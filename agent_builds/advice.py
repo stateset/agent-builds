@@ -1,5 +1,6 @@
 """Read-only, evidence-based suggestions; never tune or execute commands."""
 import math
+import json
 from pathlib import Path
 import time
 
@@ -11,6 +12,22 @@ MIN_SUCCESSES = 3
 LONG_QUICK_SECONDS = 60
 WAIT_SECONDS = 60
 MAX_FINDINGS = 50
+
+
+def minimum_cpu_slots(row):
+    if not row['batch']:
+        return 1
+    # Runtime reports contain effective concurrency, which may be below the
+    # requested limit when there is only one check. Preserve the encoded request.
+    try:
+        if row['argv'][-2] != 'batch-worker':
+            return row['slots']
+        parallel = json.loads(row['argv'][-1]).get('max_parallel', 1)
+        if type(parallel) is int and 1 <= parallel <= 16:
+            return parallel
+    except (ValueError, IndexError, TypeError, AttributeError):
+        pass
+    return row['slots']  # incomplete legacy metadata cannot justify CPU downsizing
 
 
 def report(store, repo=None, hours=24, limit=200, policy=None):
@@ -124,6 +141,7 @@ def report(store, repo=None, hours=24, limit=200, policy=None):
         if len(jobs) < MIN_SUCCESSES:
             continue
         first = jobs[0]
+        minimum_slots = max(minimum_cpu_slots(job) for job in jobs)
         common = dict(cwd=first['cwd'], resource_key=first['resource_key'], resource_keys=first['resource_keys'], command_display=first['command_display'],
                       backend=first['backend'], lane=first['lane'], slots=first['slots'], memory_gb=first['memory_gb'],
                       successful_jobs=len(jobs), job_ids=[r['id'] for r in jobs[:10]])
@@ -133,7 +151,7 @@ def report(store, repo=None, hours=24, limit=200, policy=None):
             add('long_quick_command', 'A repeated quick-lane command has a median runtime of {:.1f}s'.format(median),
                 'Trial this command in the heavy lane or split a short prerequisite check from the long stage in a verification plan.',
                 dict(common, median_runtime_seconds=median), dict(lane='heavy'))
-        if first['lane']=='quick' and first['slots']>1 and median<=10:
+        if first['lane']=='quick' and first['slots']>1 and minimum_slots==1 and median<=10:
             add('tiny_check_trial','A repeated quick check has a median runtime of {:.1f}s'.format(median),
                 'Trial one CPU slot while retaining the memory reservation, and compare runtime. Review explicit tool worker flags too; the queue does not rewrite them.',
                 dict(common,median_runtime_seconds=median),dict(jobs=1))
@@ -150,11 +168,12 @@ def report(store, repo=None, hours=24, limit=200, policy=None):
                 dict(common, measured_jobs=len(measured), sampled_peak_rss_gb=peak), dict(memory_gb=memory_trial))
         reserved = sum(r['slots']*r['elapsed_seconds'] for r in measured)
         cpu = sum(r['usage'].get('cpu_seconds', 0) for r in measured)
-        if first['slots'] > 1 and reserved > 0 and cpu/reserved < .25:
+        trial_slots = max(minimum_slots, first['slots']-1)
+        if trial_slots < first['slots'] and reserved > 0 and cpu/reserved < .25:
             add('low_average_cpu', 'Repeated measured runs averaged less than 25% of their CPU reservation',
                 'Trial one fewer CPU slot and compare runtime before saving a task profile. Average CPU does not measure peak concurrency or guarantee a faster queue.',
                 dict(common, measured_jobs=len(measured), observed_cpu_seconds=cpu, reserved_cpu_seconds=reserved,
-                     observed_to_reserved_cpu_ratio=cpu/reserved), dict(jobs=first['slots']-1))
+                     observed_to_reserved_cpu_ratio=cpu/reserved), dict(jobs=trial_slots))
     priority = {'job_exceeds_budget': 0, 'stale_wait_observation': 2, 'limited_wait_coverage': 3}
     findings.sort(key=lambda f: (priority.get(f['code'], 1 if f['code'].startswith('current_wait_') else 4),
                                  f['code'], f['evidence'].get('cwd', ''), f['evidence'].get('command_display', '')))

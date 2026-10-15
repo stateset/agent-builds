@@ -6,6 +6,8 @@
   divided within one reservation, named log chunks and per-check native results.
   Keep sequential execution as the default. Fail-fast stops future launches and
   allows existing siblings to finish; aggregate failures follow manifest order.
+- Keep resource-advisor CPU trials above each batch’s requested parallel limit,
+  including single-check and incomplete legacy metadata cases.
 - Preserve cancellation, timeout, crash/unknown and one-attempt MCP semantics.
   Validate parallelism before job creation or durable request-key binding.
 - Add explicit four-strategy comparisons for the fixed Python verification
