@@ -69,3 +69,28 @@ class ExperimentTests(unittest.TestCase):
             result=json.loads((Path(temp)/'result-one.json').read_text())
             self.assertTrue(result['verified'])
             self.assertEqual((Path(temp)/'shared-output.txt').read_text(),'one')
+
+    def test_rotating_batch_comparison_keeps_native_results_and_one_batch_reservation(self):
+        before=os.sched_getaffinity(0)
+        with tempfile.TemporaryDirectory() as temp:
+            output=Path(temp)/'batch-proof.json'
+            with mock.patch('agent_builds.experiments.parent_budget',return_value=dict(job_id='fixture',slots=2,memory_gb=2)):
+                result=experiments.run(output,pairs=2,agents=2,cpus=2,scenarios=['python_verification'],include_batches=True)
+            self.assertEqual(os.sched_getaffinity(0),before)
+            self.assertEqual(len(result['records']),8)
+            self.assertEqual([r['mode'] for r in result['records'][:4]],['independent','queued','serial_batch','parallel_batch'])
+            self.assertEqual([r['mode'] for r in result['records'][4:]],['queued','serial_batch','parallel_batch','independent'])
+            self.assertEqual(len(result['batch_comparisons']),4)
+            self.assertTrue(all(r['verified_jobs']==2 for r in result['records']))
+            for arm in result['records']:
+                if arm['mode'] in ('serial_batch','parallel_batch'):
+                    self.assertEqual(len({r['queue_job_id'] for r in arm['results']}),1)
+                    self.assertTrue(all(r['exit_code']==0 and r['wrapper_exit_code']==0 for r in arm['results']))
+                    self.assertEqual({r['slots_per_check'] for r in arm['results']},{1 if arm['mode']=='parallel_batch' else 2})
+            self.assertFalse(result['autonomous_coding_productivity_measured'])
+
+    def test_batch_comparison_requires_compatible_fixture(self):
+        with self.assertRaises(ValueError):
+            experiments.run('/tmp/not-created-batch.json',scenarios=['shared_output'],include_batches=True)
+        with self.assertRaises(ValueError):
+            experiments.run('/tmp/not-created-batch.json',include_batches='yes')

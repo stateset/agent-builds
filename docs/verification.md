@@ -94,3 +94,46 @@ budgets and fixed workloads. It records quick latency and heavy completion cost,
 then compares four sequential CLI checks with one batch. Results describe these
 fixtures, not accepted code or autonomous-agent productivity. The latter still
 requires prospective matched coding tasks with explicit acceptance criteria.
+
+## Parallel independent checks (v0.18)
+
+A batch can opt in to overlapping checks inside its existing reservation:
+
+```json
+{"version":1,"max_parallel":2,"keep_going":true,"checks":[
+  {"name":"format","command":["cargo","fmt","--check"]},
+  {"name":"diff","command":["git","diff","--check"]}
+]}
+```
+
+```sh
+buildr batch run checks.json --cwd /absolute/repo --jobs 2 --memory-gb 2 --timeout 60
+```
+
+Only select checks that can run independently. Buildr does not infer dependencies,
+split shell scripts or prove output independence. Keep sequential batches or use
+plan dependencies for shared mutable outputs. The default `max_parallel` remains 1;
+values from 1 to 16 must fit the requested CPU slots. CLI and MCP reject an invalid
+request before creating a job or binding its durable key. MCP discovery now exposes
+the full batch manifest schema, including parallelism.
+
+One queue job holds the complete CPU/RAM/scratch/lock reservation for the batch.
+Concurrent checks each receive `floor(jobs / effective_parallelism)` for
+`CARGO_BUILD_JOBS` and `RUST_TEST_THREADS`; effective parallelism cannot exceed the
+check count. Integer remainders stay unused. Explicit command flags and tools that
+ignore these hints can exceed them. Local reservations are not hard limits.
+Memory is one aggregate reservation; provision it for the concurrent peak of all
+checks. No per-check RAM cap or additional global capacity is implied.
+
+Results retain each native exit code and start/finish time. Output chunks are
+labeled with check names in parallel mode; the shared log can interleave output.
+The aggregate result is the first failure in manifest order, independent of finish
+order. With `keep_going:false`, a detected failure prevents future launches while
+already-running siblings finish. Checks admitted before a failure is observed may
+already be running. Cancellation/timeouts stop the worker group through the outer
+runner; incomplete results remain unknown, and pending checks are skipped without
+retry. TUI job details show the parallel limit and divided worker hints.
+
+Measure this strategy on representative checks before adopting it. It amortizes
+per-submission overhead and allows independent verification to overlap; it does
+not make every build faster or guarantee higher useful throughput.

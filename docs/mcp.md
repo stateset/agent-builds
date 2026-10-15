@@ -200,3 +200,14 @@ See [verification](verification.md) for protected-mode behavior and limitations.
 tracking. Plan manifests accept a plan-wide `input_files` array for existing strict
 source gates. Same-key reconnects retain original handles and submission hashes.
 See [declared input evidence](declared-inputs.md) for bounds and unknown outcomes.
+
+### Parallel batches (v0.18)
+
+`buildr_batch_submit` exposes a typed batch manifest schema. Set manifest
+`max_parallel:2` with `jobs:2` for independent checks that can overlap. The default
+remains sequential. CPU worker hints divide within the reservation; memory is one
+aggregate reservation. A mismatched parallel limit fails before durable key binding.
+Reconnect with the same key and exact arguments to retrieve the original batch.
+See [verification](verification.md) for fail-fast, native-exit and cancellation
+semantics. Existing `buildr_diagnose` also exposes all reservation deficits and
+protected-pool arithmetic; it never changes settings or jobs.

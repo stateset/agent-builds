@@ -201,3 +201,50 @@ class DiagnosticTests(unittest.TestCase):
 
 if __name__=='__main__':
     unittest.main()
+
+    def test_capacity_explains_protected_cpu_and_memory_despite_free_global_slots(self):
+        config=dict(self.store.config(),protected_quick=True,max_running=4,quick_reserve_slots=2,
+                    quick_reserve_jobs=2,quick_reserve_memory_gb=4)
+        row=dict(lane='heavy',slots=2,memory_gb=8,created=0)
+        running=[dict(lane='heavy',slots=3,memory_gb=8)]
+        report=diagnostics.capacity(row,running,config,time.time())
+        self.assertEqual(report['blocking_dimensions'],['heavy pool CPU slots','heavy pool memory GiB'])
+        dimensions={d['name']:d for d in report['dimensions']}
+        self.assertEqual(dimensions['global CPU slots']['remaining'],3)
+        self.assertEqual(dimensions['heavy pool CPU slots']['remaining'],1)
+        self.assertEqual(dimensions['heavy pool CPU slots']['deficit'],1)
+        self.assertEqual(dimensions['heavy pool memory GiB']['deficit'],4)
+        self.assertTrue(report['fits_alone'])
+
+    def test_capacity_marks_never_fitting_requests_and_aged_soft_pool_behavior(self):
+        config=dict(self.store.config(),protected_quick=True,quick_reserve_slots=2)
+        row=dict(lane='heavy',slots=5,memory_gb=1,created=0)
+        report=diagnostics.capacity(row,[],config,time.time())
+        self.assertFalse(report['fits_alone'])
+        self.assertEqual(report['blocking_dimensions'],['heavy pool CPU slots'])
+        config['protected_quick']=False
+        report=diagnostics.capacity(row,[],config,time.time())
+        self.assertTrue(report['fits_alone'])
+        self.assertEqual(report['blocking_dimensions'],[])
+        row['created']=time.time()
+        self.assertFalse(diagnostics.capacity(row,[],config,time.time())['fits_alone'])
+
+    def test_quick_capacity_includes_global_reservations_without_heavy_pool_limits(self):
+        config=dict(self.store.config(),protected_quick=True,max_running=2)
+        row=dict(lane='quick',slots=1,memory_gb=2,created=0)
+        running=[dict(lane='heavy',slots=3,memory_gb=8),dict(lane='quick',slots=3,memory_gb=8)]
+        report=diagnostics.capacity(row,running,config,time.time())
+        self.assertEqual(set(report['blocking_dimensions']),{'global CPU slots','global memory GiB','global job count'})
+        self.assertEqual(len(report['dimensions']),3)
+
+    def test_capacity_report_is_read_only_and_counts_cancelling_reservations(self):
+        busy=self.job('busy')
+        self.store.db.execute("UPDATE jobs SET state='cancelling' WHERE id=?",(busy,))
+        waiting=self.job('waiting')
+        before=self.store.db.total_changes
+        result=diagnostics.report(self.store,waiting,repo='/other-repo')
+        self.assertEqual(self.store.db.total_changes,before)
+        dimensions={d['name']:d for d in result['jobs'][0]['capacity']['dimensions']}
+        self.assertEqual(dimensions['global job count']['used'],1)
+        self.assertEqual(dimensions['global CPU slots']['used'],1)
+        self.assertFalse(result['changes_applied'])

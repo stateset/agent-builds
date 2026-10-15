@@ -37,6 +37,13 @@ CWD = string(description='Existing absolute working directory; commands run with
 LOCKS = dict(type='array', maxItems=15, items=string(), description='Additional exact resource keys acquired atomically with the primary key.')
 INPUTS = dict(type='array', maxItems=16, items=string(), description='Literal local input files to hash at submission/start/finish; relative to cwd. Enables source tracking. Report-only for jobs and batches.')
 TAIL = dict(type='integer', minimum=1, maximum=200, default=40)
+BATCH = dict(type='object',additionalProperties=False,required=['checks'],properties=dict(
+    version=dict(type='integer',enum=[1]),keep_going=dict(type='boolean',default=True),
+    max_parallel=dict(type='integer',minimum=1,maximum=16,default=1,
+        description='Only independent checks may overlap; must fit jobs. CPU worker hints divide across checks; memory is one aggregate reservation.'),
+    checks=dict(type='array',minItems=1,maxItems=32,items=dict(type='object',additionalProperties=False,
+        required=['name','command'],properties=dict(name=string(64,pattern='^[A-Za-z0-9][A-Za-z0-9_.-]*$'),
+            command=dict(type='array',minItems=1,maxItems=128,items=dict(type='string',maxLength=4096)))))))
 
 
 def tool(name, description, properties=None, required=(), read=True, idempotent=True):
@@ -59,8 +66,8 @@ TOOLS = [
         backend=dict(type='string', enum=['local', 'docker'], default='local'), image=string(), resource_key=string(), locks=LOCKS,
         track_source=dict(type='boolean', default=True), input_files=INPUTS, min_free_gb=dict(type='number', minimum=0), scratch_gb=dict(type='number', minimum=0)),
         ('request_key', 'cwd', 'command'), read=False),
-    tool('buildr_batch_submit', 'Run up to 32 related foreground checks under one local quick reservation, preserving per-check native outcomes. Use the same request key and exact arguments after reconnecting.', dict(
-        request_key=KEY,cwd=CWD,manifest=dict(type='object'),
+    tool('buildr_batch_submit', 'Run up to 32 related foreground checks under one local quick reservation, preserving per-check native outcomes. Manifest max_parallel defaults to 1; independent checks can opt in up to the CPU reservation. Use the same request key and exact arguments after reconnecting.', dict(
+        request_key=KEY,cwd=CWD,manifest=BATCH,
         jobs=dict(type='integer',minimum=1,maximum=64),memory_gb=dict(type='number',exclusiveMinimum=0,maximum=1024),
         timeout=dict(type='number',exclusiveMinimum=0,maximum=300),resource_key=string(),locks=LOCKS,
         track_source=dict(type='boolean',default=True),input_files=INPUTS),('request_key','cwd','manifest'),read=False),

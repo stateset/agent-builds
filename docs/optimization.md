@@ -122,3 +122,28 @@ prove that the queue makes every build faster or improves overall autonomous
 coding productivity. The original private measurements and per-job logs are in
 the release checkout's `.agent-builds-output/paired-experiment.json` and referenced
 fixture directory; source identity was unchanged throughout that experiment.
+
+## Measuring batching strategies (v0.18)
+
+```sh
+buildr run --lane quick --jobs 2 --memory-gb 2 -- \
+  buildr experiment run --output /tmp/new-batching-comparison.json \
+  --pairs 4 --agents 4 --cpus 2 --scenario python_verification --include-batches
+```
+
+This opt-in comparison adds sequential and parallel batches to the existing
+independent-launch and separate-queued-job arms for the fixed worker-budget unit
+checks. Every arm stays within the same outer reservation and CPU affinity. Each
+batch holds one aggregate inner reservation; separate jobs use one slot each.
+Sequential batch checks receive the full batch worker hint; parallel checks divide
+it. This compares workflow strategies, rather than holding every process setting
+identical. Unit checks remain fixed literal argv; no historical commands execute.
+
+Mode order rotates between pairs; four pairs put each mode in each position once.
+Reports preserve per-check native outcomes, wrapper outcomes and handles for
+batches, wall time, sampled RSS, CPU and paired batch/separate-queue ratios.
+The fixture measures repeated small verification checks, not compilation,
+Ghostty responsiveness, accepted code changes or autonomous coding productivity.
+Report costs and all verified outcomes alongside any speedup. Source-before/after
+observations and machine pressure remain part of the report. Existing two-arm
+experiments retain their default behavior.

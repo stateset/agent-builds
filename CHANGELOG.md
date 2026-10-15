@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.18.0
+
+- Add opt-in parallel batches for independent checks, with CPU worker hints
+  divided within one reservation, named log chunks and per-check native results.
+  Keep sequential execution as the default. Fail-fast stops future launches and
+  allows existing siblings to finish; aggregate failures follow manifest order.
+- Preserve cancellation, timeout, crash/unknown and one-attempt MCP semantics.
+  Validate parallelism before job creation or durable request-key binding.
+- Add explicit four-strategy comparisons for the fixed Python verification
+  fixture: independent launches, separate queued jobs, serial batch and parallel
+  batch. Rotate order, retain outcomes/costs, and make no coding-productivity claim.
+- Explain every reservation deficit, protected heavy-pool arithmetic and requests
+  that cannot fit alone through existing CLI/MCP/TUI diagnostics. No scheduling
+  policy, live budget, cache ownership or remote-execution change.
+
 ## 0.17.0
 
 - Fingerprint explicitly declared helper/input files at submission, start and

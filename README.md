@@ -456,3 +456,7 @@ See [verification](docs/verification.md) for tradeoffs, examples and evidence li
 Explicit helper files outside Git can be recorded with repeated `--input-file`
 flags or plan-wide `input_files`. See [declared input evidence](docs/declared-inputs.md)
 for strict gates, MCP usage, limits and live-checkout caveats.
+
+For independent checks, batches can opt in to `max_parallel` within a single
+CPU/RAM reservation. See [parallel verification](docs/verification.md) and the
+[controlled batching comparison](docs/optimization.md).

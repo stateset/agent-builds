@@ -69,7 +69,10 @@ def arm(directory,scenario,mode,agents,cpus,cancelled):
     source=Path(__file__).resolve().parent.parent
     base_env=dict(os.environ,PYTHONPATH=str(source)+os.pathsep+os.environ.get('PYTHONPATH',''),
                   CARGO_BUILD_JOBS='1',RUST_TEST_THREADS='1',OMP_NUM_THREADS='1')
-    if mode=='queued':
+    batched = mode in ('serial_batch','parallel_batch')
+    if batched and scenario != 'python_verification':
+        raise ValueError('Batched experiment arms support only the independent Python verification fixture')
+    if mode=='queued' or batched:
         queue=Store(state)
         queue.update_config(dict(cpu_slots=cpus,max_running=cpus,max_heavy=cpus,memory_gb=2,
             quick_reserve_slots=0,quick_reserve_jobs=0,quick_reserve_memory_gb=0,
@@ -79,12 +82,13 @@ def arm(directory,scenario,mode,agents,cpus,cancelled):
     results=[]
     sampler=JobSampler(os.getpid(),identity(os.getpid()))
     before=resource.getrusage(resource.RUSAGE_CHILDREN)
+    wall_started=time.time()
     started=time.monotonic()
     deadline=started+120
     last_tick=started
     lag=[]
     try:
-        for index in range(agents):
+        for index in range(1 if batched else agents):
             identifier='agent-'+str(index)
             work=directory/('shared' if scenario=='shared_output' else identifier)
             work.mkdir(exist_ok=True,mode=0o700)
@@ -99,6 +103,15 @@ def arm(directory,scenario,mode,agents,cpus,cancelled):
                 env['AGENT_BUILDS_STATE']=str(state)
                 command=[sys.executable,'-m','agent_builds','run','--cwd',str(work),'--lane','quick',
                          '--jobs','1','--memory-gb','.25','--resource-key',str(work),'--timeout','90','--']+command
+            if batched:
+                env.pop('AGENT_BUILDS_JOB_ID',None)  # this private fixture queue only
+                env['AGENT_BUILDS_STATE']=str(state)
+                manifest=directory/'checks.json'
+                manifest.write_text(json.dumps(dict(max_parallel=cpus if mode=='parallel_batch' else 1,
+                    checks=[dict(name='agent-'+str(i),command=command) for i in range(agents)])))
+                manifest.chmod(0o600)
+                command=[sys.executable,str(source/'buildr'),'batch','run',str(manifest),'--cwd',str(work),
+                    '--jobs',str(cpus),'--memory-gb','2','--timeout','90']
             log=directory/(identifier+'.log')
             with log.open('xb') as output:
                 log.chmod(0o600)
@@ -121,8 +134,27 @@ def arm(directory,scenario,mode,agents,cpus,cancelled):
                         verified=verified and record['verified'] is True and record['id']==item['id']
                     except (OSError,ValueError,KeyError):
                         verified=False
-                results.append(dict(id=item['id'],exit_code=code,verified=verified,
-                    completion_seconds=now-started,log_path=str(item['log'])))
+                if batched:
+                    reader=Store(state,read_only=True)
+                    try:
+                        rows=reader.rows(limit=2)
+                    finally:
+                        reader.close()
+                    if len(rows)!=1:
+                        raise ValueError('Batch fixture has no unique queue receipt; work was not retried')
+                    job=rows[0]
+                    checks=job['batch'].get('checks',[])
+                    if len(checks)!=agents:
+                        raise ValueError('Batch fixture did not retain every check result; work was not retried')
+                    for check in checks:
+                        results.append(dict(id=check['name'],exit_code=check['exit_code'],
+                            verified=check['state']=='succeeded' and check['exit_code']==0,
+                            completion_seconds=max(0,check.get('finished',time.time())-wall_started),
+                            log_path=str(item['log']),wrapper_exit_code=code,queue_job_id=job['id'],
+                            slots_per_check=job['batch']['slots_per_check']))
+                else:
+                    results.append(dict(id=item['id'],exit_code=code,verified=verified,
+                        completion_seconds=now-started,log_path=str(item['log'])))
                 processes.remove(item)
             if cancelled[0] or now>=deadline:
                 raise ValueError('Experiment cancelled or timed out; incomplete work is not retried')
@@ -158,12 +190,14 @@ def arm(directory,scenario,mode,agents,cpus,cancelled):
         driver_loop_lag_p95_seconds=percentile(lag),results=sorted(results,key=lambda r:r['id']))
 
 
-def run(output,pairs=3,agents=4,cpus=2,scenarios=None):
+def run(output,pairs=3,agents=4,cpus=2,scenarios=None,include_batches=False):
     if type(pairs) is not int or not 1<=pairs<=5 or type(agents) is not int or not 2<=agents<=6:
         raise ValueError('Use 1 to 5 pairs and 2 to 6 fixture agents')
     selected=list(scenarios or SCENARIOS)
     if not selected or len(set(selected))!=len(selected) or any(s not in SCENARIOS for s in selected):
         raise ValueError('Select unique supported benchmark scenarios')
+    if type(include_batches) is not bool or (include_batches and 'python_verification' not in selected):
+        raise ValueError('Batch comparison requires the Python verification scenario')
     budget=parent_budget(cpus)
     output=Path(output).expanduser().absolute()
     if output.exists() or output.is_symlink():
@@ -187,7 +221,12 @@ def run(output,pairs=3,agents=4,cpus=2,scenarios=None):
         for pair in range(pairs):
             order=('independent','queued') if pair%2==0 else ('queued','independent')
             for scenario in selected:
-                for mode in order:
+                scenario_order=order
+                if include_batches and scenario=='python_verification':
+                    modes=('independent','queued','serial_batch','parallel_batch')
+                    shift=pair % len(modes)
+                    scenario_order=modes[shift:]+modes[:shift]
+                for mode in scenario_order:
                     result=arm(directory/str(pair)/scenario/mode,scenario,mode,agents,cpus,cancelled)
                     result['pair']=pair
                     records.append(result)
@@ -206,11 +245,24 @@ def run(output,pairs=3,agents=4,cpus=2,scenarios=None):
             comparisons.append(dict(scenario=scenario,pair=pair,verified_delta=queued['verified_jobs']-base['verified_jobs'],
                 queued_to_independent_wall_ratio=queued['wall_seconds']/base['wall_seconds'],
                 queued_to_independent_sampled_rss_ratio=queued['sampled_process_tree_peak_rss_gb']/base['sampled_process_tree_peak_rss_gb'] if base['sampled_process_tree_peak_rss_gb'] else None))
+    batch_comparisons=[]
+    if include_batches:
+        for pair in range(pairs):
+            matched={r['mode']:r for r in records if r['scenario']=='python_verification' and r['pair']==pair}
+            for mode in ('serial_batch','parallel_batch'):
+                result=matched[mode]
+                baseline=matched['queued']
+                batch_comparisons.append(dict(pair=pair,mode=mode,
+                    verified_delta=result['verified_jobs']-baseline['verified_jobs'],
+                    batch_to_separate_queue_wall_ratio=result['wall_seconds']/baseline['wall_seconds'],
+                    batch_to_separate_queue_sampled_rss_ratio=result['sampled_process_tree_peak_rss_gb']/baseline['sampled_process_tree_peak_rss_gb'] if baseline['sampled_process_tree_peak_rss_gb'] else None))
     from . import __version__
     source_after=capture(Path(__file__).resolve().parent.parent)
     report=dict(schema='buildr-paired-experiment-v1',application_version=__version__,pairs=pairs,agents=agents,
         cpu_affinity=chosen,outer_reservation=budget,fixture_directory=str(directory),
         before_machine=before,after_machine=snapshot(directory),records=records,comparisons=comparisons,
+        include_batches=include_batches,batch_comparisons=batch_comparisons,
+        batch_comparison_scope='Fixed independent worker-budget unit checks only; one aggregate reservation, serial or explicit parallel execution. Four-mode order rotates by pair. Worker hints differ by allocation; this is a workflow strategy comparison.',
         independent_arm_scope='fixed fixtures launched directly inside the same bounded outer reservation',
         queued_arm_config=dict(cpu_slots=cpus,max_running=cpus,memory_gb=2,quick_reserves=0),
         source_before=source_before,source_after=source_after,source_changed=changed(source_before,source_after),

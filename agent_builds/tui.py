@@ -294,7 +294,11 @@ def main(screen, cwd):
                         'Cargo build setting: {} ({})'.format(workers['cargo_build']['configured_value'], workers['cargo_build']['source']),
                         'Rust test setting: {} ({})'.format(workers['rust_tests']['configured_value'], workers['rust_tests']['source']),
                         'Worker settings describe configuration; runtime concurrency is not measured.']
-                    for check in row.get('batch',{}).get('checks',[]):
+                    batch=row.get('batch',{})
+                    if 'max_parallel' in batch:
+                        lines += ['Batch: up to {} checks | {} CPU worker slots per check | one aggregate RAM reservation'.format(
+                            batch['max_parallel'],batch['slots_per_check'])]
+                    for check in batch.get('checks',[]):
                         lines += ['Check {}: {} | native exit {}'.format(check['name'],check['state'],check['exit_code'])]
                     usage = row['usage']
                     if usage:

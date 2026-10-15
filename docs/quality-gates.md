@@ -63,3 +63,11 @@ gates, native-result preservation, durable MCP reconnects and actual v0.16.1
 controller/worker downgrade rejection. Read-only old-schema inspection remains
 nonmutating. Whole-checkout capture limits and time-of-check gaps remain explicit;
 see [declared inputs](declared-inputs.md).
+
+v0.18 adds opt-in parallel-batch gates: bounded overlap, divided worker hints,
+deterministic native outcomes, fail-fast siblings, pipe draining, cancellation,
+timeouts, worker crash cleanup and one-attempt MCP reconnects. Controlled batching
+comparisons preserve all outcomes and costs under the same outer envelope. Live
+capacity diagnostics explain global/protected-pool deficits without changing
+admission. A faster fixed check fixture still does not establish overall coding
+productivity or remove the need for disk headroom and representative reservations.

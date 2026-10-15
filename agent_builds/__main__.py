@@ -247,6 +247,7 @@ def parser():
     experiment_run.add_argument('--agents',type=int,default=4)
     experiment_run.add_argument('--cpus',type=int,default=2)
     experiment_run.add_argument('--scenario',action='append',choices=['shared_output','resource_contention','python_verification'])
+    experiment_run.add_argument('--include-batches',action='store_true',help='Compare serial/parallel batches of the independent Python checks under the same outer reservation')
     optimize = sub.add_parser('optimize', help='Optional local AI ranking of evidence-backed trials; never applies changes')
     optimize_sub = optimize.add_subparsers(dest='optimize_action', required=True)
     for action in ('prepare', 'ask'):
@@ -329,6 +330,7 @@ def main():
             if len(raw)>32768:
                 raise ValueError('Batch manifest exceeds 32 KiB')
             definition=batch.validate(json.loads(raw))
+            batch.worker_slots(definition, args.jobs)
             run_args=parser().parse_args(['run','--','placeholder'])
             for key in ('cwd','jobs','memory_gb','timeout','resource_key','locks','input_files','detach','events_json'):
                 setattr(run_args,key,getattr(args,key))
@@ -389,7 +391,7 @@ def main():
             return execute(args)
         if args.action == 'experiment':
             from .experiments import run as experiment_run
-            result=experiment_run(args.output,args.pairs,args.agents,args.cpus,args.scenario)
+            result=experiment_run(args.output,args.pairs,args.agents,args.cpus,args.scenario,args.include_batches)
             print(json.dumps(dict(output=args.output,comparisons=result['comparisons'],note=result['note']),indent=2))
             return 0
         if args.action == 'optimize':

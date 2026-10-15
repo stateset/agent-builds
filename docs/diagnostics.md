@@ -108,3 +108,20 @@ still-queued overdue work is separate. Cohorts retain actual admission settings,
 policy and runner version. These descriptive samples are not matched before/after
 comparisons or proof of overall coding productivity; failures and pending jobs
 must not be hidden to improve the apparent result.
+
+### Reservation arithmetic (v0.18)
+
+Queued-job diagnostics now show all CPU, RAM and job-count reservation dimensions,
+with used, limit, remaining, requested, deficit and whether the request fits alone.
+Heavy work includes the protected pool (or the temporary young-heavy reserve in
+soft mode), and cancelling/uncertain reservations still count. For example, a
+six-slot machine with two protected slots and one three-slot heavy job has three
+global slots free but only one heavy-pool slot free; a two-slot heavy request
+cannot yet fit. CPU and memory deficits can appear together.
+
+This arithmetic complements fresh disk deficits and recorded lock/priority links.
+It does not decide admission, predict an ETA, resize jobs, retry work or change
+configuration. Historical wait reasons may be stale; current arithmetic is labeled
+separately. Requests that cannot fit even alone require review of the original
+reservation and configuration. A four-job ceiling is a limit, not a promise that
+four arbitrary requests can overlap.

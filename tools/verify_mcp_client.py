@@ -146,13 +146,25 @@ async def verify(output):
             assert batch_result['complete'] and batch_result['exit_code']==7
             batch_job=await call(session,'buildr_job',dict(job_id=batched['result']['job_id']))
             assert [check['exit_code'] for check in batch_job['batch']['checks']]==[0,7,0]
+            parallel_args=dict(request_key=key+'-parallel',cwd=str(root),jobs=2,memory_gb=.5,
+                manifest=dict(max_parallel=2,checks=[dict(name=str(i),command=[sys.executable,'-c',
+                    'import os,time; assert os.environ["CARGO_BUILD_JOBS"]=="1"; time.sleep(.15)']) for i in range(3)]))
+            parallel=await call(session,'buildr_batch_submit',parallel_args)
+            repeated_parallel=await call(session,'buildr_batch_submit',parallel_args)
+            assert parallel['result']['job_id']==repeated_parallel['result']['job_id']
+            parallel_result=await call(session,'buildr_wait',dict(job_ids=[parallel['result']['job_id']],timeout=5))
+            assert parallel_result['complete'] and parallel_result['exit_code']==0
+            parallel_job=await call(session,'buildr_job',dict(job_id=parallel['result']['job_id']))
+            parallel_checks=parallel_job['batch']['checks']
+            assert parallel_job['batch']['max_parallel']==2 and parallel_job['batch']['slots_per_check']==1
+            assert max(c['started'] for c in parallel_checks[:2]) < min(c['finished'] for c in parallel_checks[:2])
             latency=await call(session,'buildr_latency',dict(target_seconds=30))
             assert latency['changes_applied'] is False and latency['cohorts']
             diagnostics=await call(session,'buildr_diagnose',dict(job_id=batched['result']['job_id']))
             assert diagnostics['jobs'][0]['state']=='failed' and not diagnostics['changes_applied']
     reader = Store(state, read_only=True)
     try:
-        assert len(reader.rows()) == 8  # prior seven jobs plus one three-check batch
+        assert len(reader.rows()) == 9  # prior seven jobs plus serial and parallel batches
         other=reader.get(full_budget['result']['job_id'])
         first=reader.get(watch['probes'][0]['job_id'])
         second=reader.get(watch['probes'][1]['job_id'])
@@ -175,7 +187,9 @@ async def verify(output):
                 'external watch duplicate prevention','full CPU budget admitted during external idle',
                 'external completion','additional locks survive server reconnect',
                 'competing checkouts serialize on shared additional output',
-                'batch duplicate prevention and per-check native outcomes','read-only latency report'], production_jobs_submitted=0,
+                'batch duplicate prevention and per-check native outcomes',
+                'parallel batch overlap and divided CPU hints', 'parallel batch duplicate prevention',
+                'read-only latency report'], production_jobs_submitted=0,
         shared_output_locks=dict(first_job_id=lock_a['id'],second_job_id=lock_b['id'],
             competing_submission=True,overlap=False,second_wait_seconds=lock_b['wait_seconds']),
         external_watch=dict(wall_seconds=watch['elapsed_seconds'],idle_without_reservation_seconds=watch['external_idle_seconds'],

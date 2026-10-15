@@ -101,6 +101,9 @@ def submit(name, arguments):
             lane = arguments.get('lane', 'quick')
             jobs = arguments.get('jobs', 1 if batch_mode else config[lane+'_jobs'])
             memory = arguments.get('memory_gb', 1 if batch_mode else 6 if lane == 'heavy' else 2)
+            if batch_mode:
+                from .batch import validate, worker_slots
+                worker_slots(validate(arguments['manifest']), jobs)
             if jobs > config['cpu_slots'] or memory > config['memory_gb']:
                 raise ValueError('Requested reservation exceeds the current machine budget')
             if arguments.get('backend') == 'docker' and not arguments.get('image', config['docker_image']):

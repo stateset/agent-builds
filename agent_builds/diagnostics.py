@@ -99,6 +99,31 @@ def chain(store, row, now, depth=8):
     return dict(jobs=result, end='depth_limit', complete=False)
 
 
+def capacity(row, running, config, now):
+    """Explain every reservation dimension; this is not an admission decision."""
+    dimensions = []
+    def dimension(name, requested, used, limit):
+        dimensions.append(dict(name=name,requested=requested,used=used,limit=limit,
+            remaining=max(0,limit-used),deficit=max(0,used+requested-limit),
+            fits_alone=requested<=limit))
+    dimension('global CPU slots',row['slots'],sum(r['slots'] for r in running),config['cpu_slots'])
+    dimension('global memory GiB',row['memory_gb'],sum(r['memory_gb'] for r in running),config['memory_gb'])
+    dimension('global job count',1,len(running),config['max_running'])
+    if row['lane']=='heavy':
+        heavy=[r for r in running if r['lane']=='heavy']
+        dimension('heavy job count',1,len(heavy),config['max_heavy'])
+        if config.get('protected_quick') or now-row['created']<config['aging_seconds']:
+            dimension('heavy pool CPU slots',row['slots'],sum(r['slots'] for r in heavy),
+                config['cpu_slots']-config['quick_reserve_slots'])
+            dimension('heavy pool memory GiB',row['memory_gb'],sum(r['memory_gb'] for r in heavy),
+                config['memory_gb']-config['quick_reserve_memory_gb'])
+            dimension('heavy pool job count',1,len(heavy),config['max_running']-config['quick_reserve_jobs'])
+    blocked=[d for d in dimensions if d['deficit']>0]
+    return dict(dimensions=dimensions,blocking_dimensions=[d['name'] for d in blocked],
+        fits_alone=all(d['fits_alone'] for d in dimensions),
+        note='Reservation arithmetic only. Free global capacity may be protected for quick work. Locks, priority, pause, measured disk/RAM and uncertain workers also matter. No admission, resize, retry or settings change is performed.')
+
+
 def report(store, job=None, repo=None, limit=10):
     if type(limit) is not int or not 1<=limit<=50:
         raise ValueError('limit must be between 1 and 50')
@@ -117,6 +142,7 @@ def report(store, job=None, repo=None, limit=10):
             item['blocker_chain'] = chain(store, row, now)
             if row['state']=='queued':
                 item['disk'] = headroom(store, row, running, config, now)
+                item['capacity'] = capacity(row,running,config,now)
                 item['inspect_cache_command'] = shlex.join(['buildr','disk','--repo',row['cwd'],'--json'])
                 item['cleanup_status'] = 'owner_review_required; no automatic deletion'
             output.append(item)
@@ -146,6 +172,14 @@ def lines(result):
         if row['reason']:
             yield '  '+row['reason']+(' (observation stale)' if row['observation']['stale'] else '')
         disk = row.get('disk')
+        pool=row.get('capacity')
+        if pool:
+            for dimension in pool['dimensions']:
+                if dimension['deficit']>0:
+                    yield '  {}: {} remaining / {} requested | deficit {}'.format(
+                        dimension['name'],dimension['remaining'],dimension['requested'],dimension['deficit'])
+            if not pool['fits_alone']:
+                yield '  Reservation cannot fit even alone under current limits; inspect the original request and configuration.'
         if disk:
             if disk['available_gb'] is None:
                 yield '  Disk: unknown ('+disk['error']+')'
