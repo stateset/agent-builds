@@ -93,6 +93,9 @@ class Store:
             detail TEXT, updated REAL NOT NULL,
             PRIMARY KEY (announcement_id,pane))''')
         with self.transaction():
+            self.db.execute('''CREATE TABLE IF NOT EXISTS mcp_requests (
+                request_key TEXT PRIMARY KEY, kind TEXT NOT NULL, payload_sha256 TEXT NOT NULL,
+                created REAL NOT NULL, state TEXT NOT NULL, result TEXT NOT NULL)''')
             self.db.execute('''CREATE TABLE IF NOT EXISTS job_groups (
                 id TEXT PRIMARY KEY, name TEXT NOT NULL, created REAL NOT NULL, jobs TEXT NOT NULL)''')
             self.db.execute('''CREATE TABLE IF NOT EXISTS plans (

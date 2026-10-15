@@ -4,6 +4,10 @@ Herdr organizes coding agents and terminals. Buildr coordinates their builds,
 tests and verification results on the shared machine. Use the `buildr` launcher;
 the `agent-builds` command remains a compatibility entrypoint to the same queue.
 
+Agents can use the same queue through MCP: start `buildr mcp serve` as a stdio
+server. It exposes job submission, durable reconnects, bounded logs/waits and
+verification plans. See [MCP setup and tool reference](docs/mcp.md).
+
 `buildr experiment run` records paired queue/direct fixture outcomes under one
 shared-queue reservation. `buildr optimize prepare` previews anonymized trial
 evidence; `buildr optimize ask` optionally asks an installed local model to rank

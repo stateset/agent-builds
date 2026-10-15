@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.12.0
+
+- Add a dependency-free MCP stdio server over the existing queue, with typed
+  tools for jobs, bounded logs/waits, advisor findings and verification plans.
+- Persist caller submission keys and exact argument hashes before launching
+  work. Reconnects reuse receipts/handles; conflicting keys and uncertain
+  submissions never cause automatic reexecution.
+- Preserve native command failures as job data, read-only inspection without
+  initialization/migration, existing budgets, cancellation and orphan safeguards.
+- Add read-only server mode and client setup examples. No client configuration
+  is overwritten and no network listener or remote worker is started.
+
 ## 0.11.0
 
 - Name the application Buildr and add the `buildr` launcher/console entrypoint;

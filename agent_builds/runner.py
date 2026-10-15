@@ -96,8 +96,23 @@ def notify(row):
 
 
 def detach(args):
+    result = submit_detached(args)
+    if args.events_json:
+        print(json.dumps(dict(result, state='submitted', timestamp=time.time())), file=sys.stderr, flush=True)
+    else:
+        print('submitted {} detached | log {}'.format(result['job_id'], result['log_path']), flush=True)
+    return 0
+
+
+def submit_detached(args, receipt=None, retain_receipt=False):
+    """Submit one detached runner and return its receipt without printing."""
+    if os.environ.get('AGENT_BUILDS_JOB_ID'):
+        raise ValueError('Already inside a queued job; nested submissions are not allowed')
     store = Store()
-    receipt = store.root / ('receipt-' + uuid.uuid4().hex + '.json')
+    receipt = Path(receipt) if receipt is not None else store.root / ('receipt-' + uuid.uuid4().hex + '.json')
+    if receipt.parent != store.root or not receipt.name.startswith('receipt-') or receipt.exists() or receipt.is_symlink():
+        store.close()
+        raise ValueError('Detached receipt must be a new private queue path')
     transcript = store.root / 'logs' / (receipt.stem + '.log')
     env = os.environ.copy()
     root = str(Path(__file__).resolve().parent.parent)
@@ -126,12 +141,9 @@ def detach(args):
         while time.monotonic() < deadline:
             if receipt.exists():
                 result = json.loads(receipt.read_text())
-                receipt.unlink()
-                if args.events_json:
-                    print(json.dumps(dict(result, state='submitted', timestamp=time.time())), file=sys.stderr, flush=True)
-                else:
-                    print('submitted {} detached | log {}'.format(result['job_id'], result['log_path']), flush=True)
-                return 0
+                if not retain_receipt:
+                    receipt.unlink()
+                return result
             if child.poll() is not None:
                 raise ValueError('Detached runner failed: ' + transcript.read_text(errors='replace')[-500:])
             time.sleep(.05)

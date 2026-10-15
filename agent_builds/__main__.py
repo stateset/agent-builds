@@ -225,6 +225,10 @@ def parser():
         if action == 'ask':
             command.add_argument('--model', required=True, help='Already installed local Ollama model; no cloud models/downloads')
             command.add_argument('--threads', type=int, default=1)
+    mcp = sub.add_parser('mcp', help='MCP stdio interface to the same queue for coding agents')
+    mcp_sub = mcp.add_subparsers(dest='mcp_action', required=True)
+    mcp_serve = mcp_sub.add_parser('serve', help='Read newline-delimited MCP on stdin; protocol messages only on stdout')
+    mcp_serve.add_argument('--read-only', action='store_true', help='Expose inspection tools only')
     return root
 
 
@@ -237,6 +241,9 @@ def main():
     else:
         args = parser().parse_args(arguments)
     try:
+        if args.action == 'mcp':
+            from .mcp import serve
+            return serve(args.read_only)
         if args.action in (None, 'tui'):
             from .tui import launch
             launch(getattr(args, 'cwd', os.getcwd()))
