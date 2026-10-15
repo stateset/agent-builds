@@ -1,4 +1,5 @@
 import json
+import io
 import os
 from pathlib import Path
 import subprocess
@@ -312,7 +313,10 @@ class QueueTests(unittest.TestCase):
                                  env=self.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=8)
         self.assertEqual(result.returncode, 0, result.stderr)
         payload = json.loads(result.stdout)
-        self.assertEqual(payload['counts'], {'queued': 1})
+        self.assertEqual(payload['counts']['queued'], 1)
+        self.assertEqual(payload['counts']['running'], 0)
+        self.assertEqual(sum(payload['counts'].values()), 1)
+        self.assertEqual(payload['count_scope'], {'active_only': False, 'repository': None, 'limited_by_result_limit': False})
         self.assertNotIn('jobs', payload)
         self.assertTrue(payload['initialized'])
 
@@ -325,7 +329,110 @@ class QueueTests(unittest.TestCase):
         self.store.submit(elsewhere, ['true'], 'local', 'quick', 1, 1, str(elsewhere), '', 5)
         rows = self.store.rows(active=True, repo=self.root)
         self.assertEqual([row['id'] for row in rows], [second])
-        self.assertEqual(self.store.counts(active=True, repo=self.root), {'queued': 1})
+        counts = self.store.counts(active=True, repo=self.root)
+        self.assertEqual(counts['queued'], 1)
+        self.assertEqual(sum(counts.values()), 1)
+
+    def test_running_job_is_visible_before_newer_queued_jobs_with_limit(self):
+        running = self.submit('running', slots=1)
+        self.assertTrue(self.store.claim(running))
+        first = self.submit('first', slots=1)
+        second = self.submit('second', slots=1)
+        self.assertEqual(self.store.rows(limit=1, active=True)[0]['id'], running)
+        self.assertEqual([row['id'] for row in self.store.rows(active=True)], [running, first, second])
+
+    def test_cpu_wait_names_contributing_jobs_and_refreshes_observation(self):
+        first = self.submit('first', slots=2)
+        self.assertTrue(self.store.claim(first))
+        second = self.submit('second', slots=2)
+        self.assertFalse(self.store.claim(second))
+        context = self.store.get(second)['wait_context']
+        self.assertEqual(context['requested_cpu_slots'], 2)
+        self.assertEqual(context['contributing_jobs'][0]['id'], first)
+        self.assertEqual(context['contributing_jobs'][0]['slots'], 2)
+        self.assertEqual(context['current_used_cpu_slots'], 2)
+        self.store.finish(first, 'succeeded', 0)
+        refreshed = self.store.get(second)['wait_context']
+        self.assertEqual(refreshed['contributing_jobs'], [])
+        self.assertEqual(refreshed['current_used_cpu_slots'], 0)
+        self.assertEqual(refreshed['used_cpu_slots'], 2)  # Original admission snapshot retained.
+
+    def test_memory_wait_explains_reservation_plus_headroom(self):
+        self.store.update_config({'min_available_gb': 4})
+        job = self.submit()
+        with mock.patch('agent_builds.store.snapshot', return_value={'available_gb': 5}):
+            self.assertFalse(self.store.claim(job))
+        context = self.store.get(job)['wait_context']
+        self.assertEqual(context['job_memory_gb'], 2)
+        self.assertEqual(context['memory_headroom_gb'], 4)
+        self.assertEqual(context['required_memory_gb'], 6)
+        self.assertEqual(context['available_memory_gb'], 5)
+
+    def test_detached_submission_keeps_herdr_origin(self):
+        self.env.update(HERDR_PANE_ID='w1:p-test', HERDR_TAB_ID='w1:t-test', HERDR_WORKSPACE_ID='w1')
+        child = self.run_job('print("origin captured")', extra=['--detach'])
+        output, errors = child.communicate(timeout=10)
+        self.assertEqual(child.returncode, 0, errors)
+        row = self.store.rows()[0]
+        self.assertEqual(row['origin'], {'pane_id': 'w1:p-test', 'tab_id': 'w1:t-test', 'workspace_id': 'w1'})
+        deadline = time.monotonic() + 8
+        while self.store.get(row['id'])['state'] not in ('succeeded', 'failed') and time.monotonic() < deadline:
+            time.sleep(.03)
+        self.assertEqual(self.store.get(row['id'])['state'], 'succeeded')
+
+    def test_follow_a_live_log_until_final_output(self):
+        release = self.root / 'release-log-producer'
+        source = ('import time; from pathlib import Path; print("first line",flush=True); '
+                  'deadline=time.monotonic()+10\n'
+                  'while not Path({!r}).exists() and time.monotonic()<deadline: time.sleep(.02)\n'
+                  'print("final line",flush=True)').format(str(release))
+        child = self.run_job(source)
+        row = self.wait_state('running')
+        reader = subprocess.Popen([sys.executable, '-m', 'agent_builds', 'logs', '--follow', row['id']],
+                                  env=self.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        self.processes.append(reader)
+        first = reader.stdout.readline()
+        self.assertTrue(first)
+        release.touch()
+        output, errors = reader.communicate(timeout=8)
+        self.assertEqual(reader.returncode, 0, errors)
+        self.assertIn(b'final line', first + output)
+        self.assertEqual(child.wait(timeout=8), 0)
+
+    def test_empty_filtered_counts_have_stable_zero_keys(self):
+        self.submit()
+        counts = self.store.counts(active=True, repo=self.root / 'empty')
+        self.assertEqual(set(counts), {'queued', 'running', 'cancelling', 'succeeded', 'failed', 'cancelled', 'lost'})
+        self.assertTrue(all(value == 0 for value in counts.values()))
+
+    def test_queued_blocker_reports_wait_time_separately_from_runtime(self):
+        first = self.submit()
+        self.store.db.execute('UPDATE jobs SET created=? WHERE id=?', (time.time() - 200, first))
+        second = self.submit()
+        self.assertFalse(self.store.claim(second))
+        blocker = self.store.get(second)['wait_context']['blocking_job']
+        self.assertEqual(blocker['id'], first)
+        self.assertGreaterEqual(blocker['wait_seconds'], 200)
+        self.assertEqual(blocker['elapsed_seconds'], 0)
+
+    def test_status_counts_and_rows_share_a_read_only_snapshot(self):
+        from agent_builds.__main__ import main
+        first = self.submit(slots=1)
+        self.assertTrue(self.store.claim(first))
+        original = Store.counts
+        def counts_with_concurrent_finish(reader, *args, **kwargs):
+            result = original(reader, *args, **kwargs)
+            self.store.finish(first, 'succeeded', 0)
+            return result
+        with mock.patch.dict(os.environ, self.env), \
+                mock.patch('sys.argv', ['agent-builds', 'status', '--active', '--json']), \
+                mock.patch.object(Store, 'counts', counts_with_concurrent_finish), \
+                mock.patch('sys.stdout', new_callable=io.StringIO) as output:
+            self.assertEqual(main(), 0)
+        payload = json.loads(output.getvalue())
+        self.assertEqual(payload['counts']['running'], 1)
+        self.assertEqual(payload['jobs'][0]['state'], 'running')
+        self.assertEqual(self.store.get(first)['state'], 'succeeded')
 
     def test_literal_arguments_are_not_shell_expanded(self):
         marker = self.root / 'SHOULD_NOT_EXIST'

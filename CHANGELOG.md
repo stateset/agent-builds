@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.5.0
+
+- Fix a live-log-following crash caused by a shadowed `time` import; test an active
+  log producer through completion.
+- Keep running jobs visible ahead of queued records, and preserve TUI selection
+  when job states change.
+- Capture available Herdr pane/tab/workspace metadata, including detached jobs.
+- Explain memory headroom and link CPU waits to contributing reservations, with
+  separate timestamps for admission and live observations.
+- Report queued-blocker wait duration separately from execution time.
+- Describe Cargo/test defaults and explicit direct-command worker overrides while
+  preserving the original command. Do not claim measured runtime concurrency.
+- Add stable zero counters and explicit status count scope.
+- Keep status counts, detailed rows and contributing jobs in a consistent
+  read-only SQLite snapshot while workers change state.
+- Add a scrollable job-details view with `i`; start the dashboard on job logs.
+
 ## 0.4.0
 
 - Make inspection truly read-only, including an empty-state response that creates

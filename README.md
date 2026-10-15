@@ -46,6 +46,49 @@ It doesn't invoke a shell implicitly. Explicit shell commands are supported:
 `agent-builds run -- bash -lc 'npm run lint && npm test'`.
 Jobs are noninteractive; run interactive programs in an ordinary pane.
 
+## v0.5.0: understand the work using capacity
+
+Running and cancelling jobs appear first in both the TUI and limited status
+results. Queued jobs follow in submission order, then recent completed work.
+The TUI keeps the selected job stable as other jobs change state. Press `i` for
+a full job-details view; PgUp/PgDn scroll it in a small terminal.
+
+New submissions capture available `HERDR_PANE_ID`, `HERDR_TAB_ID`, and
+`HERDR_WORKSPACE_ID` values. Job JSON exposes a native `origin` object while
+retaining the original `herdr` field. This is submission metadata, not verified
+agent identity. Old jobs or environments that lack these values stay unattributed.
+Detached runners inherit the submitter's available context.
+
+`wait_context` explains the job's memory reservation separately from admission
+headroom. A 2-GiB reservation plus 4-GiB headroom requires 6 GiB available; it does
+not reserve 6 GiB. CPU waits include contributing running job IDs, reservations,
+command previews and links to logs. `contributing_jobs`, `current_used_cpu_slots`,
+and `current_reserved_memory_gb` are live read-only observations timestamped by
+`reservations_observed_at`; the original admission measurements retain their
+`measured_at` timestamp. Refreshing the view does not change scheduling.
+
+Queued blockers expose their wait duration and total age separately from
+execution time. The app's own CPU/memory reservations remain estimates for local
+jobs, rather than measured resource use or OS-enforced limits.
+
+Every job includes `worker_budget`: the Cargo/test environment defaults and any
+recognized explicit options in a direct Cargo command. For example, a three-slot
+`cargo test -- --test-threads=8` retains its original arguments and shows both the
+three-thread queue default and the explicit eight-thread setting. Configured
+values are not runtime measurements. Shell scripts, custom harnesses, subprocess
+settings, Cargo configuration overrides and non-Rust worker flags are outside
+this inspection; the app does not silently rewrite commands. See the official
+[Cargo test documentation](https://doc.rust-lang.org/cargo/commands/cargo-test.html)
+and [Rust test documentation](https://doc.rust-lang.org/rustc/tests/index.html).
+
+Counts always include all seven job states, including zero values. `count_scope`
+identifies active-only and repository filters and confirms that counts cover all
+matching jobs independently of `--limit`.
+
+Live `logs --follow` now handles its wait loop correctly. The regression test
+follows an active producer through its final output, rather than testing only
+an already completed log.
+
 ## v0.4.0: agent feedback incorporated
 
 Inspection commands (`status`, `show`, `logs`, `announcements`, `processes`,

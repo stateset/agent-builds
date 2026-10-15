@@ -10,11 +10,13 @@ import time
 import uuid
 
 from .metrics import snapshot
+from .budgets import worker_budget
 
 DEFAULTS = dict(cpu_slots=6, max_running=3, max_heavy=2, memory_gb=16,
                 min_free_gb=10, quick_jobs=2, heavy_jobs=3, nice=10,
                 timeout_seconds=7200, docker_image='', min_available_gb=4, paused=False)
 TERMINAL = ('succeeded', 'failed', 'cancelled', 'lost')
+STATES = ('queued', 'running', 'cancelling', 'succeeded', 'failed', 'cancelled', 'lost')
 
 
 def identity(pid):
@@ -41,6 +43,7 @@ class Store:
         self.config_path = self.root / 'config.json'
         self.read_only = read_only
         self.db = None
+        self._reservation_cache = None
         if read_only:
             if self.path.exists():
                 self.db = sqlite3.connect(self.path.as_uri() + '?mode=ro', uri=True,
@@ -127,6 +130,19 @@ class Store:
             return result
 
     @contextlib.contextmanager
+    def read_snapshot(self):
+        if self.db is None:
+            yield
+            return
+        self.db.execute('BEGIN')
+        try:
+            yield
+            self.db.execute('COMMIT')
+        except BaseException:
+            self.db.execute('ROLLBACK')
+            raise
+
+    @contextlib.contextmanager
     def transaction(self):
         self.db.execute('BEGIN IMMEDIATE')
         try:
@@ -150,8 +166,21 @@ class Store:
         row['command_display'] = shlex.join(row['argv'])
         row['log_path'] = str(self.log_path(row['id']))
         row['wait_context'] = json.loads(row.get('wait_context') or '{}')
+        row['origin'] = json.loads(row.get('herdr') or '{}')
+        row['worker_budget'] = worker_budget(row['argv'], row['slots'])
+        if row['state'] == 'queued' and row['wait_context']:
+            observed = self.reservation_snapshot()
+            context = row['wait_context']
+            context['contributing_jobs'] = observed['jobs']
+            context['reservations_observed_at'] = observed['observed_at']
+            context['current_used_cpu_slots'] = sum(job['slots'] for job in observed['jobs'])
+            context['current_reserved_memory_gb'] = sum(job['memory_gb'] for job in observed['jobs'])
+            context.setdefault('job_memory_gb', row['memory_gb'])
+            if 'required_memory_gb' in context:
+                context.setdefault('memory_headroom_gb', max(0, context['required_memory_gb'] - row['memory_gb']))
         row['wait_seconds'] = max(0, (row['started'] or row['finished'] or time.time()) - row['created'])
         row['elapsed_seconds'] = max(0, (row['finished'] or time.time()) - row['started']) if row['started'] else 0
+        row['age_seconds'] = max(0, (row['finished'] or time.time()) - row['created'])
         if row['state'] in ('queued', 'running', 'cancelling'):
             # A read-only client may be inside an agent PID namespace. Its
             # /proc view cannot establish that a host runner has exited.
@@ -164,7 +193,7 @@ class Store:
             return []
         where, parameters = self.filters(active, repo)
         return [self.describe(dict(row)) for row in self.db.execute(
-            "SELECT * FROM jobs" + where + " ORDER BY CASE WHEN state IN ('queued','running','cancelling') THEN 0 ELSE 1 END, created DESC LIMIT ?", parameters + (limit,))]
+            "SELECT * FROM jobs" + where + " ORDER BY CASE WHEN state IN ('running','cancelling') THEN 0 WHEN state='queued' THEN 1 ELSE 2 END, CASE WHEN state IN ('running','cancelling','queued') THEN created END ASC, created DESC LIMIT ?", parameters + (limit,))]
 
     @staticmethod
     def filters(active=False, repo=None):
@@ -179,11 +208,13 @@ class Store:
         return (' WHERE ' + ' AND '.join(clauses) if clauses else ''), parameters
 
     def counts(self, active=False, repo=None):
+        counts = dict.fromkeys(STATES, 0)
         if self.db is None:
-            return {}
+            return counts
         where, parameters = self.filters(active, repo)
-        return {row[0]: row[1] for row in self.db.execute(
-            'SELECT state,COUNT(*) FROM jobs' + where + ' GROUP BY state', parameters)}
+        counts.update({row[0]: row[1] for row in self.db.execute(
+            'SELECT state,COUNT(*) FROM jobs' + where + ' GROUP BY state', parameters)})
+        return counts
 
     def submit(self, cwd, command, backend, lane, slots, memory, resource_key,
                image, timeout, herdr=None, min_free_gb=0, scratch_gb=0):
@@ -201,13 +232,18 @@ class Store:
         if any(not math.isfinite(value) or value < 0 for value in (min_free_gb, scratch_gb)):
             raise ValueError('Disk requirements must be finite nonnegative GiB values')
         job = uuid.uuid4().hex[:12]
+        origin = {key: os.environ[name] for key, name in
+                  [('pane_id', 'HERDR_PANE_ID'), ('tab_id', 'HERDR_TAB_ID'),
+                   ('workspace_id', 'HERDR_WORKSPACE_ID')]
+                  if os.environ.get(name)}
+        origin.update(herdr or {})
         self.db.execute('''INSERT INTO jobs
             (id,state,created,owner_pid,owner_start,cwd,command,backend,lane,
              slots,memory_gb,resource_key,image,timeout,herdr,min_free_gb,scratch_gb)
             VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
             (job, 'queued', time.time(), os.getpid(), identity(os.getpid()), str(cwd),
              json.dumps(command), backend, lane, slots, memory, resource_key, image,
-             timeout, json.dumps(herdr or {}), min_free_gb, scratch_gb))
+             timeout, json.dumps(origin), min_free_gb, scratch_gb))
         return job
 
     def recover(self):
@@ -246,7 +282,11 @@ class Store:
             same_repo = next((r for r in running if r['resource_key'] == row['resource_key']), None)
             context = dict(measured_at=time.time(), disk_free_gb=disk_free, required_free_gb=required_disk,
                            available_memory_gb=measured['available_gb'], required_memory_gb=row['memory_gb'] + config['min_available_gb'],
-                           used_cpu_slots=sum(r['slots'] for r in running), total_cpu_slots=config['cpu_slots'])
+                           job_memory_gb=row['memory_gb'], memory_headroom_gb=config['min_available_gb'],
+                           reserved_memory_gb=sum(r['memory_gb'] for r in running), total_reserved_memory_gb=config['memory_gb'],
+                           used_cpu_slots=sum(r['slots'] for r in running), total_cpu_slots=config['cpu_slots'],
+                           requested_cpu_slots=row['slots'],
+                           contributing_jobs=[self.reservation(r) for r in running])
             blocker = None
             reason = ''
             if config['paused']:
@@ -281,7 +321,7 @@ class Store:
                     blocker = dict(waiting)
             if blocker:
                 context['blocking_job'] = {key: value for key, value in self.describe(blocker).items()
-                    if key in ('id', 'command_display', 'cwd', 'elapsed_seconds', 'log_path', 'state')}
+                    if key in ('id', 'command_display', 'cwd', 'elapsed_seconds', 'wait_seconds', 'age_seconds', 'log_path', 'state')}
                 reason += ' [' + blocker['id'] + ']'
             if reason:
                 previous = row['wait_context']
@@ -289,7 +329,25 @@ class Store:
                     self.db.execute('UPDATE jobs SET reason=?,wait_context=? WHERE id=?', (reason, json.dumps(context), job))
                 return False
             self.db.execute("UPDATE jobs SET state='running',started=?,reason='',wait_context='{}' WHERE id=?", (time.time(), job))
+            self._reservation_cache = None
             return True
+
+    def reservation(self, row):
+        result = {key: row[key] for key in ('id', 'state', 'cwd', 'slots', 'memory_gb', 'scratch_gb')}
+        command = shlex.join(json.loads(row['command']))
+        result.update(command_display=command[:180], command_truncated=len(command) > 180,
+                      log_path=str(self.log_path(row['id'])), origin=json.loads(row['herdr'] or '{}'),
+                      elapsed_seconds=max(0, time.time() - row['started']) if row['started'] else 0)
+        return result
+
+    def reservation_snapshot(self):
+        cached = self._reservation_cache
+        if cached is None or time.monotonic() - cached[0] > .2:
+            jobs = [] if self.db is None else [self.reservation(row) for row in self.db.execute(
+                "SELECT * FROM jobs WHERE state IN ('running','cancelling') ORDER BY started")]
+            cached = (time.monotonic(), dict(observed_at=time.time(), jobs=jobs))
+            self._reservation_cache = cached
+        return cached[1]
 
     def cancel(self, job):
         with self.transaction():
@@ -298,8 +356,10 @@ class Store:
                 return False
             state = 'cancelling' if row['state'] != 'queued' else 'queued'
             self.db.execute('UPDATE jobs SET cancel_requested=1,state=? WHERE id=?', (state, job))
+            self._reservation_cache = None
             return True
 
     def finish(self, job, state, code, reason=''):
         self.db.execute('UPDATE jobs SET state=?,exit_code=?,finished=?,reason=? WHERE id=?',
                         (state, code, time.time(), reason, job))
+        self._reservation_cache = None

@@ -93,7 +93,10 @@ def main(screen, cwd):
     last_recovery = 0
     sampler = ProcessSampler()
     processes = []
-    view = 2 if store.db.execute('SELECT COUNT(*) FROM deliveries').fetchone()[0] else 0
+    view = 0
+    selected_id = None
+    details_offset = 0
+    details_job = None
     last_sample = 0
     try:
         while True:
@@ -102,6 +105,8 @@ def main(screen, cwd):
                 store.recover()
                 last_recovery = time.monotonic()
             rows = store.rows()
+            if selected_id:
+                selected = next((index for index, row in enumerate(rows) if row['id'] == selected_id), selected)
             selected = min(selected, max(0, len(rows) - 1))
             metrics = snapshot(cwd)
             if time.monotonic() - last_sample >= 1:
@@ -126,8 +131,9 @@ def main(screen, cwd):
                 fmt = lambda value: 'n/a' if value is None else '{:.0f}%'.format(value)
                 paint(screen, 3, 0, 'Pressure avg10: CPU {}  memory {}  I/O {} | External builds are not controlled.'.format(
                     fmt(metrics['cpu_pressure']), fmt(metrics['memory_pressure']), fmt(metrics['io_pressure'])))
-                paint(screen, 5, 0, 'JOB           STATE       CPU RAM  BACKEND  REPOSITORY / COMMAND', curses.A_BOLD)
-                count = min(8, max(3, (height - 12) // 2))
+                heading = 'JOB DETAILS | arrows select jobs | PgUp/PgDn scroll' if view == 3 else 'JOB           STATE       CPU RAM  BACKEND  REPOSITORY / COMMAND'
+                paint(screen, 5, 0, heading, curses.A_BOLD)
+                count = 0 if view == 3 else min(8, max(3, (height - 12) // 2))
                 start = max(0, selected - count + 1)
                 for index, row in enumerate(rows[start:start + count], start):
                     text = '{} {:11} {:>2} {:>3g}  {:7}  {} / {}'.format(
@@ -152,6 +158,38 @@ def main(screen, cwd):
                     for index, delivery in enumerate(deliveries(store)[:max(1, height - log_top - 3)]):
                         paint(screen, log_top + index, 0, '{} {:10} {} | {}'.format(
                             delivery['pane'], delivery['state'], Path(delivery['repository']).name, delivery['detail']))
+                elif view == 3 and rows:
+                    row = rows[selected]
+                    if details_job != row['id']:
+                        details_offset = 0
+                        details_job = row['id']
+                    origin = row['origin']
+                    context = row['wait_context']
+                    workers = row['worker_budget']
+                    lines = [
+                        '{} | {} | {}'.format(row['id'], row['state'], row['command_display']),
+                        'Submitted from pane {} | tab {} | workspace {}'.format(
+                            origin.get('pane_id', 'not captured'), origin.get('tab_id', '?'), origin.get('workspace_id', '?')),
+                        'Reserved: {} CPU slots, {} GiB RAM'.format(row['slots'], row['memory_gb']),
+                        'Queue worker defaults: CARGO_BUILD_JOBS={}, RUST_TEST_THREADS={}'.format(row['slots'], row['slots']),
+                        'Cargo build setting: {} ({})'.format(workers['cargo_build']['configured_value'], workers['cargo_build']['source']),
+                        'Rust test setting: {} ({})'.format(workers['rust_tests']['configured_value'], workers['rust_tests']['source']),
+                        'Worker settings describe configuration; runtime concurrency is not measured.']
+                    if context:
+                        lines += [
+                            'RAM admission: {} GiB job + {} GiB headroom = {} GiB minimum available'.format(
+                                context.get('job_memory_gb', row['memory_gb']), context.get('memory_headroom_gb', '?'), context.get('required_memory_gb', '?')),
+                            'CPU: {} used + {} requested / {} slots'.format(
+                                context.get('current_used_cpu_slots', context.get('used_cpu_slots', '?')),
+                                row['slots'], context.get('total_cpu_slots', '?')),
+                            'Contributing running reservations (live observation):']
+                        lines += ['{}: {} CPU / {} GiB | {}'.format(job['id'], job['slots'], job['memory_gb'], job['command_display'])
+                                  for job in context.get('contributing_jobs', [])]
+                    paint(screen, log_top - 1, 0, 'JOB DETAILS | i returns to logs', curses.A_BOLD)
+                    visible = max(1, height - log_top - 3)
+                    details_offset = min(max(0, details_offset), max(0, len(lines) - visible))
+                    for index, line in enumerate(lines[details_offset:details_offset + visible]):
+                        paint(screen, log_top + index, 0, line)
                 elif rows:
                     row = rows[selected]
                     paint(screen, log_top - 1, 0, '{} | {} | {}'.format(row['id'], row['cwd'], row['reason'] or 'live output'), curses.A_BOLD)
@@ -164,29 +202,38 @@ def main(screen, cwd):
                         offset = 1
                         blocker = context.get('blocking_job')
                         if blocker:
-                            paint(screen, log_top + offset, 0, 'Blocker {} ({:.1f}s): {} | g opens its log'.format(
-                                blocker['id'], blocker['elapsed_seconds'], blocker['command_display']))
+                            paint(screen, log_top + offset, 0, 'Blocker {}: waited {:.1f}s, ran {:.1f}s | {} | g logs'.format(
+                                blocker['id'], blocker.get('wait_seconds', 0), blocker['elapsed_seconds'], blocker['command_display']))
                             offset += 1
                     for index, line in enumerate(tail(store.log_path(row['id']), max(1, height - log_top - offset - 3))):
                         paint(screen, log_top + offset + index, 0, line)
                 paint(screen, height - 2, 0, message)
-                paint(screen, height - 1, 0, 'n new  c cancel  p pause  b budgets  v views  a announce  q quit')
+                paint(screen, height - 1, 0, 'n new  c cancel  p pause  b budgets  i details  v views  a announce  q quit')
             screen.refresh()
             key = screen.getch()
             if key in (ord('q'), 27):
                 break
+            selected_id = rows[selected]['id'] if rows else None
             if key in (ord('j'), curses.KEY_DOWN):
                 selected = min(selected + 1, max(0, len(rows) - 1))
+                selected_id = rows[selected]['id'] if rows else None
             elif key in (ord('k'), curses.KEY_UP):
                 selected = max(0, selected - 1)
+                selected_id = rows[selected]['id'] if rows else None
             elif key == ord('v'):
-                view = (view + 1) % 3
+                view = (view + 1) % 4
+            elif key == ord('i'):
+                view = 0 if view == 3 else 3
+                details_offset = 0
+            elif view == 3 and key in (curses.KEY_NPAGE, curses.KEY_PPAGE):
+                details_offset += max(1, height - 10) * (1 if key == curses.KEY_NPAGE else -1)
             elif key == ord('g') and rows:
                 blocker = rows[selected]['wait_context'].get('blocking_job')
                 if blocker:
                     target = next((index for index, row in enumerate(rows) if row['id'] == blocker['id']), None)
                     if target is not None:
                         selected = target
+                        selected_id = rows[selected]['id']
                         view = 0
                     else:
                         message = 'Blocker details: agent-builds show ' + blocker['id']

@@ -95,11 +95,15 @@ def main():
             elif args.action == 'status':
                 if not 1 <= args.limit <= 2000:
                     raise ValueError('--limit must be between 1 and 2000')
-                result = dict(initialized=store.db is not None, state_path=str(store.root),
-                              machine=snapshot(os.getcwd()), config=store.config(),
-                              counts=store.counts(args.active, args.repo))
-                if not args.summary:
-                    result['jobs'] = store.rows(args.limit, args.active, args.repo)
+                with store.read_snapshot():
+                    result = dict(initialized=store.db is not None, state_path=str(store.root),
+                                  machine=snapshot(os.getcwd()), config=store.config(),
+                                  counts=store.counts(args.active, args.repo),
+                                  count_scope=dict(active_only=args.active,
+                                      repository=str(Path(args.repo).expanduser().resolve()) if args.repo else None,
+                                      limited_by_result_limit=False))
+                    if not args.summary:
+                        result['jobs'] = store.rows(args.limit, args.active, args.repo)
                 if args.json:
                     print(json.dumps(result, indent=2))
                 elif args.summary:
@@ -126,7 +130,8 @@ def main():
                         break
                     time.sleep(.3)
             elif args.action == 'show':
-                row = store.get(args.job)
+                with store.read_snapshot():
+                    row = store.get(args.job)
                 if args.json:
                     print(json.dumps(row, indent=2))
                 else:
@@ -143,7 +148,6 @@ def main():
                 store.update_config({'paused': args.action == 'pause'})
                 print('Queue ' + ('paused; running jobs continue' if args.action == 'pause' else 'resumed'))
             elif args.action == 'processes':
-                import time
                 sampler = ProcessSampler()
                 sampler.sample()
                 time.sleep(.3)
