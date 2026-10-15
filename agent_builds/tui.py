@@ -39,7 +39,7 @@ def paint(screen, y, x, text, attr=0):
 
 def compact_lines(rows, selected, plans, plan_index, view, config, height, width):
     """A monitor for narrow split panes; editing actions need the full view."""
-    lines = ['BUILDS ' + __version__ + (' PAUSED' if config['paused'] else '')]
+    lines = ['BUILDR ' + __version__ + (' PAUSED' if config['paused'] else '')]
     if height < 8 or width < 20:
         return lines + ['Resize: 20x8 min', 'q quit; jobs continue']
     running = [r for r in rows if r['state'] in ('running', 'cancelling')]
@@ -193,7 +193,7 @@ def main(screen, cwd):
                     paint(screen, index, 0, line)
             else:
                 context = ' | Herdr ' + os.environ.get('HERDR_PANE_ID', '') if os.environ.get('HERDR_ENV') == '1' else ''
-                title = 'AGENT BUILDS v' + __version__ + (' [PAUSED]' if config['paused'] else '')
+                title = 'BUILDR v' + __version__ + (' [PAUSED]' if config['paused'] else '')
                 paint(screen, 0, 0, title + ' | shared queue' + context, curses.A_BOLD | curses.color_pair(1))
                 paint(screen, 1, 0, 'CPU {} logical | load {:.1f} | RAM available {:.1f}/{:.1f} GiB | disk free {:.1f} GiB'.format(
                     metrics['cpus'], metrics['load'], metrics['available_gb'], metrics['total_gb'], metrics['free_gb']))

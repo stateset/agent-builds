@@ -188,8 +188,30 @@ class QueueTests(unittest.TestCase):
         child = self.run_job('from pathlib import Path; Path({!r}).touch()'.format(str(marker)))
         row = self.wait_state('queued')
         self.store.cancel(row['id'])
-        self.assertEqual(child.wait(timeout=8), 130)
+        stdout, stderr = child.communicate(timeout=8)
+        self.assertEqual(child.returncode, 130, (stdout, stderr, self.store.get(row['id'])))
         self.assertFalse(marker.exists())
+
+    def test_cancellation_between_inspection_and_claim_preserves_exit_130(self):
+        from agent_builds.__main__ import parser
+        from agent_builds.runner import execute
+        import contextlib
+
+        def cancelled_claim(store, job):
+            # Force the exact interleaving: the runner saw cancel_requested=0,
+            # but claim sees cancellation before a wait reason was recorded.
+            self.assertIsNone(store.get(job)['reason'])
+            store.cancel(job)
+            return False
+
+        args = parser().parse_args(['run', '--cwd', str(self.root), '--jobs', '1', '--', 'must-not-execute'])
+        with mock.patch.dict(os.environ, self.env, clear=True), \
+                mock.patch.object(Store, 'claim', cancelled_claim), \
+                mock.patch('agent_builds.runner.subprocess.Popen', side_effect=AssertionError('must not launch')), \
+                contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(execute(args), 130)
+        row = self.store.rows()[0]
+        self.assertEqual((row['state'], row['exit_code']), ('cancelled', 130))
 
     def test_docker_daemon_error_cannot_confirm_stopped(self):
         from agent_builds.runner import docker_stopped

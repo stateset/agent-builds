@@ -16,7 +16,7 @@ from .store import DEFAULTS, Store
 
 
 def parser():
-    root = argparse.ArgumentParser(description='Shared build queue and TUI for Ghostty and Herdr')
+    root = argparse.ArgumentParser(description='Buildr: shared build queue and TUI for Ghostty and Herdr')
     root.add_argument('--version', action='version', version=__version__)
     sub = root.add_subparsers(dest='action')
     tui = sub.add_parser('tui', help='Open the terminal dashboard (default)')
@@ -205,6 +205,26 @@ def parser():
             command.add_argument('--tail', type=int, default=0)
         if action=='export':
             command.add_argument('--output')
+    experiment = sub.add_parser('experiment', help='Bounded paired local experiments; run the whole driver through the shared queue')
+    experiment_sub=experiment.add_subparsers(dest='experiment_action',required=True)
+    experiment_run=experiment_sub.add_parser('run')
+    experiment_run.add_argument('--output',required=True)
+    experiment_run.add_argument('--pairs',type=int,default=3)
+    experiment_run.add_argument('--agents',type=int,default=4)
+    experiment_run.add_argument('--cpus',type=int,default=2)
+    experiment_run.add_argument('--scenario',action='append',choices=['shared_output','resource_contention','python_verification'])
+    optimize = sub.add_parser('optimize', help='Optional local AI ranking of evidence-backed trials; never applies changes')
+    optimize_sub = optimize.add_subparsers(dest='optimize_action', required=True)
+    for action in ('prepare', 'ask'):
+        command = optimize_sub.add_parser(action)
+        command.add_argument('--repo')
+        command.add_argument('--hours', type=float, default=24)
+        command.add_argument('--limit', type=int, default=200)
+        command.add_argument('--policy', default='current')
+        command.add_argument('--output', required=True, help='New private report path; never overwritten')
+        if action == 'ask':
+            command.add_argument('--model', required=True, help='Already installed local Ollama model; no cloud models/downloads')
+            command.add_argument('--threads', type=int, default=1)
     return root
 
 
@@ -223,6 +243,29 @@ def main():
             return 0
         if args.action == 'run':
             return execute(args)
+        if args.action == 'experiment':
+            from .experiments import run as experiment_run
+            result=experiment_run(args.output,args.pairs,args.agents,args.cpus,args.scenario)
+            print(json.dumps(dict(output=args.output,comparisons=result['comparisons'],note=result['note']),indent=2))
+            return 0
+        if args.action == 'optimize':
+            from . import optimize
+            reader = Store(read_only=True)
+            try:
+                pack = optimize.prepare(reader, args.repo, args.hours, args.limit, args.policy)
+            finally:
+                reader.close()
+            if args.optimize_action == 'prepare':
+                from .plans import write_export
+                write_export(args.output, pack)
+                result = dict(status='prepared', candidates=len(pack['payload']['candidates']))
+            else:
+                report = optimize.ask(pack, args.model, args.output, args.threads)
+                result = {key: report[key] for key in ('status', 'model_called', 'changes_applied')}
+                if 'response' in report:
+                    result['response'] = report['response']
+            print(json.dumps(dict(result, output=args.output, note=optimize.NOTE), indent=2))
+            return 2 if result['status'] == 'model_rejected' else 0
         if args.action == 'stage-worker':
             return execute(parser().parse_args(['run', '--', 'true']), prepared=(args.job, args.token))
         if args.action == 'plan-worker':
@@ -586,7 +629,7 @@ def main():
         message = str(error)
         if isinstance(error, OSError) and error.errno in (errno.EACCES, errno.EROFS, errno.EPERM):
             message += '. Shared queue access was blocked by the sandbox. Request normal approval for the original command; status/show/logs use read-only access.'
-        print('agent-builds: ' + message, file=sys.stderr)
+        print('buildr: ' + message, file=sys.stderr)
         return 2
     except KeyboardInterrupt:
         return 130

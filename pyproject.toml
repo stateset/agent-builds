@@ -4,12 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agent-builds"
-version = "0.10.0"
-description = "Shared build queue and terminal UI for Ghostty and Herdr"
+version = "0.11.0"
+description = "Buildr: shared build queue and terminal UI for Ghostty and Herdr"
 requires-python = ">=3.8"
 dependencies = []
 
 [project.scripts]
+buildr = "agent_builds.__main__:main"
 agent-builds = "agent_builds.__main__:main"
 
 [tool.setuptools.packages.find]

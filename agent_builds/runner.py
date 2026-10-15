@@ -210,7 +210,12 @@ def execute(args, prepared=None):
             if store.claim(job):
                 break
             row = store.get(job)
-            reason = row['reason']
+            # Cancellation can arrive between the pre-claim read and claim's
+            # transaction. It returns False without recording a wait blocker;
+            # settle cancellation at the top rather than formatting NULL reason.
+            if cancelled[0] or row['cancel_requested']:
+                continue
+            reason = row['reason'] or ''
             if wait_updates.due(reason, row['wait_context'], time.monotonic()):
                 context = row['wait_context']
                 blocker = context.get('blocking_job')

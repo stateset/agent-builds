@@ -17,3 +17,8 @@ comparison must use recorded policy groups, comparable workloads, enough samples
 and the same budgets. A faster synthetic fixture alone does not earn an A+ grade.
 Multiple explicit output locks remain a follow-up that needs compatibility with
 old runners; this release does not claim support for them.
+
+The v0.11 paired experiment harness adds actual fixture outcomes and costs under
+the same outer reservation. It is a controlled comparison, not a productivity
+claim about autonomous coding. Optional local AI ranks existing evidence-backed
+trials; it cannot apply settings. See [measuring and optimizing](optimization.md).

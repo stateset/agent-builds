@@ -1,4 +1,13 @@
-# Agent Builds
+# Buildr
+
+Herdr organizes coding agents and terminals. Buildr coordinates their builds,
+tests and verification results on the shared machine. Use the `buildr` launcher;
+the `agent-builds` command remains a compatibility entrypoint to the same queue.
+
+`buildr experiment run` records paired queue/direct fixture outcomes under one
+shared-queue reservation. `buildr optimize prepare` previews anonymized trial
+evidence; `buildr optimize ask` optionally asks an installed local model to rank
+it. Neither changes scheduling settings. See [measuring and optimizing](docs/optimization.md).
 
 Use `group create JOB...` to observe existing work under one handle,
 `plan draft JOB... --cwd PATH` to prepare a future verification plan, and
@@ -22,7 +31,7 @@ and the standard library are sufficient; no npm install or Cargo build is needed
 
 ```sh
 cd /home/dom/agent-builds
-./agent-builds
+./buildr
 ```
 
 Open it in a normal terminal (at least 65 columns by 15 rows). Press `n` to

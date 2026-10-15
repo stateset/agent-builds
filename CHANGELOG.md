@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.11.0
+
+- Name the application Buildr and add the `buildr` launcher/console entrypoint;
+  preserve `agent-builds`, existing queue paths and the repository identity.
+- Add counterbalanced paired queue/direct experiments with fixed shared-output,
+  bounded resource-contention and Python verification workloads. Preserve actual
+  verified outcomes, latency, sampled memory, CPU and source identity; explicitly
+  distinguish fixture evidence from autonomous coding productivity.
+- Add optional local Ollama ranking of existing evidence-backed trial candidates.
+  Allowlist anonymized numeric inputs, validate structured candidate references,
+  require queued inference and retain private audit reports. No cloud models,
+  automatic downloads, historical command execution or settings changes.
+- Preserve cancellation exit 130 when a request arrives between queue inspection
+  and admission, before a wait reason has been recorded.
+
 ## 0.10.0
 
 - Group already-submitted jobs under one durable observation handle without
