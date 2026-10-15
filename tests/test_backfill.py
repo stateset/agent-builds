@@ -67,6 +67,73 @@ class BackfillTests(unittest.TestCase):
         self.quick['min_free_gb']=0
         self.assertEqual(self.select([self.head,self.quick],available=5)[0]['id'],'head')
 
+    def test_protected_heavy_pool_does_not_freeze_scratch_quick_when_global_limits_also_block(self):
+        config=dict(DEFAULTS,protected_quick=True)
+        running=[row('a',slots=2),row('b',slots=2)]
+        head=row('head',slots=3)
+        quick=dict(row('check','quick',created=129),scratch_gb=.1)
+        selected,skipped=choose([head,quick],running,config,100,lambda r:100,now=130)
+        self.assertEqual(selected['id'],'check')
+        self.assertEqual(skipped['head'],'CPU slot budget')
+        # Legacy soft reserves still retain their conservative scratch rule.
+        legacy=choose([head,quick],running,dict(config,protected_quick=False),100,lambda r:100,now=130)[0]
+        self.assertEqual(legacy['id'],'head')
+        # Memory can mask the protected-pool blocker in the same way as CPU.
+        running=[row('a',slots=2,memory=6),row('b',slots=2,memory=6)]
+        selected,skipped=choose([dict(head,slots=1,memory_gb=6),quick],running,config,100,lambda r:100,now=130)
+        self.assertEqual(selected['id'],'check')
+        self.assertEqual(skipped['head'],'memory reservation budget')
+
+    def test_protected_pool_still_enforces_disk_ram_locks_and_global_limits(self):
+        config=dict(DEFAULTS,protected_quick=True)
+        running=[row('a',slots=2),row('b',slots=2)]
+        head=row('head',slots=3)
+        quick=dict(row('check','quick',created=129),scratch_gb=.1)
+        for candidate,available,disk in ((quick,100,0),(quick,0,100),
+                (dict(quick,slots=3),100,100),(dict(quick,resource_key='a'),100,100),
+                (dict(quick,resource_key='head'),100,100)):
+            selected,_=choose([head,candidate],running,config,available,lambda r:disk,now=130)
+            self.assertIsNone(selected)
+        selected,_=choose([head,quick],running+[row('q','quick')],config,100,lambda r:100,now=130)
+        self.assertIsNone(selected)
+
+    def test_protected_aged_head_drains_quick_work_when_heavy_pool_alone_would_fit(self):
+        config=dict(DEFAULTS,protected_quick=True)
+        head=row('head',slots=3)
+        running=[row('q1','quick',slots=2),row('q2','quick',slots=2)]
+        quick=dict(row('new','quick',created=129),scratch_gb=.1)
+        selected,_=choose([head,quick],running,config,100,lambda r:100,now=130)
+        self.assertEqual(selected['id'],'head')
+        # Once a quick job settles, the aged heavy gets priority over new work.
+        selected,_=choose([head,quick],running[:1],config,100,lambda r:100,now=130)
+        self.assertEqual(selected['id'],'head')
+        self.assertFalse(capacity_reason(head,running[:1],config,130))
+
+    def test_real_protected_queue_admits_scratch_quick_and_then_aged_heavy(self):
+        with tempfile.TemporaryDirectory() as temp:
+            store=Store(Path(temp)/'state')
+            other=Store(store.root)
+            try:
+                store.update_config(dict(protected_quick=True,min_free_gb=0,min_available_gb=0,nice=0))
+                a=store.submit(temp,['true'],'local','heavy',2,1,'a','',10)
+                b=store.submit(temp,['true'],'local','heavy',2,1,'b','',10)
+                self.assertTrue(store.claim(a))
+                self.assertTrue(store.claim(b))
+                head=store.submit(temp,['true'],'local','heavy',3,1,'head','',10)
+                quick=store.submit(temp,['true'],'local','quick',1,1,'quick','',10,scratch_gb=.1)
+                store.db.execute('UPDATE jobs SET created=? WHERE id=?',(time.time()-121,head))
+                self.assertFalse(store.claim(head))
+                self.assertTrue(other.claim(quick))
+                self.assertEqual(store.counts()['running'],3)
+                store.finish(a,'succeeded',0)
+                self.assertFalse(store.claim(head))
+                store.finish(b,'succeeded',0)
+                self.assertTrue(store.claim(head))
+                self.assertEqual(other.get(quick)['state'],'running')
+            finally:
+                other.close()
+                store.close()
+
     def test_aged_head_keeps_priority_when_it_can_start(self):
         self.assertEqual(self.select([self.head,self.quick],running=[row('a')])[0]['id'],'head')
 

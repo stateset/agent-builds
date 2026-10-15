@@ -78,6 +78,12 @@ controller must finish. Process liveness is not inferred through a sandbox's
 restricted process view. New request and activation timestamps support observing
 the drain interval. Requests made by older versions retain unknown timestamps.
 
+Policy `protected-verification-v5` also handles a full protected heavy pool when
+a global budget is full at the same time. Eligible quick work can use reserved
+capacity, including declared scratch, while the heavy pool drains. If quick work
+itself blocks an aged heavy head, normal draining/backfill still preserves heavy
+progress. Disk/RAM headroom, global budgets and every declared lock still apply.
+
 ## Dashboard and acceptance measurements
 
 Press `u` for read-only health in full or narrow terminal panes. `j`/`k` scroll,

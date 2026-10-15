@@ -3,7 +3,7 @@ import time
 
 from .locks import keys, overlaps
 
-POLICY_VERSION = 'protected-verification-v4'
+POLICY_VERSION = 'protected-verification-v5'
 
 
 def capacity_reason(row, running, config, now):
@@ -80,7 +80,15 @@ def choose(queued, running, config, available_gb, disk_free, allow_backfill=True
             return row, skipped
         skipped[row['id']] = reason
         # Let existing jobs drain for the oldest aged job. Do not preempt them.
-        if aged(row) and not (config.get('protected_quick') and 'reserved for quick checks' in reason):
+        # A protected heavy pool may be full at the same time as a global
+        # CPU/RAM/job limit. Check heavy-only feasibility instead of relying on
+        # which reason happened to be returned first. Quick work may use the
+        # reserved capacity (including declared scratch) while heavy work drains.
+        # If quick work itself blocks the aged head, retain the normal draining
+        # and safe-backfill rules so repeated quick arrivals cannot starve it.
+        protected_heavy_drain = (config.get('protected_quick') and row['lane']=='heavy' and
+            bool(capacity_reason(row,[r for r in running if r['lane']=='heavy'],config,now)))
+        if aged(row) and not protected_heavy_drain:
             if allow_backfill:
                 for candidate in ordered:
                     if candidate['id'] == row['id'] or candidate['lane'] != 'quick' or candidate['scratch_gb']:

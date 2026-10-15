@@ -2,6 +2,9 @@
 
 ## 0.16.0
 
+- Fix protected heavy-pool draining when a global budget is also full: eligible
+  quick jobs with declared scratch can use reserved capacity. Preserve aged
+  heavy progress when quick work itself is the blocker; record policy v5.
 - Act on a fresh nine-agent feedback round: concise active-job status by default,
   explicit detailed history with stable cursors, and one read-only diagnostics
   command through CLI, MCP and full/compact TUI (`u`).
