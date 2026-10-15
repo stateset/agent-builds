@@ -198,10 +198,6 @@ class DiagnosticTests(unittest.TestCase):
         self.assertEqual(heavy['short_quick_checks']['jobs'],0)
         self.assertIsNone(heavy['short_quick_checks']['wait_p95_seconds'])
 
-
-if __name__=='__main__':
-    unittest.main()
-
     def test_capacity_explains_protected_cpu_and_memory_despite_free_global_slots(self):
         config=dict(self.store.config(),protected_quick=True,max_running=4,quick_reserve_slots=2,
                     quick_reserve_jobs=2,quick_reserve_memory_gb=4)
@@ -248,3 +244,7 @@ if __name__=='__main__':
         self.assertEqual(dimensions['global job count']['used'],1)
         self.assertEqual(dimensions['global CPU slots']['used'],1)
         self.assertFalse(result['changes_applied'])
+
+
+if __name__=='__main__':
+    unittest.main()

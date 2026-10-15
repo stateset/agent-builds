@@ -18,7 +18,7 @@ from .telemetry import JobSampler
 
 SCENARIOS=('shared_output','resource_contention','python_verification')
 NOTE=('Controlled local benchmark with fixed fixtures, not a measurement of autonomous coding productivity. '
-      'Both arms inherit the same CPU affinity and worker hints. The independent arm bypasses only the isolated '
+      'All arms inherit the same CPU affinity; worker hints follow the recorded strategy. The independent arm bypasses only the isolated '
       'inner scheduler; the entire experiment remains inside its outer shared-queue reservation. '
       'Host background activity, caches and sample size can affect results. No historical command is executed.')
 
