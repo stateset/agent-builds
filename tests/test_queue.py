@@ -204,7 +204,7 @@ class QueueTests(unittest.TestCase):
             store.cancel(job)
             return False
 
-        args = parser().parse_args(['run', '--cwd', str(self.root), '--jobs', '1', '--', 'must-not-execute'])
+        args = parser().parse_args(['run', '--cwd', str(self.root), '--resource-key', str(self.root), '--jobs', '1', '--', 'must-not-execute'])
         with mock.patch.dict(os.environ, self.env, clear=True), \
                 mock.patch.object(Store, 'claim', cancelled_claim), \
                 mock.patch('agent_builds.runner.subprocess.Popen', side_effect=AssertionError('must not launch')), \
