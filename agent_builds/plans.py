@@ -182,7 +182,7 @@ def create(store, definition):
     source = capture(definition['cwd'])
     plan = uuid.uuid4().hex[:12]
     with store.transaction():
-        store.db.execute('INSERT INTO plans (id,name,cwd,definition,created,state,source,reserve_protocol) VALUES (?,?,?,?,?,?,?,1)',
+        store.db.execute('INSERT INTO plans (id,name,cwd,definition,created,state,source,reserve_protocol) VALUES (?,?,?,?,?,?,?,2)',
             (plan, definition['name'], definition['cwd'], json.dumps(definition), time.time(), 'queued', json.dumps(source)))
         for index, stage in enumerate(definition['stages']):
             store.db.execute('INSERT INTO plan_stages (plan_id,name,ordinal,definition) VALUES (?,?,?,?)',
@@ -302,7 +302,7 @@ def control(plan_id):
                 return
             if alive(plan['owner_pid'], plan['owner_start']):
                 raise ValueError('Another controller owns this plan')
-            store.db.execute("UPDATE plans SET owner_pid=?,owner_start=?,state='running',reason='',reserve_protocol=1,runner_version=? WHERE id=?",
+            store.db.execute("UPDATE plans SET owner_pid=?,owner_start=?,state='running',reason='',reserve_protocol=2,runner_version=? WHERE id=?",
                 (os.getpid(), identity(os.getpid()), __version__, plan_id))
         def on_signal(signum, frame):
             cancelled[0] = True

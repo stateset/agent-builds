@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.16.1
+
+- Fix a priority cycle between already-loaded v0.15 and v0.16 schedulers found
+  during live installation checks. Drain both versions under their shared soft
+  ordering before enabling protected ordering for protocol-2 runners.
+- Serialize the upgrade flag and insertion/activation guards. Already-loaded
+  old activation attempts remain ineffective without throwing or terminating
+  healthy jobs. Reject future old job/controller creation before side effects
+  once the new policy is active.
+- Exercise actual v0.15/v0.16 code together across migration, controller idle
+  intervals, reopening, insertion guards and subsequent current-runner admission.
+
 ## 0.16.0
 
 - Fix protected heavy-pool draining when a global budget is also full: eligible

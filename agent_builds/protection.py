@@ -12,17 +12,21 @@ def status(store, config=None):
                   blocking_jobs=[], blocking_job_details=[], blocking_controllers=[], requested_at=None, effective_at=None,
                   activation_condition='All legacy jobs and controllers must finish; existing heavy reservations must fit outside quick reserves. The next current-runner submit/claim activates protection atomically. No work is preempted.',
                   note='Protected reserves limit heavy reservations, not host processes. Shared locks, quick work, disk and RAM pressure can still delay checks.')
+    required_protocol=1
     if exists(store):
         columns={row[1] for row in store.db.execute('PRAGMA table_info(admission_policy)')}
         if {'requested_at','effective_at'}<=columns:
             stamp=store.db.execute('SELECT requested_at,effective_at FROM admission_policy WHERE id=1').fetchone()
             result.update(requested_at=stamp[0], effective_at=stamp[1])
+        if 'required_protocol' in columns:
+            required_protocol=store.db.execute('SELECT required_protocol FROM admission_policy WHERE id=1').fetchone()[0]
+    result['required_protocol']=required_protocol
     result['pending_seconds'] = max(0,time.time()-result['requested_at']) if result['pending'] and result['requested_at'] is not None else None
     if not result['pending']:
         return result
     config = config or store.config()
     rows = [dict(row) for row in store.db.execute("SELECT id,state,reserve_protocol,lane,slots,memory_gb,runner_version,created,started FROM jobs WHERE state IN ('queued','held','running','cancelling')")]
-    blockers = [row['id'] for row in rows if row['reserve_protocol'] != 1]
+    blockers = [row['id'] for row in rows if row['reserve_protocol'] != required_protocol]
     heavy = [row for row in rows if row['lane']=='heavy' and row['state'] in ('running','cancelling')]
     heavy_overflow = (sum(row['slots'] for row in heavy)>config['cpu_slots']-config['quick_reserve_slots'] or
             sum(row['memory_gb'] for row in heavy)>config['memory_gb']-config['quick_reserve_memory_gb'] or
@@ -38,7 +42,7 @@ def status(store, config=None):
         if row['id'] not in result['blocking_jobs']:
             continue
         conditions=[]
-        if row['reserve_protocol']!=1:
+        if row['reserve_protocol']!=required_protocol:
             conditions.append('legacy runner must finish (reserve_protocol='+str(row['reserve_protocol'])+')')
         if row['lane']=='heavy' and (row['slots']>config['cpu_slots']-config['quick_reserve_slots'] or row['memory_gb']>config['memory_gb']-config['quick_reserve_memory_gb']):
             conditions.append('individual heavy reservation exceeds protected pool')
@@ -50,7 +54,7 @@ def status(store, config=None):
     for table in ('plans','external_watches'):
         if store.db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",(table,)).fetchone():
             columns={row[1] for row in store.db.execute('PRAGMA table_info('+table+')')}
-            unsupported='reserve_protocol!=1' if 'reserve_protocol' in columns else '1=1'
+            unsupported='reserve_protocol!='+str(required_protocol) if 'reserve_protocol' in columns else '1=1'
             version='runner_version' if 'runner_version' in columns else "'' AS runner_version"
             for row in store.db.execute("SELECT id,state,created,"+version+" FROM "+table+" WHERE state NOT IN ('succeeded','failed','cancelled','uncertain','timed_out','exhausted') AND "+unsupported):
                 result['blocking_controllers'].append(dict(kind=table,id=row['id'],state=row['state'],

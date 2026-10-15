@@ -95,6 +95,8 @@ class Store:
             for name in ('requested_at', 'effective_at'):
                 if name not in policy_columns:
                     self.db.execute('ALTER TABLE admission_policy ADD COLUMN '+name+' REAL')
+            if 'required_protocol' not in policy_columns:
+                self.db.execute('ALTER TABLE admission_policy ADD COLUMN required_protocol INTEGER NOT NULL DEFAULT 1')
             self.db.execute("""CREATE TRIGGER IF NOT EXISTS protected_policy_guard BEFORE INSERT ON jobs
                 WHEN NEW.reserve_protocol!=1 AND (SELECT effective FROM admission_policy WHERE id=1)=1
                 BEGIN SELECT RAISE(ABORT, 'Protected quick capacity active; use the installed Buildr runner'); END""")
@@ -145,12 +147,33 @@ class Store:
                 PRIMARY KEY (plan_id,name))''')
 
         with self.transaction():
+            upgrade = self.db.execute('SELECT required_protocol FROM admission_policy WHERE id=1').fetchone()[0] < 2
+            if upgrade:
+                # Switch the required protocol, guards and compatibility mode
+                # together, after every referenced controller table exists.
+                self.db.execute('UPDATE admission_policy SET required_protocol=2,effective=0,effective_at=NULL WHERE id=1')
+                self.db.execute('DROP TRIGGER IF EXISTS protected_policy_guard')
+            self.db.execute("""CREATE TRIGGER IF NOT EXISTS protected_policy_guard BEFORE INSERT ON jobs
+                WHEN NEW.reserve_protocol!=2 AND (SELECT effective FROM admission_policy WHERE id=1)=1
+                BEGIN SELECT RAISE(ABORT, 'Protected ordering active; use the installed Buildr runner'); END""")
             for table in ('plans','external_watches'):
                 columns={row[1] for row in self.db.execute('PRAGMA table_info('+table+')')}
                 if 'reserve_protocol' not in columns:
                     self.db.execute('ALTER TABLE '+table+' ADD COLUMN reserve_protocol INTEGER NOT NULL DEFAULT 0')
                 if 'runner_version' not in columns:
                     self.db.execute("ALTER TABLE "+table+" ADD COLUMN runner_version TEXT NOT NULL DEFAULT ''")
+                self.db.execute("""CREATE TRIGGER IF NOT EXISTS protected_"""+table+"""_guard BEFORE INSERT ON """+table+"""
+                    WHEN NEW.reserve_protocol!=2 AND (SELECT effective FROM admission_policy WHERE id=1)=1
+                    BEGIN SELECT RAISE(ABORT, 'Protected ordering active; use the installed Buildr runner'); END""")
+            # Already-loaded old code may try to activate using only its older
+            # protocol check. Revert that flag within the same SQLite statement
+            # rather than throwing and terminating an otherwise healthy runner.
+            self.db.execute("""CREATE TRIGGER IF NOT EXISTS protected_activation_barrier
+                AFTER UPDATE OF effective ON admission_policy WHEN NEW.effective=1 AND (
+                  EXISTS (SELECT 1 FROM jobs WHERE state IN ('queued','held','running','cancelling') AND reserve_protocol!=2) OR
+                  EXISTS (SELECT 1 FROM plans WHERE state NOT IN ('succeeded','failed','cancelled') AND reserve_protocol!=2) OR
+                  EXISTS (SELECT 1 FROM external_watches WHERE state NOT IN ('succeeded','failed','cancelled','uncertain','timed_out','exhausted') AND reserve_protocol!=2))
+                BEGIN UPDATE admission_policy SET effective=0,effective_at=NULL WHERE id=NEW.id; END""")
 
     def close(self):
         if self.db is not None:
@@ -390,7 +413,7 @@ class Store:
                 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
                 (job, 'held' if len(resources)>1 else 'queued', created, os.getpid(), identity(os.getpid()), str(cwd),
                  json.dumps(command), backend, lane, slots, memory, resource_key, image,
-                 timeout, json.dumps(origin), min_free_gb, scratch_gb, POLICY_VERSION, json.dumps(waits.begin(created)), __version__, 1, json.dumps(resources), 1))
+                 timeout, json.dumps(origin), min_free_gb, scratch_gb, POLICY_VERSION, json.dumps(waits.begin(created)), __version__, 1, json.dumps(resources), 2))
             self.db.executemany('INSERT INTO job_locks VALUES (?,?)', [(job, key) for key in resources])
         return job
 

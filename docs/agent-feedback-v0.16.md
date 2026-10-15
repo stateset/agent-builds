@@ -29,3 +29,11 @@ tests while identifying a TypeScript failure. Prior-minute waits span different
 versions and protection states. Repository failures, HTTP 403 responses and
 AppImage harness issues were not presented as queue defects. The survey is
 workflow evidence, not a causal performance benchmark or an A+ grade.
+
+The installed v0.16 smoke check then exposed a real mixed-version issue: old
+v0.15 job `5b0b28f1d142` preferred v0.16 job `63861f31b130`, while the latter
+preferred the former. Protection was temporarily disabled to restore their
+common soft ordering; the queue progressed without cancellation or
+resubmission. The v0.16 installed smoke `1139d7474da7` subsequently passed.
+v0.16.1 adds protocol-2 activation/insertion barriers and actual loaded-version
+tests for that cycle. Pre-release single-version tests alone had missed it.

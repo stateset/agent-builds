@@ -84,6 +84,16 @@ capacity, including declared scratch, while the heavy pool drains. If quick work
 itself blocks an aged heavy head, normal draining/backfill still preserves heavy
 progress. Disk/RAM headroom, global budgets and every declared lock still apply.
 
+v0.16.1 requires protected-ordering protocol 2. Upgrading from v0.15/v0.16 puts
+requested protection back into draining exactly once: already-loaded runners
+use their shared soft ordering until old jobs/controllers finish. This avoids
+different schedulers selecting each other as the preferred next job. A SQLite
+activation barrier also covers attempts by already-loaded old code, without
+raising an error or stopping that runner. New protocol-2 submissions participate
+in the same queue; no old jobs are cancelled, recreated or marked compatible.
+After activation, old job/controller inserts are rejected before creation.
+Read-only inspection never performs this migration or alters effective policy.
+
 ## Dashboard and acceptance measurements
 
 Press `u` for read-only health in full or narrow terminal panes. `j`/`k` scroll,

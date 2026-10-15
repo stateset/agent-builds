@@ -140,7 +140,7 @@ def create(store, definition):
     spec = validate(definition, store.config())
     handle, now = uuid.uuid4().hex[:12], time.time()
     with store.transaction():
-        store.db.execute('INSERT INTO external_watches (id,created,definition,state,next_probe_at,reserve_protocol) VALUES (?,?,?,?,?,1)',
+        store.db.execute('INSERT INTO external_watches (id,created,definition,state,next_probe_at,reserve_protocol) VALUES (?,?,?,?,?,2)',
                          (handle, now, json.dumps(spec), 'queued', now))
     return handle
 
@@ -327,7 +327,7 @@ def control(handle):
                 return
             if alive(row['owner_pid'], row['owner_start']):
                 raise ValueError('Another controller owns this external watch')
-            store.db.execute('UPDATE external_watches SET owner_pid=?,owner_start=?,reason=?,reserve_protocol=1,runner_version=? WHERE id=?',
+            store.db.execute('UPDATE external_watches SET owner_pid=?,owner_start=?,reason=?,reserve_protocol=2,runner_version=? WHERE id=?',
                              (os.getpid(), token, 'Controller monitoring durable probes', __version__, handle))
         def stop_controller(signum, frame):
             stop[0] = True
