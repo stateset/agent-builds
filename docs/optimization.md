@@ -49,6 +49,12 @@ the same acceptance criteria and explicit task-level observations.
 
 ## Optional local AI advice
 
+The local provider is experimental. A first one-thread trial on this workstation
+hit the 90-second request timeout and was rejected without applying anything.
+The request is not automatically retried; check that server-side work has settled
+before choosing a new measured trial. Model latency under host contention is a
+separate cost to assess, not an assumed optimization benefit.
+
 First preview evidence without calling a model:
 
 ```sh
@@ -66,8 +72,8 @@ logs, environment values, job IDs and arbitrary historical text.
 When a small model is already installed in a local Ollama server:
 
 ```sh
-buildr run --lane quick --jobs 1 --memory-gb 3 --timeout 180 -- \
-  buildr optimize ask --model qwen3.5:0.8b --threads 1 \
+buildr run --lane quick --jobs 2 --memory-gb 3 --timeout 180 -- \
+  buildr optimize ask --model qwen3.5:0.8b --threads 2 \
   --output /tmp/new-buildr-ai-advice.json
 ```
 
@@ -93,3 +99,26 @@ settling. Successful requests ask Ollama to unload the model immediately.
 The optional provider uses the official [Ollama generation API](https://docs.ollama.com/api/generate)
 and [structured output format](https://docs.ollama.com/capabilities/structured-outputs).
 There is no required model service or third-party Python dependency.
+
+## First controlled workstation measurements
+
+Three counterbalanced pairs, four fixture agents and two CPUs at source commit
+`5c51103` produced the following outcomes. The queued inner configuration had no
+quick reserve; production budgets were unchanged. Ratios are means of the three
+paired queued/direct ratios, so they are descriptive rather than significance
+estimates.
+
+| Fixture | Direct verified | Queued verified | Queued/direct wall time | Queued/direct sampled RSS |
+| --- | --- | --- | --- | --- |
+| Shared output | 3/12 | 12/12 | 3.64 | 1.29 |
+| Resource contention | 12/12 | 12/12 | 2.06 | 0.66 |
+| Short Python verification | 12/12 | 12/12 | 3.07 | 1.51 |
+
+Serialization preserved shared-output correctness and bounded admission reduced
+sampled memory for the allocation fixture. Per-job startup and polling had a
+substantial cost for these short commands. This evidence motivates batching
+related tiny checks while retaining independent acceptance results. It does not
+prove that the queue makes every build faster or improves overall autonomous
+coding productivity. The original private measurements and per-job logs are in
+the release checkout's `.agent-builds-output/paired-experiment.json` and referenced
+fixture directory; source identity was unchanged throughout that experiment.

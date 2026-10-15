@@ -11,6 +11,8 @@
   initialization/migration, existing budgets, cancellation and orphan safeguards.
 - Add read-only server mode and client setup examples. No client configuration
   is overwritten and no network listener or remote worker is started.
+- Record controlled correctness, memory and overhead measurements; label the
+  optional local model provider experimental after its first timed-out trial.
 
 ## 0.11.0
 
