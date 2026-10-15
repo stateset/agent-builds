@@ -76,7 +76,8 @@ class Store:
                                      ('scratch_gb', 'REAL NOT NULL DEFAULT 0'),
                                      ('wait_context', "TEXT NOT NULL DEFAULT '{}'"),
                                      ('usage', "TEXT NOT NULL DEFAULT '{}'"),
-                                     ('policy_version', "TEXT NOT NULL DEFAULT ''")]:
+                                     ('policy_version', "TEXT NOT NULL DEFAULT ''"),
+                                     ('source', "TEXT NOT NULL DEFAULT '{}'")]:
                 if name not in columns:
                     self.db.execute('ALTER TABLE jobs ADD COLUMN ' + name + ' ' + definition)
         self.db.execute('''CREATE TABLE IF NOT EXISTS announcements (
@@ -87,6 +88,17 @@ class Store:
             repository TEXT NOT NULL, agent TEXT NOT NULL, state TEXT NOT NULL,
             detail TEXT, updated REAL NOT NULL,
             PRIMARY KEY (announcement_id,pane))''')
+        with self.transaction():
+            self.db.execute('''CREATE TABLE IF NOT EXISTS plans (
+                id TEXT PRIMARY KEY, name TEXT NOT NULL, cwd TEXT NOT NULL, definition TEXT NOT NULL,
+                created REAL NOT NULL, finished REAL, state TEXT NOT NULL, reason TEXT NOT NULL DEFAULT '',
+                owner_pid INTEGER, owner_start TEXT, cancel_requested INTEGER NOT NULL DEFAULT 0,
+                source TEXT NOT NULL DEFAULT '{}')''')
+            self.db.execute('''CREATE TABLE IF NOT EXISTS plan_stages (
+                plan_id TEXT NOT NULL, name TEXT NOT NULL, ordinal INTEGER NOT NULL, definition TEXT NOT NULL,
+                state TEXT NOT NULL DEFAULT 'pending', reason TEXT NOT NULL DEFAULT '', job_id TEXT UNIQUE,
+                launch_token TEXT, attached INTEGER NOT NULL DEFAULT 0, evidence TEXT NOT NULL DEFAULT '{}',
+                PRIMARY KEY (plan_id,name))''')
 
     def close(self):
         if self.db is not None:
@@ -182,6 +194,7 @@ class Store:
         row['wait_context'] = json.loads(row.get('wait_context') or '{}')
         row['origin'] = json.loads(row.get('herdr') or '{}')
         row['usage'] = json.loads(row.get('usage') or '{}')
+        row['source'] = json.loads(row.get('source') or '{}')
         row['worker_budget'] = worker_budget(row['argv'], row['slots'])
         if row['state'] == 'queued' and row['wait_context']:
             observed = self.reservation_snapshot()
@@ -393,3 +406,6 @@ class Store:
 
     def record_usage(self, job, usage):
         self.db.execute('UPDATE jobs SET usage=? WHERE id=?', (json.dumps(usage), job))
+
+    def record_source(self, job, source):
+        self.db.execute('UPDATE jobs SET source=? WHERE id=?', (json.dumps(source), job))

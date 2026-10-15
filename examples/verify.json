@@ -1,0 +1,48 @@
+{
+  "version": 1,
+  "name": "Agent Builds verification",
+  "source_policy": "report",
+  "stages": [
+    {
+      "name": "tests",
+      "lane": "quick",
+      "jobs": 1,
+      "memory_gb": 1,
+      "command": [
+        "python3",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "tests",
+        "-v"
+      ]
+    },
+    {
+      "name": "version",
+      "lane": "quick",
+      "jobs": 1,
+      "memory_gb": 0.25,
+      "command": [
+        "python3",
+        "-m",
+        "agent_builds",
+        "--version"
+      ]
+    },
+    {
+      "name": "artifact",
+      "lane": "quick",
+      "jobs": 1,
+      "memory_gb": 0.25,
+      "command": [
+        "python3",
+        "-c",
+        "import json; from pathlib import Path; from agent_builds import __version__; p=Path('.agent-builds-output'); p.mkdir(exist_ok=True); (p/'version.json').write_text(json.dumps({'version': __version__})+chr(10))"
+      ],
+      "artifacts": [
+        ".agent-builds-output/version.json"
+      ]
+    }
+  ]
+}

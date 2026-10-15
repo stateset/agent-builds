@@ -102,6 +102,11 @@ def main(screen, cwd):
     disk_pool = ThreadPoolExecutor(max_workers=1)
     disk_future = None
     disk_result = None
+    plan_rows = []
+    plan_index = 0
+    plan_id = None
+    plan_offset = 0
+    last_plans = 0
     def scan_disk(repository):
         from .disk import inventory
         reader = Store(store.root, read_only=True)
@@ -124,6 +129,12 @@ def main(screen, cwd):
                 processes = sampler.sample()
                 last_sample = time.monotonic()
             config = store.config()
+            if view == 7 and time.monotonic()-last_plans >= 1:
+                from .plans import listing
+                plan_rows = listing(store, limit=20)
+                plan_index = next((i for i, p in enumerate(plan_rows) if p['id'] == plan_id), min(plan_index, max(0, len(plan_rows)-1)))
+                plan_id = plan_rows[plan_index]['id'] if plan_rows else None
+                last_plans = time.monotonic()
             active = [r for r in rows if r['state'] in ('running', 'cancelling')]
             screen.erase()
             height, width = screen.getmaxyx()
@@ -193,6 +204,12 @@ def main(screen, cwd):
                             'RSS is sampled, may include shared pages, and may miss short peaks.']
                     else:
                         lines += ['Job resource usage has not been measured.']
+                    if row['source']:
+                        source = row['source']
+                        lines += ['Source: submitted {} | started {}'.format(
+                            source.get('submission', {}).get('head', 'unavailable'), source.get('start', {}).get('head', 'not captured')),
+                            'Source drift: before start {} | during command {}'.format(
+                                source.get('changed_since_submission', 'unknown'), source.get('changed_during_run', 'unknown'))]
                     if row.get('scheduling'):
                         policy = row['scheduling']
                         lines += ['Runner policy: {}'.format(policy['policy_version']),
@@ -246,6 +263,32 @@ def main(screen, cwd):
                     lines += ['Old queue logs: agent-builds clean (preview); --apply deletes eligible logs.']
                     for index, line in enumerate(lines[:max(1, height - log_top - 3)]):
                         paint(screen, log_top + index, 0, line)
+                elif view == 7:
+                    paint(screen, log_top-1, 0, 'VERIFICATION PLANS | arrows select | Enter opens a stage log', curses.A_BOLD)
+                    lines = ['No plans yet. Press o to submit a JSON verification plan.']
+                    if plan_rows:
+                        plan = plan_rows[plan_index]
+                        lines = ['{} | {} | {}'.format(plan['id'], plan['state'], plan['name']),
+                                 'Stages: {} succeeded / {} total | elapsed {:.1f}s'.format(
+                                     sum(s['state']=='succeeded' for s in plan['stages']), len(plan['stages']), plan['elapsed_seconds'])]
+                        if plan['state'] not in ('succeeded', 'failed', 'cancelled') and not plan['controller_alive']:
+                            lines += ['Controller is not running; r resumes monitoring without retrying submitted stages.']
+                        if plan['reason']:
+                            lines += [plan['reason']]
+                        for stage in plan['stages']:
+                            job = stage['job']
+                            lines += ['{} {:11} | {} | {}'.format(stage['name'], stage['state'], stage['job_id'] or 'not submitted',
+                                stage['reason'] or (job['reason'] if job else 'waiting for prerequisites'))]
+                            if job:
+                                lines += ['  waited {:.1f}s | ran {:.1f}s | exit {} | {}'.format(job['wait_seconds'], job['elapsed_seconds'], job['exit_code'], job['command_display'])]
+                                if job['source'].get('changed_since_submission') or job['source'].get('changed_during_run'):
+                                    lines += ['  Source changes observed; inspect plan evidence before relying on the result.']
+                                elif job['started'] and job['source'].get('start', {}).get('status') != 'captured':
+                                    lines += ['  Source identity unavailable or not yet captured.']
+                    visible = max(1, height-log_top-3)
+                    plan_offset = min(max(0, plan_offset), max(0, len(lines)-visible))
+                    for index, line in enumerate(lines[plan_offset:plan_offset+visible]):
+                        paint(screen, log_top+index, 0, line)
                 elif rows:
                     row = rows[selected]
                     paint(screen, log_top - 1, 0, '{} | {} | {}'.format(row['id'], row['cwd'], row['reason'] or 'live output'), curses.A_BOLD)
@@ -264,20 +307,78 @@ def main(screen, cwd):
                     for index, line in enumerate(tail(store.log_path(row['id']), max(1, height - log_top - offset - 3))):
                         paint(screen, log_top + offset + index, 0, line)
                 paint(screen, height - 2, 0, message)
-                paint(screen, height - 1, 0, 'n new  t task  c cancel  p pause  b budgets  i details  d disk  v views  q quit')
+                paint(screen, height - 1, 0, 'o plan  t task  i details  d disk  v views  q quit' if view != 7 else 'o plan  c cancel plan  r resume  e export  PgUp/PgDn scroll  v views  q quit')
             screen.refresh()
             key = screen.getch()
             if key in (ord('q'), 27):
                 break
             selected_id = rows[selected]['id'] if rows else None
             if key in (ord('j'), curses.KEY_DOWN):
-                selected = min(selected + 1, max(0, len(rows) - 1))
-                selected_id = rows[selected]['id'] if rows else None
+                if view == 7:
+                    plan_index = min(plan_index+1, max(0, len(plan_rows)-1))
+                    plan_id = plan_rows[plan_index]['id'] if plan_rows else None
+                    plan_offset = 0
+                else:
+                    selected = min(selected + 1, max(0, len(rows) - 1))
+                    selected_id = rows[selected]['id'] if rows else None
             elif key in (ord('k'), curses.KEY_UP):
-                selected = max(0, selected - 1)
-                selected_id = rows[selected]['id'] if rows else None
+                if view == 7:
+                    plan_index = max(0, plan_index-1)
+                    plan_id = plan_rows[plan_index]['id'] if plan_rows else None
+                    plan_offset = 0
+                else:
+                    selected = max(0, selected - 1)
+                    selected_id = rows[selected]['id'] if rows else None
             elif key == ord('v'):
-                view = (view + 1) % 7
+                view = (view + 1) % 8
+            elif key == ord('o') and height >= 15 and width >= 65:
+                try:
+                    from .plans import create, read_manifest, spawn as spawn_plan
+                    location = prompt(screen, 'Plan checkout', rows[selected]['cwd'] if rows else str(cwd))
+                    if location is None:
+                        continue
+                    manifest = prompt(screen, 'Verification plan JSON path', str(Path(location)/'agent-builds-plan.json'))
+                    if manifest is None:
+                        continue
+                    definition = read_manifest(manifest, location, config)
+                    plan_id = create(store, definition)
+                    children.append(spawn_plan(store, plan_id))
+                    view, last_plans, plan_offset = 7, 0, 0
+                    message = 'Submitted verification plan '+plan_id
+                except (ValueError, OSError) as error:
+                    message = 'Plan rejected: '+str(error)
+            elif view == 7 and key in (curses.KEY_NPAGE, curses.KEY_PPAGE):
+                plan_offset += max(1, height-10)*(1 if key == curses.KEY_NPAGE else -1)
+            elif view == 7 and plan_rows and key in (ord('x'), ord('c'), ord('r'), ord('e')):
+                try:
+                    from .plans import cancel as cancel_plan, export, spawn as spawn_plan, write_export
+                    handle = plan_rows[plan_index]['id']
+                    if key in (ord('x'), ord('c')):
+                        if prompt(screen, 'Cancel plan {}? type yes'.format(handle)) == 'yes':
+                            cancel_plan(store, handle)
+                            message = 'Plan cancellation requested: '+handle
+                    elif key == ord('r'):
+                        children.append(spawn_plan(store, handle))
+                        message = 'Controller submitted; dispatched stages are not retried.'
+                    else:
+                        path = prompt(screen, 'New evidence JSON file', '/tmp/agent-builds-evidence-'+handle+'.json')
+                        if path:
+                            write_export(path, export(store, handle))
+                            message = 'Evidence exported to '+path
+                    last_plans = 0
+                except (ValueError, OSError) as error:
+                    message = 'Plan action failed: '+str(error)
+            elif view == 7 and plan_rows and key in (10, 13, curses.KEY_ENTER):
+                stages = plan_rows[plan_index]['stages']
+                targets = [s for s in stages if s['job'] and s['job']['state'] not in TERMINAL]
+                targets += [s for s in stages if s['state'] in ('failed', 'lost') and s['job']]
+                targets += list(reversed([s for s in stages if s['job']]))
+                if targets:
+                    target = next((i for i, row in enumerate(rows) if row['id'] == targets[0]['job_id']), None)
+                    if target is not None:
+                        selected, selected_id, view = target, targets[0]['job_id'], 0
+                    else:
+                        message = 'Stage log: agent-builds logs '+targets[0]['job_id']
             elif key == ord('d'):
                 view = 6
                 if disk_future is None:
@@ -364,7 +465,7 @@ def main(screen, cwd):
                         message = 'Budgets saved. Running jobs keep their original reservations.'
                 except (ValueError, OSError) as error:
                     message = 'Budget update rejected: ' + str(error)
-            elif key == ord('c') and rows:
+            elif key == ord('c') and rows and view != 7:
                 row = rows[selected]
                 if row['state'] not in TERMINAL:
                     answer = prompt(screen, 'Cancel {}? type yes'.format(row['id']))

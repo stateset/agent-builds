@@ -82,15 +82,26 @@ def statistics(store, repo=None, limit=1000):
         peak = max((j['usage']['sampled_peak_rss_gb'] for j in measured), default=None)
         waits = sorted(j['wait_seconds'] for j in jobs)
         p95 = waits[max(0, math.ceil(len(waits) * .95) - 1)]
+        reserved_cpu_seconds = sum(j['slots']*j['elapsed_seconds'] for j in measured)
+        observed_cpu_seconds = sum(j['usage'].get('cpu_seconds', 0) for j in measured)
         result.append(dict(repository=repository, command_display=jobs[0]['command_display'],
             jobs=len(jobs), measured_jobs=len(measured), lane=lane, slots=slots, memory_gb=memory, wait_p50_seconds=waits[max(0, math.ceil(len(waits)*.5)-1)],
             wait_p95_seconds=p95, average_runtime_seconds=sum(j['elapsed_seconds'] for j in jobs)/len(jobs),
             sampled_peak_rss_gb=peak,
+            reserved_cpu_seconds=reserved_cpu_seconds, observed_cpu_seconds=observed_cpu_seconds,
+            observed_to_reserved_cpu_ratio=observed_cpu_seconds/reserved_cpu_seconds if reserved_cpu_seconds > 0 else None,
             suggested_memory_gb=max(.25, math.ceil(peak * 1.3 * 4)/4) if peak is not None and sum(j['state'] == 'succeeded' for j in measured) >= 3 else None))
     lanes = []
     for lane in ('quick', 'heavy'):
         matched = [r for r in rows if r['lane'] == lane and r['state'] in ('succeeded', 'failed', 'cancelled', 'lost')]
         waits = sorted(r['wait_seconds'] for r in matched)
         lanes.append(dict(lane=lane, jobs=len(matched), wait_p95_seconds=waits[max(0, math.ceil(len(waits)*.95)-1)] if waits else None))
-    return dict(groups=result, lanes=lanes, history_limit=limit, suggestions_applied=False,
+    policies = []
+    keys = sorted({(r.get('policy_version') or 'unrecorded', r['lane']) for r in rows})
+    for policy, lane in keys:
+        matched = [r for r in rows if (r.get('policy_version') or 'unrecorded') == policy and r['lane'] == lane and r['state'] in ('succeeded', 'failed', 'cancelled', 'lost')]
+        waits = sorted(r['wait_seconds'] for r in matched)
+        policies.append(dict(policy_version=policy, lane=lane, jobs=len(matched),
+            wait_p95_seconds=waits[max(0, math.ceil(len(waits)*.95)-1)] if waits else None))
+    return dict(groups=result, lanes=lanes, policies=policies, history_limit=limit, suggestions_applied=False,
                 note='Memory suggestions require three measured jobs; allow extra margin for unsampled peaks.')

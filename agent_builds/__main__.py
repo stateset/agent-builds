@@ -31,6 +31,7 @@ def parser():
     run.add_argument('--image', default='')
     run.add_argument('--timeout', type=float)
     run.add_argument('--notify', action='store_true', help='Notify the current Herdr session on completion')
+    run.add_argument('--track-source', action='store_true', help='Record bounded source fingerprints at submission/start/finish')
     run.add_argument('--min-free-gb', type=float, default=0, help='Minimum free disk space required before starting')
     run.add_argument('--scratch-gb', type=float, default=0, help='Conservative additional disk reservation while running')
     run.add_argument('--events-json', action='store_true', help='Emit JSON lifecycle events on stderr; command output stays on stdout')
@@ -133,6 +134,34 @@ def parser():
         remote_action.add_argument('handle')
         if action == 'logs':
             remote_action.add_argument('--follow', '-f', action='store_true')
+    plans = sub.add_parser('plan', help='Durable dependency verification with source and artifact evidence')
+    plan_sub = plans.add_subparsers(dest='plan_action', required=True)
+    for action in ('run', 'validate'):
+        plan_action = plan_sub.add_parser(action)
+        plan_action.add_argument('manifest')
+        plan_action.add_argument('--cwd', default=os.getcwd())
+        if action == 'run':
+            plan_action.add_argument('--wait', action='store_true')
+    plan_list = plan_sub.add_parser('list')
+    plan_list.add_argument('--active', action='store_true')
+    plan_list.add_argument('--json', action='store_true')
+    for action in ('show', 'wait', 'cancel', 'resume', 'export'):
+        plan_action = plan_sub.add_parser(action)
+        plan_action.add_argument('plan')
+        plan_action.add_argument('--json', action='store_true')
+        if action == 'wait':
+            plan_action.add_argument('--timeout', type=float)
+        if action == 'export':
+            plan_action.add_argument('--output', help='Write a private JSON evidence report to this path')
+    plan_logs = plan_sub.add_parser('logs')
+    plan_logs.add_argument('plan')
+    plan_logs.add_argument('stage')
+    plan_logs.add_argument('--follow', '-f', action='store_true')
+    controller = sub.add_parser('plan-worker', help=argparse.SUPPRESS)
+    controller.add_argument('plan')
+    stage_worker = sub.add_parser('stage-worker', help=argparse.SUPPRESS)
+    stage_worker.add_argument('job')
+    stage_worker.add_argument('token')
     worker = sub.add_parser('announce-worker', help=argparse.SUPPRESS)
     worker.add_argument('announcement')
     return root
@@ -153,6 +182,12 @@ def main():
             return 0
         if args.action == 'run':
             return execute(args)
+        if args.action == 'stage-worker':
+            return execute(parser().parse_args(['run', '--', 'true']), prepared=(args.job, args.token))
+        if args.action == 'plan-worker':
+            from .plans import control
+            control(args.plan)
+            return 0
         if args.action == 'announce-worker':
             from .announce import work
             work(args.announcement)
@@ -162,9 +197,63 @@ def main():
             or (args.action == 'clean' and not args.apply)
             or (args.action == 'task' and args.task_action == 'list')
             or (args.action == 'worker' and args.worker_action != 'add')
+            or (args.action == 'plan' and args.plan_action in ('list', 'show', 'wait', 'logs', 'validate', 'export'))
             or (args.action == 'remote' and args.remote_action in ('list', 'show', 'logs', 'status')))
         store = Store(read_only=inspection)
         try:
+            if args.action == 'plan':
+                from . import plans
+                if args.plan_action in ('run', 'validate'):
+                    definition = plans.read_manifest(args.manifest, args.cwd, store.config())
+                    if args.plan_action == 'validate':
+                        print(json.dumps(definition, indent=2))
+                        return 0
+                    handle = plans.create(store, definition)
+                    plans.spawn(store, handle)
+                    print(json.dumps(dict(plan_id=handle, state='submitted', stages=len(definition['stages']))), flush=True)
+                    if args.wait:
+                        result = plans.wait(store, handle)
+                        print(json.dumps(result, indent=2))
+                        return result['exit_code']
+                    return 0
+                if args.plan_action == 'list':
+                    result = plans.listing(store, args.active)
+                elif args.plan_action == 'show':
+                    with store.read_snapshot():
+                        result = plans.get(store, args.plan)
+                elif args.plan_action == 'wait':
+                    result = plans.wait(store, args.plan, args.timeout)
+                elif args.plan_action == 'cancel':
+                    plans.cancel(store, args.plan)
+                    result = plans.get(store, args.plan)
+                elif args.plan_action == 'resume':
+                    plans.spawn(store, args.plan)
+                    result = dict(plan_id=args.plan, state='controller submitted; existing stage jobs will not be retried')
+                elif args.plan_action == 'export':
+                    result = plans.export(store, args.plan)
+                    if args.output:
+                        plans.write_export(args.output, result)
+                        print(str(Path(args.output).expanduser().absolute()))
+                        return 0
+                elif args.plan_action == 'logs':
+                    plan = plans.get(store, args.plan)
+                    stage = next((s for s in plan['stages'] if s['name'] == args.stage), None)
+                    if not stage or not stage['job_id']:
+                        raise ValueError('Stage has no submitted job: ' + args.stage)
+                    args.job = stage['job_id']
+                    args.action = 'logs'
+                if args.action == 'plan':
+                    if args.json or args.plan_action in ('export', 'list'):
+                        print(json.dumps(result, indent=2))
+                    else:
+                        current = result.get('plan', result)
+                        if 'stages' in current:
+                            print('{} {} | {}'.format(current['id'], current['state'], current['name']))
+                            for stage in current['stages']:
+                                print('{:18} {:11} {} | {}'.format(stage['name'], stage['state'], stage['job_id'] or '-', stage['reason']))
+                        else:
+                            print(json.dumps(result, indent=2))
+                    return result['exit_code'] if args.plan_action == 'wait' else 0
             if args.action == 'config':
                 if args.set:
                     changes = {}

@@ -46,6 +46,33 @@ It doesn't invoke a shell implicitly. Explicit shell commands are supported:
 `agent-builds run -- bash -lc 'npm run lint && npm test'`.
 Jobs are noninteractive; run interactive programs in an ordinary pane.
 
+## v0.7.0: verification plans
+
+Link tests, lint, builds and acceptance into one durable verification handle:
+
+```sh
+agent-builds plan run examples/verify.json --cwd /home/dom/agent-builds
+agent-builds plan show PLAN_ID --json
+agent-builds plan wait PLAN_ID --timeout 600 --json
+agent-builds plan export PLAN_ID --output /tmp/new-verification-evidence.json
+```
+
+Each ready stage uses the shared queue with its own budgets. Failed prerequisites
+skip dependent stages; independent branches may continue. Closing the dashboard
+does not cancel the plan. Read-only inspection and waiting preserve sandbox-safe
+access. Press `o` in the TUI to submit a plan, or `v` to view plan progress.
+
+Plans record source fingerprints at submission/start/finish, and retain per-stage
+commands, native exit codes, log/artifact hashes and resource measurements. Drift
+is reported by default; strict unchanged-source checks are opt-in. These are live
+checkout observations, not isolated snapshots. Controllers can be resumed without
+retrying already submitted work; uncertain outcomes remain explicit.
+
+See [verification plans](docs/plans.md) for manifest fields, cancellation,
+recovery, source/hash limits and evidence semantics. `stats --json` also adds
+observed versus reserved CPU totals and wait percentiles by recorded scheduling
+policy. These are descriptive comparisons; budgets are never changed automatically.
+
 ## v0.6.0: shorter feedback loops
 
 The default policy reserves two of the six CPU slots, one job slot, and 2 GiB of

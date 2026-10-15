@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.7.0
+
+- Add durable dependency-aware verification plans with per-stage queue budgets,
+  skip-after-failure, independent branches, one reconnectable handle, cancellation,
+  and explicit controller resume without retrying previously submitted work.
+- Atomically link stage jobs before launch and permit each prepared worker to
+  attach once. Preserve normal repository locks and uncertain reservations.
+- Record bounded source identities at submission/start/finish; report drift by
+  default and support opt-in unchanged-source verification.
+- Capture per-stage artifact/log evidence and export private, non-overwriting
+  JSON reports with native command results, timings and resource measurements.
+- Add a plan dashboard view, submission, stage-log navigation, cancellation,
+  resume and evidence export. Include an executable verification-plan example.
+- Add measured/reserved CPU comparisons and wait percentiles by recorded policy.
+
 ## 0.6.0
 
 - Reserve quick-check capacity and prioritize aged queued work without preempting

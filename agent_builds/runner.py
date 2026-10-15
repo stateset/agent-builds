@@ -19,8 +19,11 @@ def resource_key(cwd):
     target = os.environ.get('CARGO_TARGET_DIR')
     if target:
         return str((Path(cwd) / target).resolve())
-    result = subprocess.run(['git', '-C', str(cwd), 'rev-parse', '--show-toplevel'],
-                            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+    try:
+        result = subprocess.run(['git', '-C', str(cwd), 'rev-parse', '--show-toplevel'],
+                                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+    except OSError:
+        return str(Path(cwd).resolve())
     return result.stdout.strip() if result.returncode == 0 else str(Path(cwd).resolve())
 
 
@@ -108,6 +111,8 @@ def detach(args):
             command += ['--' + name, str(value)]
     if args.notify:
         command.append('--notify')
+    if getattr(args, 'track_source', False):
+        command.append('--track-source')
     argv = list(args.command)
     if argv and argv[0] == '--':
         argv.pop(0)
@@ -135,12 +140,16 @@ def detach(args):
         store.close()
 
 
-def execute(args):
+def execute(args, prepared=None):
     if os.environ.get('AGENT_BUILDS_JOB_ID'):
         raise ValueError('Already inside queued job {}. Queue the whole driver once, or its individual build steps; do not nest wrappers.'.format(os.environ['AGENT_BUILDS_JOB_ID']))
     if args.detach:
         return detach(args)
     store = Store()
+    job = None
+    if prepared is not None:
+        from .plans import attach_job
+        args, job = attach_job(store, *prepared)
     config = store.config()
     cwd = Path(args.cwd).expanduser().resolve()
     command = list(args.command)
@@ -154,9 +163,15 @@ def execute(args):
     image = args.image or config['docker_image']
     if args.backend == 'docker' and ',' in str(cwd):
         raise ValueError('Docker bind paths containing commas are unsupported')
-    job = store.submit(cwd, command, args.backend, args.lane, slots, memory,
-                       args.resource_key or resource_key(cwd), image, timeout,
-                       min_free_gb=args.min_free_gb, scratch_gb=args.scratch_gb)
+    track_source = getattr(args, 'track_source', False)
+    if job is None:
+        from .source import capture
+        source = {'submission': capture(cwd)} if track_source else {}
+        job = store.submit(cwd, command, args.backend, args.lane, slots, memory,
+                           args.resource_key or resource_key(cwd), image, timeout,
+                           min_free_gb=args.min_free_gb, scratch_gb=args.scratch_gb)
+        if source:
+            store.record_source(job, source)
     if args.receipt_file:
         receipt = Path(args.receipt_file)
         if receipt.parent != store.root or not receipt.name.startswith('receipt-'):
@@ -209,6 +224,21 @@ def execute(args):
         row = store.get(job)
         event('running', 'running {} after {:.1f}s waiting | log {}'.format(job, row['wait_seconds'], row['log_path']),
               wait_seconds=row['wait_seconds'])
+        source = row['source']
+        if track_source:
+            from .source import capture, changed
+            source.update(start=capture(cwd), command_started=False)
+            source['changed_since_submission'] = changed(source.get('submission', {}), source['start'])
+            store.record_source(job, source)
+            if getattr(args, 'source_policy', 'report') == 'require_unchanged' and source['changed_since_submission'] is not False:
+                reason = 'source changed or identity unavailable before start; command was not executed'
+                store.finish(job, 'failed', 2, reason)
+                event('failed', 'failed {}: {}'.format(job, reason), exit_code=2)
+                return 2
+        if cancelled[0] or store.get(job)['cancel_requested']:
+            store.finish(job, 'cancelled', 130, 'cancelled before command launch')
+            event('cancelled', 'cancelled '+job, exit_code=130)
+            return 130
         env = os.environ.copy()
         env.update(CARGO_BUILD_JOBS=str(slots), RUST_TEST_THREADS=str(slots), AGENT_BUILDS_JOB_ID=job)
         # Command arguments remain arguments: no implicit shell evaluation.
@@ -217,6 +247,9 @@ def execute(args):
                                  stdin=subprocess.DEVNULL, start_new_session=True)
         store.db.execute('UPDATE jobs SET child_pid=?,child_start=? WHERE id=?',
                          (child.pid, identity(child.pid), job))
+        if track_source:
+            source['command_started'] = True
+            store.record_source(job, source)
         sampler = JobSampler(child.pid, identity(child.pid)) if row['backend'] == 'local' else None
         last_sample = 0
         last_persist = 0
@@ -256,16 +289,21 @@ def execute(args):
                         selector.unregister(key.fileobj)
                     else:
                         log.write(chunk)
-                        try:
-                            sys.stdout.buffer.write(chunk)
-                            sys.stdout.buffer.flush()
-                        except BrokenPipeError:
-                            pass
+                        if not getattr(args, 'quiet_output', False):
+                            try:
+                                sys.stdout.buffer.write(chunk)
+                                sys.stdout.buffer.flush()
+                            except BrokenPipeError:
+                                pass
             code = child.wait()
         selector.close()
         child.stdout.close()
         if sampler is not None:
             store.record_usage(job, sampler.result(finished=True))
+        if track_source:
+            source['finish'] = capture(cwd)
+            source['changed_during_run'] = changed(source['start'], source['finish'])
+            store.record_source(job, source)
         if row['backend'] == 'docker' and not docker_stopped(row):
             store.db.execute("UPDATE jobs SET state='cancelling',reason=? WHERE id=?",
                              ('Docker outcome unknown; cancel to reconcile', job))
