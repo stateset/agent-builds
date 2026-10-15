@@ -22,7 +22,7 @@ NOTE = ('Only explicit repeatable read-only probes are polled. Exit 0 reports ex
 
 def validate(value, config):
     if not isinstance(value, dict) or set(value)-{'cwd', 'command', 'external_ref', 'read_only_probe',
-            'name', 'interval', 'timeout', 'probe_timeout', 'max_probes', 'jobs', 'memory_gb', 'resource_key', 'track_source'}:
+            'name', 'interval', 'timeout', 'probe_timeout', 'max_probes', 'jobs', 'memory_gb', 'resource_key', 'locks', 'track_source'}:
         raise ValueError('External watch contains unsupported fields')
     if value.get('read_only_probe') is not True:
         raise ValueError('Explicitly declare read_only_probe=true; submission/launch commands must never be repeated as probes')
@@ -49,6 +49,9 @@ def validate(value, config):
         if type(number) is not int or not 1<=number<=maximum:
             raise ValueError(key+' must be a positive integer within supported bounds')
         result[key] = number
+    from .locks import normalize
+    normalize(value.get('resource_key') or 'default', value.get('locks', []))
+    result['locks'] = value.get('locks', [])
     if 'resource_key' in value:
         if not isinstance(value['resource_key'], str) or not value['resource_key'] or '\0' in value['resource_key'] or len(value['resource_key'])>4096:
             raise ValueError('resource_key must be bounded nonempty text')
@@ -100,7 +103,7 @@ def get(store, handle, limit=20):
                 totals['cpu_seconds'] += usage.get('cpu_seconds',0)
                 totals['usage_measured_jobs'] += bool(usage.get('samples',0))
                 totals['usage_complete_jobs'] += usage.get('complete') is True
-                probe.update(state=data['job_state'], native_exit_code=data['native_code'], log_path=str(store.log_path(probe['job_id'])),
+                probe.update(state='queued' if data['job_state']=='held' else data['job_state'], native_exit_code=data['native_code'], log_path=str(store.log_path(probe['job_id'])),
                     reserved_cpu_slots=data['job_slots'] if data['job_state'] in ('running','cancelling') else 0,
                     semantic_result='pending' if probe['settled'] and data['job_state']=='failed' and data['native_code']==75 else
                         'completion_reported' if probe['settled'] and data['job_state']=='succeeded' and data['native_code']==0 else 'inspect_native_result')
@@ -154,7 +157,7 @@ def spawn(store, handle):
     with (store.root/'logs'/('watch-'+handle+'.log')).open('ab') as log:
         os.chmod(log.name, 0o600)
         return subprocess.Popen([sys.executable, '-m', 'agent_builds', 'watch-worker', handle],
-            env=env, stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=True)
+            cwd=str(Path(__file__).resolve().parent.parent), env=env, stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=True)
 
 
 def close_idle(store, row, now):
@@ -195,7 +198,7 @@ def prepare(store, handle):
         close_idle(store, row, now)
         key = 'watch-{}-{}'.format(handle, number)
         job = store.submit(Path(spec['cwd']), spec['command'], 'local', 'quick', spec['jobs'],
-            spec['memory_gb'], resource, '', spec['probe_timeout'], herdr=dict(external_watch_id=handle, probe_ordinal=number))
+            spec['memory_gb'], resource, '', spec['probe_timeout'], herdr=dict(external_watch_id=handle, probe_ordinal=number), locks=spec.get('locks', []))
         if source is not None:
             store.record_source(job, dict(submission=source))
         token = uuid.uuid4().hex
@@ -220,7 +223,7 @@ def dispatch(store, row, probe):
         with (store.root/'logs'/('watch-'+row['id']+'.log')).open('ab') as log:
             os.chmod(log.name, 0o600)
             return subprocess.Popen([sys.executable, '-m', 'agent_builds', 'watch-probe-worker', probe['job_id'], probe['launch_token']],
-                env=env, stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=True)
+                cwd=str(Path(__file__).resolve().parent.parent), env=env, stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=True)
     except OSError as error:
         store.finish(probe['job_id'], 'failed', 2, 'Probe worker could not launch: '+type(error).__name__+'; not retried')
 

@@ -34,6 +34,7 @@ HANDLE = string(12, pattern='^[0-9a-f]{12}$')
 KEY = dict(
     type='string', minLength=8, maxLength=128, pattern='^[A-Za-z0-9._:-]+$')
 CWD = string(description='Existing absolute working directory; commands run with this user\'s permissions.')
+LOCKS = dict(type='array', maxItems=15, items=string(), description='Additional exact resource keys acquired atomically with the primary key.')
 TAIL = dict(type='integer', minimum=1, maximum=200, default=40)
 
 
@@ -52,7 +53,7 @@ TOOLS = [
         lane=dict(type='string', enum=['quick', 'heavy'], default='quick'),
         jobs=dict(type='integer', minimum=1, maximum=64), memory_gb=dict(type='number', exclusiveMinimum=0, maximum=1024),
         timeout=dict(type='number', exclusiveMinimum=0, maximum=86400),
-        backend=dict(type='string', enum=['local', 'docker'], default='local'), image=string(), resource_key=string(),
+        backend=dict(type='string', enum=['local', 'docker'], default='local'), image=string(), resource_key=string(), locks=LOCKS,
         track_source=dict(type='boolean', default=True), min_free_gb=dict(type='number', minimum=0), scratch_gb=dict(type='number', minimum=0)),
         ('request_key', 'cwd', 'command'), read=False),
     tool('buildr_submission', 'Inspect a durable submission key after reconnecting. Does not submit, recover jobs or change state.',
@@ -83,7 +84,7 @@ TOOLS = [
         name=string(100), interval=dict(type='number',minimum=.1,maximum=3600),
         timeout=dict(type='number',minimum=.1,maximum=86400), probe_timeout=dict(type='number',minimum=.1,maximum=300),
         max_probes=dict(type='integer',minimum=1,maximum=1000),jobs=dict(type='integer',minimum=1,maximum=64),
-        memory_gb=dict(type='number',minimum=.01,maximum=1024),resource_key=string(),track_source=dict(type='boolean')),
+        memory_gb=dict(type='number',minimum=.01,maximum=1024),resource_key=string(), locks=LOCKS,track_source=dict(type='boolean')),
         ('request_key','cwd','external_ref','read_only_probe','command'), read=False),
     tool('buildr_watch', 'Inspect an external watch, bounded probe history, native exits, idle time and actual local reservations.',
         dict(watch_id=HANDLE), ('watch_id',)),
@@ -132,7 +133,7 @@ def validate(value, spec, path='arguments'):
 
 
 def compact(row):
-    fields = ('id', 'state', 'cwd', 'backend', 'lane', 'slots', 'memory_gb', 'resource_key', 'exit_code',
+    fields = ('id', 'state', 'cwd', 'backend', 'lane', 'slots', 'memory_gb', 'resource_key', 'resource_keys', 'lock_protocol', 'exit_code',
               'reason', 'wait_seconds', 'elapsed_seconds', 'log_path', 'usage', 'runner_version', 'policy_version',
               'origin', 'source', 'wait_breakdown', 'worker_budget')
     result = {key: row[key] for key in fields if key in row}

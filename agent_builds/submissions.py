@@ -100,9 +100,11 @@ def submit(name, arguments):
             if arguments.get('backend') == 'docker' and not arguments.get('image', config['docker_image']):
                 raise ValueError('Docker jobs require an explicit/configured image')
             args = parser().parse_args(['run', '--', 'placeholder'])
-            for key in ('cwd', 'lane', 'jobs', 'memory_gb', 'timeout', 'backend', 'image', 'resource_key', 'min_free_gb', 'scratch_gb'):
+            for key in ('cwd', 'lane', 'jobs', 'memory_gb', 'timeout', 'backend', 'image', 'resource_key', 'locks', 'min_free_gb', 'scratch_gb'):
                 if key in arguments:
                     setattr(args, key, arguments[key])
+            from .locks import normalize
+            normalize(args.resource_key or 'default', args.locks)
             args.lane = lane
             args.jobs, args.memory_gb = jobs, memory
             args.track_source = arguments.get('track_source', True)

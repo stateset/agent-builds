@@ -38,7 +38,9 @@ def report(store, repo=None, hours=24, limit=200, policy=None):
                 active_params+=(policy,)
                 active=[store.describe(dict(r)) for r in store.db.execute('SELECT * FROM jobs'+active_where+' ORDER BY created,id LIMIT ?',active_params+(limit,))]
                 active_counts=dict.fromkeys(active_counts,0)
-                active_counts.update({r[0]:r[1] for r in store.db.execute('SELECT state,COUNT(*) FROM jobs'+active_where+' GROUP BY state',active_params)})
+                for state, count in store.db.execute('SELECT state,COUNT(*) FROM jobs'+active_where+' GROUP BY state',active_params):
+                    key = 'queued' if state == 'held' else state
+                    active_counts[key] = active_counts.get(key, 0) + count
             where, params = store.filters(repo=repository)
             where += (' AND ' if where else ' WHERE ') + "state IN ('succeeded','failed','cancelled','lost') AND finished>=?"
             params += (cutoff,)
@@ -93,7 +95,7 @@ def report(store, repo=None, hours=24, limit=200, policy=None):
             continue
         if row['wait_seconds'] >= WAIT_SECONDS:
             current.setdefault(category(row['reason']), []).append(row)
-    actions = dict(repository_lock='Use a verification plan to sequence stages that share a checkout or output. Use independent output keys only when the outputs are actually independent.',
+    actions = dict(lock_compatibility='Wait for the named legacy job to settle; use the installed runner for new work. Multiple locks are not acquired partially.', repository_lock='Use a verification plan to sequence stages that share a checkout or output. Use independent output keys only when the outputs are actually independent.',
                    priority='Inspect the aged head and its blocker before changing aging or quick reserves; running work is not preempted.',
                    disk='Inspect agent-builds disk for the affected checkout and have the cache owner review inactive data. No caches are deleted automatically.',
                    ram_headroom='Inspect host memory use and the requested reservation before changing headroom.',
@@ -116,13 +118,13 @@ def report(store, repo=None, hours=24, limit=200, policy=None):
         # Compare only successful executions with identical reservations/argv.
         if row['state'] != 'succeeded' or row['exit_code'] != 0 or row['started'] is None:
             continue
-        key = (row['cwd'], row['resource_key'], row['command'], row['backend'], row['lane'], row['slots'], row['memory_gb'])
+        key = (row['cwd'], tuple(sorted(row['resource_keys'])), row['command'], row['backend'], row['lane'], row['slots'], row['memory_gb'])
         groups.setdefault(key, []).append(row)
     for _, jobs in sorted(groups.items()):
         if len(jobs) < MIN_SUCCESSES:
             continue
         first = jobs[0]
-        common = dict(cwd=first['cwd'], resource_key=first['resource_key'], command_display=first['command_display'],
+        common = dict(cwd=first['cwd'], resource_key=first['resource_key'], resource_keys=first['resource_keys'], command_display=first['command_display'],
                       backend=first['backend'], lane=first['lane'], slots=first['slots'], memory_gb=first['memory_gb'],
                       successful_jobs=len(jobs), job_ids=[r['id'] for r in jobs[:10]])
         durations = sorted(row['elapsed_seconds'] for row in jobs)

@@ -47,6 +47,7 @@ async def verify(output):
 
     key = 'official-sdk-'+uuid.uuid4().hex
     arguments = dict(request_key=key, cwd=str(root), lane='quick', jobs=1, memory_gb=.25,
+        resource_key='sdk-checkout', locks=['sdk-output'],
         track_source=False, command=[sys.executable, '-c', 'import time; print("official-client-fixture"); time.sleep(.2); raise SystemExit(7)'])
     async with stdio_client(parameters) as (reader, writer):
         async with ClientSession(reader, writer) as session:
@@ -73,9 +74,11 @@ async def verify(output):
             assert repeated['result']['job_id'] == handle
             result = await call(session, 'buildr_wait', dict(job_ids=[handle], timeout=5))
             assert result['complete'] and result['exit_code'] == 7
+            job = await call(session, 'buildr_job', dict(job_id=handle))
+            assert job['resource_keys'] == ['sdk-checkout', 'sdk-output']
             logs = await call(session, 'buildr_logs', dict(job_id=handle, lines=10))
             assert any('official-client-fixture' in line for line in logs['lines'])
-            manifest = dict(version=1, stages=[dict(name='verify', jobs=1, memory_gb=.25,
+            manifest = dict(version=1, stages=[dict(name='verify', jobs=1, memory_gb=.25, locks=['sdk-output'],
                 command=[sys.executable, '-c', 'print("plan verified")'])])
             assert (await call(session, 'buildr_plan_validate', dict(cwd=str(root), manifest=manifest)))['valid']
             plan_receipt = await call(session, 'buildr_plan_submit', dict(request_key=key+'-plan', cwd=str(root), manifest=manifest))
@@ -91,7 +94,7 @@ async def verify(output):
             probe=[sys.executable,'-c','import sys; from pathlib import Path; sys.exit(0 if Path({!r}).exists() else 75)'.format(str(ready))]
             watch_args=dict(request_key=key+'-watch',cwd=str(root),external_ref='fixture:official-sdk-external',
                 read_only_probe=True,command=probe,interval=3,timeout=20,probe_timeout=5,
-                max_probes=3,jobs=1,memory_gb=.25,track_source=False)
+                max_probes=3,jobs=1,memory_gb=.25,locks=['sdk-probe-output'],track_source=False)
             watch_receipt=await call(session,'buildr_watch_submit',watch_args)
             watch_handle=watch_receipt['result']['watch_id']
             repeated_watch=await call(session,'buildr_watch_submit',watch_args)
@@ -116,13 +119,28 @@ async def verify(output):
                 await asyncio.sleep(.05)
             assert watch['state']=='succeeded' and watch['probe_count']==2
             assert watch['external_idle_seconds']>1
+            # Two distinct checkouts must serialize on a shared additional key.
+            first_args=dict(request_key=key+'-lock-a',cwd=str(root),resource_key='checkout-a',
+                locks=['shared-target'],lane='quick',jobs=1,memory_gb=.25,track_source=False,
+                command=[sys.executable,'-c','import time; time.sleep(1.2)'])
+            first_lock=await call(session,'buildr_submit',first_args)
+            second_lock=await call(session,'buildr_submit',dict(first_args,request_key=key+'-lock-b',resource_key='checkout-b',
+                command=[sys.executable,'-c','print("serialized shared output")']))
+            lock_result=await call(session,'buildr_wait',dict(job_ids=[first_lock['result']['job_id'],second_lock['result']['job_id']],timeout=5))
+            assert lock_result['complete'] and lock_result['exit_code']==0
     reader = Store(state, read_only=True)
     try:
-        assert len(reader.rows()) == 5  # job, plan stage, full-budget job and two probes
+        assert len(reader.rows()) == 7  # prior five jobs plus two shared-output jobs
         other=reader.get(full_budget['result']['job_id'])
         first=reader.get(watch['probes'][0]['job_id'])
         second=reader.get(watch['probes'][1]['job_id'])
         assert first['finished']<=other['started']<=other['finished']<=second['started']
+        lock_a=reader.get(first_lock['result']['job_id'])
+        lock_b=reader.get(second_lock['result']['job_id'])
+        assert lock_b['created']<lock_a['finished'], 'Fixture failed to submit competing work while the lock was active'
+        assert lock_a['finished']<=lock_b['started']
+        assert lock_a['resource_keys']==['checkout-a','shared-target']
+        assert lock_b['resource_keys']==['checkout-b','shared-target']
     finally:
         reader.close()
     report = dict(schema='buildr-official-mcp-client-check-v1', application_version=__version__,
@@ -132,7 +150,10 @@ async def verify(output):
                 'server reconnect', 'duplicate prevention', 'native failure', 'bounded logs',
                 'plan validation', 'plan submission', 'plan completion','external pending probe',
                 'external watch duplicate prevention','full CPU budget admitted during external idle',
-                'external completion'], production_jobs_submitted=0,
+                'external completion','additional locks survive server reconnect',
+                'competing checkouts serialize on shared additional output'], production_jobs_submitted=0,
+        shared_output_locks=dict(first_job_id=lock_a['id'],second_job_id=lock_b['id'],
+            competing_submission=True,overlap=False,second_wait_seconds=lock_b['wait_seconds']),
         external_watch=dict(wall_seconds=watch['elapsed_seconds'],idle_without_reservation_seconds=watch['external_idle_seconds'],
             local_reserved_seconds=watch['accounting']['local_reserved_seconds'],probe_count=watch['probe_count'],
             full_budget_job_started_between_probes=True))

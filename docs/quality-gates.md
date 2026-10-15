@@ -15,8 +15,11 @@ tests. These gates make the next improvements reviewable:
 New scheduler code does not replace already-loaded runners. A production latency
 comparison must use recorded policy groups, comparable workloads, enough samples
 and the same budgets. A faster synthetic fixture alone does not earn an A+ grade.
-Multiple explicit output locks remain a follow-up that needs compatibility with
-old runners; this release does not claim support for them.
+Multiple explicit locks are acquired atomically with FIFO on every key. Mixed-version
+tests load the actual v0.13.0 scheduler and verify legacy draining and insertion
+guards before execution. See [resource locks](resource-locks.md). Continued real
+mixed-workload observations remain necessary; these tests do not prove an
+overall coding-productivity improvement.
 
 External completion watches now use ordinary queued probes and retain no build
 reservation during confirmed idle intervals. Gates cover cancellation races,

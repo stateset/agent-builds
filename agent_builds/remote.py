@@ -80,6 +80,8 @@ def worker_for(store, name):
 
 
 def submit(store, args):
+    if getattr(args, 'locks', None):
+        raise ValueError('Multiple locks currently require the local queue; no remote request was sent')
     worker = worker_for(store, args.worker)
     if not args.cwd.startswith('/'):
         raise ValueError('Remote checkout path must be absolute and already exist on the worker')
@@ -131,6 +133,8 @@ def serve(request):
             from .metrics import snapshot
             return dict(version=__version__, machine=snapshot(str(Path.home())), config=store.config())
         if action == 'submit':
+            if request.get('locks') or request.get('resource_keys'):
+                raise ValueError('Remote protocol 1 does not support multiple locks; nothing was submitted')
             token = request.get('request_id', '')
             if not re.fullmatch(r'[a-f0-9]{32}', token):
                 raise ValueError('Invalid submission token')

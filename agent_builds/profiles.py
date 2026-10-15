@@ -57,6 +57,10 @@ def save_task(store, args):
         raise ValueError('A shortcut requires a command')
     values = {field: getattr(args, field) for field in
               ('lane', 'backend', 'jobs', 'memory_gb', 'image', 'timeout', 'min_free_gb', 'scratch_gb', 'resource_key')}
+    from .locks import normalize
+    additional = getattr(args, 'locks', [])
+    normalize(values['resource_key'] or 'default', additional)
+    values['locks'] = additional
     values.update(command=command, cwd=str(Path(args.cwd).expanduser().resolve()), name=name(args.name))
     config = store.config()
     import math

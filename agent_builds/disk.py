@@ -38,7 +38,7 @@ def inventory(store, repo=None, extra_paths=()):
         return left == right or left in right.parents or right in left.parents
     for entry in rows:
         path = Path(entry['path'])
-        users = [r for r in active if any(overlaps(path, Path(r[k])) for k in ('cwd', 'resource_key'))]
+        users = [r for r in active if any(overlaps(path, Path(key)) for key in [r['cwd']]+r['resource_keys'] if Path(key).is_absolute())]
         if entry['kind'] == 'queue logs':
             users = active
         entry['running_jobs'] = [r['id'] for r in users if r['state'] in ('running', 'cancelling')]

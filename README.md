@@ -424,3 +424,16 @@ environment variables rather than command-line credentials.
 python3 -m unittest discover -s tests -v
 ./agent-builds doctor
 ```
+
+## v0.14.0: protect several resources together
+
+A build can now protect its checkout and shared output directories in one
+atomic admission. Repeat `buildr run --lock KEY` to add locks alongside the
+existing primary key. Saved tasks, plan stages, MCP submissions and external
+probes preserve these declarations. Queue diagnostics show every key and the
+actual conflicting keys. See [resource locks](docs/resource-locks.md) for
+examples, exact-key semantics and compatibility with older running workers.
+
+Detached workers now launch from their own package directory, so another
+checkout named `agent_builds` cannot replace the worker implementation. The
+build command still executes in the explicitly selected working directory.

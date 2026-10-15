@@ -261,6 +261,7 @@ def main(screen, cwd):
                         'Submitted from pane {} | tab {} | workspace {}'.format(
                             origin.get('pane_id', 'not captured'), origin.get('tab_id', '?'), origin.get('workspace_id', '?')),
                         'Reserved: {} CPU slots, {} GiB RAM'.format(row['slots'], row['memory_gb']),
+                        'Resource locks: ' + ', '.join(row.get('resource_keys', [row['resource_key']])),
                         'Queue worker defaults: CARGO_BUILD_JOBS={}, RUST_TEST_THREADS={}'.format(row['slots'], row['slots']),
                         'Cargo build setting: {} ({})'.format(workers['cargo_build']['configured_value'], workers['cargo_build']['source']),
                         'Rust test setting: {} ({})'.format(workers['rust_tests']['configured_value'], workers['rust_tests']['source']),

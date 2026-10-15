@@ -124,6 +124,8 @@ def submit_detached(args, receipt=None, retain_receipt=False):
                         ('image', args.image), ('resource-key', args.resource_key)]:
         if value is not None and value != '':
             command += ['--' + name, str(value)]
+    for key in getattr(args, 'locks', []):
+        command += ['--lock', key]
     if args.notify:
         command.append('--notify')
     if getattr(args, 'track_source', False):
@@ -135,7 +137,7 @@ def submit_detached(args, receipt=None, retain_receipt=False):
     try:
         with transcript.open('xb') as output:
             os.chmod(str(transcript), 0o600)
-            child = subprocess.Popen(command, env=env, stdin=subprocess.DEVNULL,
+            child = subprocess.Popen(command, cwd=root, env=env, stdin=subprocess.DEVNULL,
                                      stdout=output, stderr=output, start_new_session=True)
         deadline = time.monotonic() + 15
         while time.monotonic() < deadline:
@@ -184,7 +186,7 @@ def execute(args, prepared=None, external_probe=None):
         source = {'submission': capture(cwd)} if track_source else {}
         job = store.submit(cwd, command, args.backend, args.lane, slots, memory,
                            args.resource_key or resource_key(cwd), image, timeout,
-                           min_free_gb=args.min_free_gb, scratch_gb=args.scratch_gb)
+                           min_free_gb=args.min_free_gb, scratch_gb=args.scratch_gb, locks=getattr(args, 'locks', []))
         if source:
             store.record_source(job, source)
     if args.receipt_file:

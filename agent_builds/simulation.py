@@ -2,6 +2,7 @@
 import math
 import time
 
+from .locks import keys
 from .scheduler import POLICY_VERSION, capacity_reason, choose
 from .store import DEFAULTS
 
@@ -46,7 +47,7 @@ def replay(workload, config, backfill):
         lanes.append(dict(lane=lane, completed=len(waits),
                           wait_p95_seconds=waits[math.ceil(len(waits)*.95)-1] if waits else None,
                           max_wait_seconds=max(waits) if waits else None))
-    return dict(policy_version=POLICY_VERSION if backfill else 'quick-aging-v1', completed=len(completed),
+    return dict(policy_version=POLICY_VERSION if backfill else 'current-locks-no-backfill-model', completed=len(completed),
                 unadmitted_job_ids=[r['id'] for r in pending], lanes=lanes, admissions=admissions,
                 makespan_seconds=max((r['ends'] for r in completed), default=now)-min((r['created'] for r in workload), default=now))
 
@@ -82,7 +83,7 @@ def history(store, repo=None, hours=24, limit=100):
             skipped.append(row['id'])
             continue
         workload.append({key:row[key] for key in ('id','created','lane','slots','memory_gb','resource_key')})
-        workload[-1].update(cancel_requested=0, duration=max(.001,duration), min_free_gb=0, scratch_gb=0)
+        workload[-1].update(resource_keys=keys(row), lock_protocol=1, cancel_requested=0, duration=max(.001,duration), min_free_gb=0, scratch_gb=0)
     result = compare(workload,config)
     result.update(history_matching=count, history_sampled=len(records), history_truncated=count>len(records),
                   invalid_record_ids=skipped, hours=hours, since=cutoff, repository=str(repo) if repo else None)

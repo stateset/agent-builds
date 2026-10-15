@@ -164,3 +164,12 @@ References: [MCP stdio](https://modelcontextprotocol.io/specification/2025-11-25
 [lifecycle](https://modelcontextprotocol.io/specification/2025-11-25/basic/lifecycle),
 [tools](https://modelcontextprotocol.io/specification/2025-11-25/server/tools),
 [modern stdio fallback](https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/stdio).
+
+### Additional resource locks (v0.14)
+
+`buildr_submit` and `buildr_watch_submit` accept `locks`, an array of up to 15
+additional exact keys. These supplement `resource_key` (or its existing default)
+and are acquired atomically. Inline plan stages accept the same field.
+`buildr_job` and compact status jobs expose `resource_keys` and `lock_protocol`.
+Use exactly the same arguments, including locks, when reconnecting with a
+submission key. See [resource locks](resource-locks.md) for mixed-version behavior.

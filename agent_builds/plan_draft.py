@@ -24,7 +24,7 @@ def draft(store, jobs, cwd, inputs=None):
             raise ValueError('All draft jobs must be within the selected checkout')
         stage=dict(name='job-'+row['id'],command=row['argv'],cwd=str(location.relative_to(root)),
                    lane=row['lane'],backend=row['backend'],jobs=row['slots'],memory_gb=row['memory_gb'],
-                   timeout=row['timeout'],image=row['image'],resource_key=row['resource_key'],
+                   timeout=row['timeout'],image=row['image'],resource_key=row['resource_key'],locks=row['locks'],
                    min_free_gb=row.get('min_free_gb',0),scratch_gb=row.get('scratch_gb',0))
         stages.append(stage)
         bindings.append(dict(stage=stage['name'],job_id=row['id'],state=row['state'],

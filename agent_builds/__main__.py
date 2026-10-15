@@ -28,6 +28,7 @@ def parser():
     run.add_argument('--jobs', type=int)
     run.add_argument('--memory-gb', type=float)
     run.add_argument('--resource-key', help='Serialize jobs sharing this build output directory')
+    run.add_argument('--lock', dest='locks', action='append', default=[], help='Additional exact resource key; repeat to protect multiple outputs')
     run.add_argument('--image', default='')
     run.add_argument('--timeout', type=float)
     run.add_argument('--notify', action='store_true', help='Notify the current Herdr session on completion')
@@ -103,6 +104,7 @@ def parser():
     task_add.add_argument('--backend', choices=['local', 'docker'], default='local')
     task_add.add_argument('--jobs', type=int)
     task_add.add_argument('--resource-key', help='Explicit output-directory lock; omit to keep repository serialization')
+    task_add.add_argument('--lock', dest='locks', action='append', default=[], help='Additional exact resource key; repeat to protect multiple outputs')
     task_add.add_argument('--memory-gb', type=float)
     task_add.add_argument('--timeout', type=float)
     task_add.add_argument('--image', default='')
@@ -244,6 +246,7 @@ def parser():
     watch_start.add_argument('--jobs', type=int, default=1)
     watch_start.add_argument('--memory-gb', type=float, default=.5)
     watch_start.add_argument('--resource-key')
+    watch_start.add_argument('--lock', dest='locks', action='append', default=[], help='Additional exact resource key; repeat to protect multiple outputs')
     watch_start.add_argument('--no-track-source', action='store_true')
     watch_start.add_argument('command', nargs=argparse.REMAINDER)
     watch_list = watch_sub.add_parser('list')
@@ -287,7 +290,7 @@ def main():
                 from .submissions import submit
                 command = args.command[1:] if args.command[:1]==['--'] else args.command
                 spec = {key:getattr(args,key) for key in ('request_key','cwd','external_ref','read_only_probe','name','interval',
-                    'timeout','probe_timeout','max_probes','jobs','memory_gb','resource_key') if getattr(args,key) is not None}
+                    'timeout','probe_timeout','max_probes','jobs','memory_gb','resource_key','locks') if getattr(args,key) is not None and (key!='locks' or args.locks)}
                 result = submit('buildr_watch_submit', dict(spec, command=command, track_source=not args.no_track_source))
                 print(json.dumps(result, indent=2))
                 return 2 if result['submission_state']=='uncertain' else 0

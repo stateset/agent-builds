@@ -1,7 +1,9 @@
 """Admission ordering; callers hold the queue's SQLite write transaction."""
 import time
 
-POLICY_VERSION = 'quick-aging-backfill-v2'
+from .locks import keys, overlaps
+
+POLICY_VERSION = 'quick-aging-locks-v3'
 
 
 def capacity_reason(row, running, config, now):
@@ -32,7 +34,7 @@ def safe_backfill(head, candidate, running, config, now):
     """
     if len(running) > 8 or candidate['lane'] != 'quick' or candidate['scratch_gb']:
         return False
-    if candidate['resource_key'] == head['resource_key'] or capacity_reason(candidate, running, config, now):
+    if overlaps(candidate, head) or capacity_reason(candidate, running, config, now):
         return False
     for mask in range(1 << len(running)):
         remaining = [row for index, row in enumerate(running) if mask & (1 << index)]
@@ -43,17 +45,23 @@ def safe_backfill(head, candidate, running, config, now):
 
 def choose(queued, running, config, available_gb, disk_free, allow_backfill=True, now=None):
     now = time.time() if now is None else now
-    busy = {r['resource_key'] for r in running}
-    heads = {}
+    busy = {key for row in running for key in keys(row)}
+    seen, heads = set(), []
     for row in sorted(queued, key=lambda r: (r['created'], r['id'])):
-        if not row['cancel_requested'] and row['resource_key'] not in busy:
-            heads.setdefault(row['resource_key'], row)
+        if row['cancel_requested']:
+            continue
+        resources = set(keys(row))
+        if not resources.intersection(busy | seen):
+            heads.append(row)
+        # Even a busy or externally blocked earlier job retains FIFO on all
+        # declared keys; no partial acquisition and no lock-order deadlock.
+        seen.update(resources)
     def aged(row):
         return now - row['created'] >= config['aging_seconds']
     def priority(row):
         return (0 if aged(row) else 1 if row['lane'] == 'quick' else 2,
                 row['created'], row['id'])
-    ordered = sorted(heads.values(), key=priority)
+    ordered = sorted(heads, key=priority)
     skipped = {}
     for row in ordered:
         # An impossible or externally blocked job must not freeze other repos.

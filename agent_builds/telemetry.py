@@ -74,17 +74,17 @@ def statistics(store, repo=None, limit=1000):
     for row in rows:
         if row['state'] not in ('succeeded', 'failed', 'cancelled', 'lost'):
             continue
-        key = (row['resource_key'], row['command'], row['lane'], row['slots'], row['memory_gb'])
+        key = (row['resource_key'], tuple(sorted(row['locks'])), row['command'], row['lane'], row['slots'], row['memory_gb'])
         groups.setdefault(key, []).append(row)
     result = []
-    for (repository, _, lane, slots, memory), jobs in groups.items():
+    for (repository, extra, _, lane, slots, memory), jobs in groups.items():
         measured = [j for j in jobs if j['usage'].get('samples', 0) > 0 and j['usage'].get('sampled_peak_rss_gb', 0) > 0 and j['usage'].get('complete')]
         peak = max((j['usage']['sampled_peak_rss_gb'] for j in measured), default=None)
         waits = sorted(j['wait_seconds'] for j in jobs)
         p95 = waits[max(0, math.ceil(len(waits) * .95) - 1)]
         reserved_cpu_seconds = sum(j['slots']*j['elapsed_seconds'] for j in measured)
         observed_cpu_seconds = sum(j['usage'].get('cpu_seconds', 0) for j in measured)
-        result.append(dict(repository=repository, command_display=jobs[0]['command_display'],
+        result.append(dict(repository=repository, resource_keys=[repository]+list(extra), command_display=jobs[0]['command_display'],
             jobs=len(jobs), measured_jobs=len(measured), lane=lane, slots=slots, memory_gb=memory, wait_p50_seconds=waits[max(0, math.ceil(len(waits)*.5)-1)],
             wait_p95_seconds=p95, average_runtime_seconds=sum(j['elapsed_seconds'] for j in jobs)/len(jobs),
             sampled_peak_rss_gb=peak,

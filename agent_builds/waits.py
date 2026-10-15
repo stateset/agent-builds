@@ -12,6 +12,8 @@ def category(reason):
         return 'paused'
     if reason.startswith(('earlier job in this repository', 'repository already building')):
         return 'repository_lock'
+    if reason.startswith('legacy worker must drain'):
+        return 'lock_compatibility'
     if reason.startswith(('aged job waiting', 'higher priority queued')):
         return 'priority'
     if reason.startswith('disk below'):

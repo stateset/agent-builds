@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.14.0
+
+- Add atomic acquisition of a primary resource key and up to 15 additional
+  locks, preserving FIFO on every key and safe quick backfill. Record the
+  `quick-aging-locks-v3` scheduler policy separately from older workers.
+- Preserve mixed-version safety with held admission, legacy draining and an
+  insertion guard for old workers that cannot see active additional keys.
+- Carry locks through foreground/detached CLI runs, saved tasks, plans, drafts,
+  external probes and MCP durable requests; expose conflicting keys in diagnostics.
+- Pin background worker imports to their own package directory while retaining
+  the requested working directory for the actual command.
+
 ## 0.13.0
 
 - Add durable external completion watches with explicit repeatable read-only

@@ -12,7 +12,7 @@ import uuid
 from .metrics import snapshot
 from .budgets import worker_budget
 from .scheduler import POLICY_VERSION, choose
-from . import waits
+from . import waits, locks
 from . import __version__
 
 DEFAULTS = dict(cpu_slots=6, max_running=3, max_heavy=2, memory_gb=16,
@@ -81,9 +81,20 @@ class Store:
                                      ('policy_version', "TEXT NOT NULL DEFAULT ''"),
                                      ('source', "TEXT NOT NULL DEFAULT '{}'"),
                                      ('wait_history', "TEXT NOT NULL DEFAULT '{}'"),
-                                     ('runner_version', "TEXT NOT NULL DEFAULT ''")]:
+                                     ('runner_version', "TEXT NOT NULL DEFAULT ''"),
+                                     ('lock_protocol', 'INTEGER NOT NULL DEFAULT 0'),
+                                     ('resource_keys', "TEXT NOT NULL DEFAULT '[]'")]:
                 if name not in columns:
                     self.db.execute('ALTER TABLE jobs ADD COLUMN ' + name + ' ' + definition)
+            self.db.execute('CREATE TABLE IF NOT EXISTS job_locks (job_id TEXT NOT NULL, resource_key TEXT NOT NULL, PRIMARY KEY(job_id,resource_key))')
+            # Old workers ignore additional locks. A legacy insertion on an
+            # active extra key must fail BEFORE it creates any work or handle.
+            self.db.execute("""CREATE TRIGGER IF NOT EXISTS legacy_lock_guard
+                BEFORE INSERT ON jobs WHEN NEW.lock_protocol=0 AND EXISTS (
+                    SELECT 1 FROM job_locks l JOIN jobs j ON j.id=l.job_id
+                    WHERE j.state IN ('running','cancelling') AND j.lock_protocol=1
+                      AND l.resource_key=NEW.resource_key AND l.resource_key!=j.resource_key)
+                BEGIN SELECT RAISE(ABORT, 'Extra resource lock active; use the installed Buildr runner'); END""")
         self.db.execute('''CREATE TABLE IF NOT EXISTS announcements (
             id TEXT PRIMARY KEY, created REAL NOT NULL, expires REAL NOT NULL,
             message TEXT NOT NULL, worker_pid INTEGER, worker_start TEXT)''')
@@ -209,6 +220,12 @@ class Store:
         return self.describe(dict(row))
 
     def describe(self, row):
+        row['storage_state'] = row['state']
+        if row['state'] == 'held':
+            row['state'] = 'queued'
+        row['resource_keys'] = locks.keys(row)
+        row['locks'] = [key for key in row['resource_keys'] if key != row['resource_key']]
+        row['lock_protocol'] = row.get('lock_protocol', 0)
         row['argv'] = json.loads(row['command'])
         row['command_display'] = shlex.join(row['argv'])
         row['log_path'] = str(self.log_path(row['id']))
@@ -255,14 +272,14 @@ class Store:
             return []
         where, parameters = self.filters(active, repo)
         return [self.describe(dict(row)) for row in self.db.execute(
-            "SELECT * FROM jobs" + where + " ORDER BY CASE WHEN state IN ('running','cancelling') THEN 0 WHEN state='queued' THEN 1 ELSE 2 END, CASE WHEN state IN ('running','cancelling','queued') THEN created END ASC, created DESC LIMIT ?", parameters + (limit,))]
+            "SELECT * FROM jobs" + where + " ORDER BY CASE WHEN state IN ('running','cancelling') THEN 0 WHEN state IN ('queued','held') THEN 1 ELSE 2 END, CASE WHEN state IN ('running','cancelling','queued','held') THEN created END ASC, created DESC LIMIT ?", parameters + (limit,))]
 
     @staticmethod
     def filters(active=False, repo=None):
         clauses = []
         parameters = ()
         if active:
-            clauses.append("state IN ('queued','running','cancelling')")
+            clauses.append("state IN ('queued','held','running','cancelling')")
         if repo:
             path = str(Path(repo).expanduser().resolve())
             clauses.append('(cwd=? OR resource_key=?)')
@@ -274,12 +291,13 @@ class Store:
         if self.db is None:
             return counts
         where, parameters = self.filters(active, repo)
-        counts.update({row[0]: row[1] for row in self.db.execute(
-            'SELECT state,COUNT(*) FROM jobs' + where + ' GROUP BY state', parameters)})
+        for state, count in self.db.execute('SELECT state,COUNT(*) FROM jobs' + where + ' GROUP BY state', parameters):
+            key = 'queued' if state == 'held' else state
+            counts[key] = counts.get(key, 0) + count
         return counts
 
     def submit(self, cwd, command, backend, lane, slots, memory, resource_key,
-               image, timeout, herdr=None, min_free_gb=0, scratch_gb=0):
+               image, timeout, herdr=None, min_free_gb=0, scratch_gb=0, locks=None):
         config = self.config()
         if slots < 1 or slots > config['cpu_slots']:
             raise ValueError('Job CPU slots exceed machine budget')
@@ -293,6 +311,8 @@ class Store:
             raise ValueError('Docker jobs require --image or configured docker_image')
         if any(not math.isfinite(value) or value < 0 for value in (min_free_gb, scratch_gb)):
             raise ValueError('Disk requirements must be finite nonnegative GiB values')
+        from .locks import normalize
+        resources = normalize(resource_key, locks)
         job = uuid.uuid4().hex[:12]
         origin = {key: os.environ[name] for key, name in
                   [('pane_id', 'HERDR_PANE_ID'), ('tab_id', 'HERDR_TAB_ID'),
@@ -301,23 +321,27 @@ class Store:
                   if os.environ.get(name)}
         origin.update(herdr or {})
         created = time.time()
-        self.db.execute('''INSERT INTO jobs
-            (id,state,created,owner_pid,owner_start,cwd,command,backend,lane,
-             slots,memory_gb,resource_key,image,timeout,herdr,min_free_gb,scratch_gb,policy_version,wait_history,runner_version)
-            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
-            (job, 'queued', created, os.getpid(), identity(os.getpid()), str(cwd),
-             json.dumps(command), backend, lane, slots, memory, resource_key, image,
-             timeout, json.dumps(origin), min_free_gb, scratch_gb, POLICY_VERSION, json.dumps(waits.begin(created)), __version__))
+        # The job and all its locks become visible atomically. Prepared plan
+        # and watch jobs already hold an enclosing write transaction.
+        with contextlib.nullcontext() if self.db.in_transaction else self.transaction():
+            self.db.execute('''INSERT INTO jobs
+                (id,state,created,owner_pid,owner_start,cwd,command,backend,lane,
+                 slots,memory_gb,resource_key,image,timeout,herdr,min_free_gb,scratch_gb,policy_version,wait_history,runner_version,lock_protocol,resource_keys)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+                (job, 'held' if len(resources)>1 else 'queued', created, os.getpid(), identity(os.getpid()), str(cwd),
+                 json.dumps(command), backend, lane, slots, memory, resource_key, image,
+                 timeout, json.dumps(origin), min_free_gb, scratch_gb, POLICY_VERSION, json.dumps(waits.begin(created)), __version__, 1, json.dumps(resources)))
+            self.db.executemany('INSERT INTO job_locks VALUES (?,?)', [(job, key) for key in resources])
         return job
 
     def recover(self):
         """Never rerun work whose outcome became unknown."""
         with self.transaction():
-            rows = self.db.execute("SELECT * FROM jobs WHERE state IN ('queued','running','cancelling')").fetchall()
+            rows = self.db.execute("SELECT * FROM jobs WHERE state IN ('queued','held','running','cancelling')").fetchall()
             for row in rows:
                 if alive(row['owner_pid'], row['owner_start']):
                     continue
-                if row['backend'] == 'docker' and row['state'] != 'queued':
+                if row['backend'] == 'docker' and row['state'] not in ('queued', 'held'):
                     self.db.execute("UPDATE jobs SET reason='owner exited; cancel to reconcile Docker container' WHERE id=?", (row['id'],))
                     continue
                 # Preserve reservations while an orphaned child is still alive.
@@ -337,12 +361,14 @@ class Store:
                 return False
             running = [dict(r) for r in self.db.execute(
                 "SELECT * FROM jobs WHERE state IN ('running','cancelling')")]
-            older = self.db.execute("SELECT * FROM jobs WHERE state='queued' AND created<? AND resource_key=? AND cancel_requested=0 ORDER BY created LIMIT 1",
-                                    (row['created'], row['resource_key'])).fetchone()
+            queued = [dict(r) for r in self.db.execute("SELECT * FROM jobs WHERE state IN ('queued','held') AND cancel_requested=0 ORDER BY created,id")]
+            candidates = locks.eligible(queued)
+            legacy = next((r for r in queued if not r['lock_protocol'] and locks.overlaps(row, r)), None) if len(row['resource_keys'])>1 else None
+            older = next((r for r in candidates if (r['created'], r['id']) < (row['created'], job) and locks.overlaps(row, r)), None)
             measured = snapshot(row['cwd'])
             free_gb = min(shutil.disk_usage(row['cwd']).free, shutil.disk_usage(self.root).free) / 1024**3
             required_disk = max(config['min_free_gb'], row['min_free_gb']) + row['scratch_gb'] + sum(r['scratch_gb'] for r in running)
-            same_repo = next((r for r in running if r['resource_key'] == row['resource_key']), None)
+            same_repo = next((r for r in running if locks.overlaps(row, r)), None)
             context = dict(measured_at=time.time(), disk_free_gb=free_gb, required_free_gb=required_disk,
                            available_memory_gb=measured['available_gb'], required_memory_gb=row['memory_gb'] + config['min_available_gb'],
                            job_memory_gb=row['memory_gb'], memory_headroom_gb=config['min_available_gb'],
@@ -354,6 +380,9 @@ class Store:
             reason = ''
             if config['paused']:
                 reason = 'queue paused'
+            elif legacy:
+                reason = 'legacy worker must drain before multiple locks'
+                blocker = legacy
             elif older:
                 reason = 'earlier job in this repository'
                 blocker = dict(older)
@@ -361,7 +390,6 @@ class Store:
                 reason = 'repository already building'
                 blocker = same_repo
             else:
-                queued = [dict(r) for r in self.db.execute("SELECT * FROM jobs WHERE state='queued' AND cancel_requested=0")]
                 disk_by_device = {}
                 def disk_free(candidate):
                     path = candidate['cwd']
@@ -372,7 +400,7 @@ class Store:
                         return disk_by_device[device]
                     except OSError:
                         return 0
-                selected, skipped = choose(queued, running, config, measured['available_gb'], disk_free)
+                selected, skipped = choose(candidates, running, config, measured['available_gb'], disk_free)
                 context.update(quick_reserve_slots=config['quick_reserve_slots'], aging_seconds=config['aging_seconds'],
                                quick_reserve_jobs=config['quick_reserve_jobs'], quick_reserve_memory_gb=config['quick_reserve_memory_gb'])
                 if selected is not None and selected['id'] == job:
@@ -385,6 +413,7 @@ class Store:
                 else:
                     reason = 'waiting for scheduling capacity'
             if blocker:
+                context['conflicting_resource_keys'] = sorted(set(row['resource_keys']).intersection(locks.keys(blocker)))
                 context['blocking_job'] = {key: value for key, value in self.describe(blocker).items()
                     if key in ('id', 'command_display', 'cwd', 'elapsed_seconds', 'wait_seconds', 'age_seconds', 'log_path', 'state')}
                 reason += ' [' + blocker['id'] + ']'
@@ -409,7 +438,7 @@ class Store:
     def reservation(self, row):
         result = {key: row[key] for key in ('id', 'state', 'cwd', 'slots', 'memory_gb', 'scratch_gb')}
         command = shlex.join(json.loads(row['command']))
-        result.update(command_display=command[:180], command_truncated=len(command) > 180,
+        result.update(resource_keys=locks.keys(dict(row)), command_display=command[:180], command_truncated=len(command) > 180,
                       log_path=str(self.log_path(row['id'])), origin=json.loads(row['herdr'] or '{}'),
                       elapsed_seconds=max(0, time.time() - row['started']) if row['started'] else 0)
         return result
@@ -428,7 +457,7 @@ class Store:
             row = self.get(job)
             if row['state'] in TERMINAL:
                 return False
-            state = 'cancelling' if row['state'] != 'queued' else 'queued'
+            state = row['storage_state'] if row['state'] == 'queued' else 'cancelling'
             self.db.execute('UPDATE jobs SET cancel_requested=1,state=? WHERE id=?', (state, job))
             self._reservation_cache = None
             return True

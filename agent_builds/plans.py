@@ -41,7 +41,7 @@ def validate(definition, cwd, config):
     stages = []
     known = set()
     fields = {'name', 'command', 'after', 'cwd', 'lane', 'jobs', 'memory_gb', 'timeout', 'backend',
-              'image', 'min_free_gb', 'scratch_gb', 'resource_key', 'artifacts', 'source_policy', 'when'}
+              'image', 'min_free_gb', 'scratch_gb', 'resource_key', 'locks', 'artifacts', 'source_policy', 'when'}
     for stage in raw:
         if not isinstance(stage, dict) or set(stage) - fields:
             raise ValueError('Stage contains unsupported fields')
@@ -98,9 +98,12 @@ def validate(definition, cwd, config):
         resource = stage.get('resource_key')
         if resource is not None and (not isinstance(resource, str) or not resource or '\0' in resource):
             raise ValueError('resource_key must be nonempty text')
+        from .locks import normalize
+        additional = stage.get('locks', [])
+        normalize(resource or 'default', additional)
         stages.append(dict(name=name, command=command, after=after, cwd=str(location), lane=lane,
             backend=backend, jobs=slots, memory_gb=memory, timeout=timeout, image=image,
-            resource_key=resource, artifacts=artifacts, source_policy=source_policy, when=when, **disk))
+            resource_key=resource, locks=additional, artifacts=artifacts, source_policy=source_policy, when=when, **disk))
         known.add(name)
     graph = {s['name']: s['after'] for s in stages}
     done = set()
@@ -199,7 +202,7 @@ def spawn(store, plan):
     with path.open('ab') as log:
         os.chmod(str(path), 0o600)
         return subprocess.Popen([sys.executable, '-m', 'agent_builds', 'plan-worker', plan],
-            env=env, stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=True)
+            cwd=str(Path(__file__).resolve().parent.parent), env=env, stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=True)
 
 
 def attach_job(store, job, token):
@@ -235,7 +238,7 @@ def prepare(store, plan, stage):
             return None
         job = store.submit(Path(spec['cwd']), spec['command'], spec['backend'], spec['lane'],
             spec['jobs'], spec['memory_gb'], resource, spec['image'], spec['timeout'],
-            min_free_gb=spec['min_free_gb'], scratch_gb=spec['scratch_gb'])
+            min_free_gb=spec['min_free_gb'], scratch_gb=spec['scratch_gb'], locks=spec.get('locks', []))
         store.db.execute('UPDATE jobs SET source=? WHERE id=?', (json.dumps({'submission': plan['source']}), job))
         store.db.execute("UPDATE plan_stages SET state='launching',job_id=?,launch_token=? WHERE plan_id=? AND name=?",
                          (job, token, plan['id'], stage['name']))
@@ -349,7 +352,7 @@ def control(plan_id):
                         with (store.root/'logs'/('plan-'+plan_id+'.log')).open('ab') as log:
                             os.chmod(log.name, 0o600)
                             child = subprocess.Popen([sys.executable, '-m', 'agent_builds', 'stage-worker', job, token],
-                                env=env, stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=True)
+                                cwd=str(Path(__file__).resolve().parent.parent), env=env, stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=True)
                         children[job] = child
                     except OSError as error:
                         store.finish(job, 'failed', 2, 'stage worker could not launch: '+type(error).__name__)
