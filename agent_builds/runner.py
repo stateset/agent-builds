@@ -318,6 +318,13 @@ def execute(args, prepared=None, external_probe=None):
                                 sys.stdout.buffer.flush()
                             except BrokenPipeError:
                                 pass
+            # The leader is deliberately unreaped, so its process-group ID
+            # cannot be reused. A crashed wrapper may leave descendants with
+            # redirected output; stop those before releasing its reservation.
+            try:
+                os.killpg(child.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
             code = child.wait()
         selector.close()
         child.stdout.close()

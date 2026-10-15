@@ -53,6 +53,25 @@ class VerificationTests(unittest.TestCase):
         self.assertTrue(self.store.claim(a))
         self.assertTrue(self.store.claim(b))
 
+    def test_finite_protected_workloads_preserve_heavy_progress(self):
+        import random
+        from agent_builds.simulation import replay
+        config=dict(self.store.config(),protected_quick=True)
+        for seed in range(5):
+            rng=random.Random(seed)
+            workload=[dict(id=str(i),created=i*.1,lane=rng.choice(['quick','heavy']),slots=1,memory_gb=.25,
+                resource_key=str(i),cancel_requested=0,min_free_gb=0,scratch_gb=0,duration=rng.uniform(.1,2)) for i in range(20)]
+            result=replay(workload,config,True)
+            self.assertEqual(result['completed'],20)
+            self.assertEqual(result['unadmitted_job_ids'],[])
+
+    def test_admission_snapshot_retains_effective_mode_after_config_changes(self):
+        self.store.update_config(dict(protected_quick=True))
+        job=self.job('quick','quick')
+        self.assertTrue(self.store.claim(job))
+        self.store.update_config(dict(protected_quick=False))
+        self.assertTrue(self.store.get(job)['admission']['protected_quick'])
+
     def test_request_drains_legacy_queued_work_without_killing_or_retrying_it(self):
         old=self.job('old')
         self.store.db.execute("UPDATE jobs SET policy_version='quick-aging-locks-v3',reserve_protocol=0 WHERE id=?",(old,))
@@ -164,6 +183,16 @@ class VerificationTests(unittest.TestCase):
         row=self.launch_batch([dict(name='missing',command=['/does-not-exist-buildr']),self.check('next','print("ok")')])
         self.assertEqual(row['exit_code'],127)
         self.assertEqual(row['batch']['checks'][1]['exit_code'],0)
+
+    def test_crashed_wrapper_cannot_leave_children_running_after_reservation_release(self):
+        marker=self.root/'escaped-child'
+        child_code='import time; from pathlib import Path; time.sleep(.7); Path({!r}).touch()'.format(str(marker))
+        wrapper='import os,signal,subprocess,sys; subprocess.Popen([sys.executable,"-c",{!r}],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL); os.kill(os.getpid(),signal.SIGKILL)'.format(child_code)
+        result=subprocess.run([sys.executable,str(ROOT/'buildr'),'run','--cwd',str(self.root),'--lane','quick',
+            '--jobs','1','--memory-gb','.25','--',sys.executable,'-c',wrapper],env=self.env,capture_output=True,timeout=8)
+        self.assertEqual(result.returncode,137,result.stderr)
+        time.sleep(.9)
+        self.assertFalse(marker.exists())
 
     def test_unknown_partial_result_is_not_promoted_to_success_or_retried(self):
         row=dict(state='lost',batch=dict(complete=False,checks=[dict(name='a',state='running',exit_code=None),dict(name='b',state='pending',exit_code=None)]))

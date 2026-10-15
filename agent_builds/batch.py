@@ -117,7 +117,7 @@ def summary(row):
         return {}
     result = dict(report)
     result.update(job_state=row['state'],job_exit_code=row.get('exit_code'))
-    result['worker_exit_code'] = result.pop('exit_code',None)
+    result['worker_exit_code'] = result.pop('exit_code',result.get('worker_exit_code'))
     result['checks'] = [dict(check) for check in report['checks']]
     # A killed/lost worker cannot attest to a partially recorded check outcome.
     if not report.get('complete') and row['state'] in ('succeeded','failed','cancelled','lost'):
