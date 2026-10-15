@@ -386,5 +386,118 @@ class PlanTests(unittest.TestCase):
         self.assertEqual(json.loads(result.stdout)['schema'],'agent-builds-evidence-v1')
 
 
+    def test_always_cleanup_runs_after_failure_and_skip_preserving_original_exit(self):
+        handle=self.launch([self.stage('tests','print("failed check"); raise SystemExit(7)'),
+            self.stage('build','from pathlib import Path; Path("must-not-run").touch()'),
+            self.stage('cleanup','from pathlib import Path; Path("out").mkdir(); Path("out/cleaned").touch()',when='always')])
+        plan=self.finish(handle)
+        self.assertEqual([s['state'] for s in plan['stages']],['failed','skipped','succeeded'])
+        self.assertTrue((self.repo/'out/cleaned').exists())
+        self.assertFalse((self.repo/'must-not-run').exists())
+        self.assertEqual(plan['exit_code'],7)
+
+    def test_global_cancel_does_not_dispatch_always_cleanup(self):
+        self.store.update_config({'paused':True})
+        handle=self.launch([self.stage('tests'),self.stage('cleanup','from pathlib import Path; Path("must-not-run").touch()',when='always')])
+        self.observe(handle,lambda p:p['stages'][0]['job'] is not None)
+        plans.cancel(self.store,handle)
+        plan=self.finish(handle)
+        self.assertEqual(plan['state'],'cancelled')
+        self.assertIsNone(plan['stages'][1]['job_id'])
+        self.assertFalse((self.repo/'must-not-run').exists())
+
+    def test_cleanup_waits_for_all_prerequisites_and_retains_verification_failure(self):
+        handle=self.launch([self.stage('artifact','print("command succeeded")',artifacts=['missing.json']),
+            self.stage('cleanup','print("cleanup ran")',when='always')])
+        plan=self.finish(handle)
+        self.assertEqual(plan['exit_code'],1)
+        self.assertEqual(plan['stages'][0]['job']['exit_code'],0)
+        self.assertEqual(plan['stages'][1]['state'],'succeeded')
+        self.assertGreaterEqual(plan['stages'][1]['job']['started'],plan['stages'][0]['job']['finished'])
+
+    def test_invalid_stage_condition_is_rejected(self):
+        with self.assertRaises(ValueError):
+            self.create([self.stage('bad',when='sometimes')])
+
+    def test_compact_summary_preserves_verification_failure_and_failure_tail(self):
+        from agent_builds.plan_output import summary
+        handle=self.launch([self.stage('report','print("first line"); print("last line")',artifacts=['missing.json'])])
+        plan=self.finish(handle)
+        result=summary(plan,1)
+        self.assertEqual(result['exit_code'],1)
+        self.assertEqual(result['stages'][0]['command_exit_code'],0)
+        self.assertTrue(result['verification_failed_after_command_success'])
+        self.assertEqual(result['stages'][0]['log_tail'],['last line'])
+        self.assertEqual(result['stages'][0]['artifact_issues'][0]['status'],'missing')
+        self.assertLess(len(json.dumps(result)),len(json.dumps(plan)))
+        self.assertNotIn('definition',result)
+
+    def test_summary_wait_timeout_is_read_only_and_keeps_exit_124(self):
+        handle=self.create([self.stage('waiting')])
+        before=plans.get(self.store,handle)
+        result=self.cli('plan','wait',handle,'--summary','--json','--timeout','.03','--tail','2')
+        self.assertEqual(result.returncode,124,result.stderr)
+        payload=json.loads(result.stdout)
+        self.assertTrue(payload['timed_out'])
+        self.assertEqual(payload['plan']['schema'],'agent-builds-plan-summary-v1')
+        self.assertIsNone(payload['plan']['exit_code'])
+        self.assertEqual(plans.get(self.store,handle)['state'],before['state'])
+
+    def test_summary_cli_show_list_and_full_report_compatibility(self):
+        handle=self.launch([self.stage('tests')])
+        self.finish(handle)
+        shown=self.cli('plan','show',handle,'--summary','--json')
+        self.assertEqual(json.loads(shown.stdout)['schema'],'agent-builds-plan-summary-v1')
+        full=json.loads(self.cli('plan','show',handle,'--json').stdout)
+        self.assertIn('definition',full)
+        listed=json.loads(self.cli('plan','list','--summary','--json','--limit','1').stdout)
+        self.assertEqual(listed[0]['id'],handle)
+        self.assertEqual(self.cli('plan','show',handle,'--tail','1').returncode,2)
+        self.assertEqual(self.cli('plan','show',handle,'--summary','--tail','201').returncode,2)
+
+    def test_draft_keeps_literal_commands_and_observes_harness_only_now(self):
+        from agent_builds.plan_draft import draft
+        handle=self.launch([self.stage('tests','print("literal $value")')])
+        plan=self.finish(handle)
+        job=plan['stages'][0]['job_id']
+        script=self.root/'harness.sh'
+        script.write_text('echo original\n')
+        before=len(self.store.rows())
+        result=draft(self.store,[job,job],self.repo,[str(script)])
+        self.assertFalse(result['commands_submitted'])
+        self.assertEqual(len(result['manifest']['stages']),1)
+        self.assertEqual(result['manifest']['stages'][0]['command'],plan['stages'][0]['job']['argv'])
+        self.assertEqual(result['input_observations'][0]['sha256'],hashlib.sha256(script.read_bytes()).hexdigest())
+        self.assertEqual(result['input_observations'][0]['observation_scope'],'draft_creation_only')
+        self.assertEqual(len(self.store.rows()),before)
+        script.write_text('echo changed\n')
+        self.assertNotEqual(draft(self.store,[job],self.repo,[str(script)])['input_observations'][0]['sha256'],result['input_observations'][0]['sha256'])
+
+    def test_draft_cli_writes_exclusive_runnable_manifest_without_reexecuting(self):
+        handle=self.launch([self.stage('tests')])
+        plan=self.finish(handle)
+        job=plan['stages'][0]['job_id']
+        output=self.root/'draft.json'
+        before=len(self.store.rows())
+        result=self.cli('plan','draft',job,'--cwd',str(self.repo),'--output',str(output))
+        self.assertEqual(result.returncode,0,result.stderr)
+        plans.read_manifest(output,self.repo,self.store.config())
+        self.assertEqual(output.stat().st_mode&0o777,0o600)
+        self.assertEqual(self.cli('plan','draft',job,'--cwd',str(self.repo),'--output',str(output)).returncode,2)
+        self.assertEqual(len(self.store.rows()),before)
+
+    def test_draft_rejects_jobs_outside_selected_checkout(self):
+        from agent_builds.plan_draft import draft
+        job=self.store.submit(self.root,['true'],'local','quick',1,.25,'elsewhere','',5)
+        with self.assertRaises(ValueError):
+            draft(self.store,[job],self.repo)
+
+    def test_prepared_worker_records_its_loaded_version(self):
+        from agent_builds import __version__
+        handle=self.launch([self.stage('tests')])
+        plan=self.finish(handle)
+        self.assertEqual(plan['stages'][0]['job']['runner_version'],__version__)
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -1,5 +1,10 @@
 # Agent Builds
 
+Use `group create JOB...` to observe existing work under one handle,
+`plan draft JOB... --cwd PATH` to prepare a future verification plan, and
+`plan wait PLAN --summary --json` for compact results. See
+[job workflows](docs/job-workflows.md) for cleanup stages and policy-aware advice.
+
 Use `agent-builds advise` (or `h` in the full TUI) for evidence-based queue and
 reservation findings. `agent-builds simulate --fixture` compares conservative
 quick backfill with the prior policy without executing commands or changing

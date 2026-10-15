@@ -144,6 +144,11 @@ def main(screen, cwd):
     advice_result = None
     advice_offset = 0
     last_advice = 0
+    group_rows = []
+    group_index = 0
+    group_id = None
+    group_offset = 0
+    last_groups = 0
     def scan_disk(repository):
         from .disk import inventory
         reader = Store(store.root, read_only=True)
@@ -172,6 +177,13 @@ def main(screen, cwd):
                 plan_index = next((i for i, p in enumerate(plan_rows) if p['id'] == plan_id), min(plan_index, max(0, len(plan_rows)-1)))
                 plan_id = plan_rows[plan_index]['id'] if plan_rows else None
                 last_plans = time.monotonic()
+            if view == 9 and time.monotonic()-last_groups >= 1:
+                from .groups import listing
+                with store.read_snapshot():
+                    group_rows=listing(store,limit=20)
+                group_index=next((i for i,g in enumerate(group_rows) if g['id']==group_id),min(group_index,max(0,len(group_rows)-1)))
+                group_id=group_rows[group_index]['id'] if group_rows else None
+                last_groups=time.monotonic()
             active = [r for r in rows if r['state'] in ('running', 'cancelling')]
             screen.erase()
             height, width = screen.getmaxyx()
@@ -304,6 +316,18 @@ def main(screen, cwd):
                     lines += ['Old queue logs: agent-builds clean (preview); --apply deletes eligible logs.']
                     for index, line in enumerate(lines[:max(1, height - log_top - 3)]):
                         paint(screen, log_top + index, 0, line)
+                elif view == 9:
+                    paint(screen,log_top-1,0,'EXISTING JOB GROUPS | arrows select | Enter opens a job log | e exports evidence',curses.A_BOLD)
+                    lines=['Create with: agent-builds group create JOB... --name NAME']
+                    if group_rows:
+                        group=group_rows[group_index]
+                        lines=['{} {} | {}'.format(group['id'],group['state'],group['name']),
+                               'Native job outcomes only; grouping never resubmits work or imposes dependencies.']
+                        lines += ['{} {} | exit {} | waited {:.1f}s | ran {:.1f}s'.format(j['id'],j['state'],j['exit_code'],j['wait_seconds'],j['elapsed_seconds']) for j in group['jobs']]
+                    visible=max(1,height-log_top-3)
+                    group_offset=min(max(0,group_offset),max(0,len(lines)-visible))
+                    for index,line in enumerate(lines[group_offset:group_offset+visible]):
+                        paint(screen,log_top+index,0,line)
                 elif view == 8:
                     from .advice import report, lines as advice_lines
                     if advice_result is None or time.monotonic()-last_advice >= 2:
@@ -370,9 +394,16 @@ def main(screen, cwd):
             if view == 8 and not compact and key not in (ord('j'), ord('k'), curses.KEY_DOWN, curses.KEY_UP,
                                                        curses.KEY_NPAGE, curses.KEY_PPAGE, ord('v'), ord('h')):
                 continue
+            if view == 9 and not compact and key not in (ord('j'),ord('k'),curses.KEY_DOWN,curses.KEY_UP,
+                curses.KEY_NPAGE,curses.KEY_PPAGE,ord('v'),ord('h'),ord('e'),10,13,curses.KEY_ENTER):
+                continue
             selected_id = rows[selected]['id'] if rows else None
             if key in (ord('j'), curses.KEY_DOWN):
-                if view == 8 and not compact:
+                if view == 9 and not compact:
+                    group_index=min(group_index+1,max(0,len(group_rows)-1))
+                    group_id=group_rows[group_index]['id'] if group_rows else None
+                    group_offset=0
+                elif view == 8 and not compact:
                     advice_offset += 1
                 elif view == 7:
                     plan_index = min(plan_index+1, max(0, len(plan_rows)-1))
@@ -382,7 +413,11 @@ def main(screen, cwd):
                     selected = min(selected + 1, max(0, len(rows) - 1))
                     selected_id = rows[selected]['id'] if rows else None
             elif key in (ord('k'), curses.KEY_UP):
-                if view == 8 and not compact:
+                if view == 9 and not compact:
+                    group_index=max(0,group_index-1)
+                    group_id=group_rows[group_index]['id'] if group_rows else None
+                    group_offset=0
+                elif view == 8 and not compact:
                     advice_offset = max(0, advice_offset-1)
                 elif view == 7:
                     plan_index = max(0, plan_index-1)
@@ -392,12 +427,33 @@ def main(screen, cwd):
                     selected = max(0, selected - 1)
                     selected_id = rows[selected]['id'] if rows else None
             elif key == ord('v'):
-                view = (0 if view == 7 else 7) if compact else (view + 1) % 9
+                view = (0 if view == 7 else 7) if compact else (view + 1) % 10
             elif key == ord('h'):
                 view = 0 if view == 8 else 8
                 advice_offset, last_advice = 0, 0
             elif view == 8 and key in (curses.KEY_NPAGE, curses.KEY_PPAGE):
                 advice_offset += max(1, height-10)*(1 if key == curses.KEY_NPAGE else -1)
+            elif view == 9 and key in (curses.KEY_NPAGE,curses.KEY_PPAGE):
+                group_offset+=max(1,height-10)*(1 if key==curses.KEY_NPAGE else -1)
+            elif view == 9 and group_rows and key==ord('e'):
+                from .groups import export
+                from .plans import write_export
+                try:
+                    path=prompt(screen,'New group evidence JSON file','/tmp/agent-builds-group-'+group_rows[group_index]['id']+'.json')
+                    if path:
+                        write_export(path,export(store,group_rows[group_index]['id']))
+                        message='Group evidence exported to '+path
+                except (ValueError,OSError) as error:
+                    message='Group export failed: '+str(error)
+            elif view == 9 and group_rows and key in (10,13,curses.KEY_ENTER):
+                jobs=group_rows[group_index]['jobs']
+                targets=[j for j in jobs if j['state'] not in TERMINAL]+[j for j in jobs if j['state'] in ('failed','lost')]+list(reversed(jobs))
+                if targets:
+                    target=next((i for i,row in enumerate(rows) if row['id']==targets[0]['id']),None)
+                    if target is not None:
+                        selected,selected_id,view=target,targets[0]['id'],0
+                    else:
+                        message='Job log: agent-builds logs '+targets[0]['id']
             elif key == ord('o') and height >= 15 and width >= 65:
                 try:
                     from .plans import create, read_manifest, spawn as spawn_plan

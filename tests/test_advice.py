@@ -192,3 +192,42 @@ class AdviceTests(unittest.TestCase):
                 '--hours','24','--limit','10']+extra,env=self.env,stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=8)
             self.assertEqual(result.returncode,0,result.stderr)
             self.assertIn(b'long_quick_command',result.stdout)
+
+    def test_cohorts_separate_policy_version_and_wait_instrumentation(self):
+        from agent_builds import __version__
+        first=self.completed()
+        second=self.completed()
+        self.store.db.execute("UPDATE jobs SET policy_version='old-policy',runner_version='',wait_history='{}' WHERE id=?",(first,))
+        self.store.db.execute("UPDATE jobs SET runner_version=?,wait_history=? WHERE id=?",(__version__,json.dumps(dict(version=1,last_at=self.now-125,current_category='paused',current_blocker=None,seconds={'paused':100},transitions=[],transition_count=0)),second))
+        result=report(self.store)
+        self.assertEqual(len(result['cohorts']),2)
+        old=next(c for c in result['cohorts'] if c['policy_version']=='old-policy')
+        self.assertEqual(old['runner_version'],'unrecorded')
+        self.assertEqual(old['wait_instrumentation'],'unrecorded')
+        self.assertEqual(old['coverage'],0)
+        new=next(c for c in result['cohorts'] if c['policy_version']!='old-policy')
+        self.assertEqual(new['runner_version'],__version__)
+        self.assertEqual(new['wait_instrumentation'],'recorded')
+
+    def test_policy_filter_applies_to_counts_samples_and_findings(self):
+        first=self.completed()
+        self.store.db.execute("UPDATE jobs SET policy_version='older' WHERE id=?",(first,))
+        current=self.completed()
+        active=self.job()
+        self.store.db.execute("UPDATE jobs SET policy_version='older' WHERE id=?",(active,))
+        result=report(self.store,policy='current')
+        self.assertEqual(result['history_matching'],1)
+        self.assertEqual(result['active_counts']['queued'],0)
+        self.assertEqual(len(result['cohorts']),1)
+        self.assertNotEqual(result['cohorts'][0]['policy_version'],'older')
+        result=report(self.store,policy='older')
+        self.assertEqual(result['history_matching'],1)
+        self.assertEqual(result['active_counts']['queued'],1)
+
+    def test_tiny_checks_get_one_slot_trial_without_unproven_memory_cut(self):
+        for _ in range(3):
+            self.completed(duration=.5,measured=False)
+        result=report(self.store)
+        finding=next(f for f in result['findings'] if f['code']=='tiny_check_trial')
+        self.assertEqual(finding['suggested_trial'],{'jobs':1})
+        self.assertNotIn('memory_trial',self.codes(result))

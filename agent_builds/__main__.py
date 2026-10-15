@@ -79,6 +79,7 @@ def parser():
     advise.add_argument('--hours', type=float, default=24)
     advise.add_argument('--limit', type=int, default=200)
     advise.add_argument('--json', action='store_true')
+    advise.add_argument('--policy', help='Filter by recorded scheduler policy; current selects the loaded policy')
     simulate = sub.add_parser('simulate', help='Compare reservation policies without executing commands or changing state')
     simulate.add_argument('--repo')
     simulate.add_argument('--hours', type=float, default=24)
@@ -153,13 +154,25 @@ def parser():
         plan_action.add_argument('--cwd', default=os.getcwd())
         if action == 'run':
             plan_action.add_argument('--wait', action='store_true')
+            plan_action.add_argument('--summary', action='store_true')
+            plan_action.add_argument('--tail', type=int, default=0)
     plan_list = plan_sub.add_parser('list')
     plan_list.add_argument('--active', action='store_true')
     plan_list.add_argument('--json', action='store_true')
+    plan_list.add_argument('--summary', action='store_true')
+    plan_list.add_argument('--limit', type=int, default=50)
+    draft = plan_sub.add_parser('draft', help='Draft a reviewable plan from existing jobs without executing it')
+    draft.add_argument('jobs', nargs='+')
+    draft.add_argument('--cwd', default=os.getcwd())
+    draft.add_argument('--output')
+    draft.add_argument('--capture-input', action='append', default=[], help='Fingerprint an explicitly named file now; not historical evidence')
     for action in ('show', 'wait', 'cancel', 'resume', 'export'):
         plan_action = plan_sub.add_parser(action)
         plan_action.add_argument('plan')
         plan_action.add_argument('--json', action='store_true')
+        if action in ('show', 'wait'):
+            plan_action.add_argument('--summary', action='store_true')
+            plan_action.add_argument('--tail', type=int, default=0)
         if action == 'wait':
             plan_action.add_argument('--timeout', type=float)
         if action == 'export':
@@ -175,6 +188,23 @@ def parser():
     stage_worker.add_argument('token')
     worker = sub.add_parser('announce-worker', help=argparse.SUPPRESS)
     worker.add_argument('announcement')
+    groups = sub.add_parser('group', help='Observe existing job handles under one durable handle; never resubmit them')
+    group_sub = groups.add_subparsers(dest='group_action', required=True)
+    group_create = group_sub.add_parser('create')
+    group_create.add_argument('jobs', nargs='+')
+    group_create.add_argument('--name', default='verification group')
+    group_list = group_sub.add_parser('list')
+    group_list.add_argument('--limit', type=int, default=50)
+    group_list.add_argument('--json', action='store_true')
+    for action in ('show','wait','export'):
+        command = group_sub.add_parser(action)
+        command.add_argument('group')
+        command.add_argument('--json', action='store_true')
+        if action=='wait':
+            command.add_argument('--timeout', type=float)
+            command.add_argument('--tail', type=int, default=0)
+        if action=='export':
+            command.add_argument('--output')
     return root
 
 
@@ -208,12 +238,51 @@ def main():
             or (args.action == 'clean' and not args.apply)
             or (args.action == 'task' and args.task_action == 'list')
             or (args.action == 'worker' and args.worker_action != 'add')
-            or (args.action == 'plan' and args.plan_action in ('list', 'show', 'wait', 'logs', 'validate', 'export'))
+            or (args.action == 'group' and args.group_action != 'create')
+            or (args.action == 'plan' and args.plan_action in ('list', 'show', 'wait', 'logs', 'validate', 'export', 'draft'))
             or (args.action == 'remote' and args.remote_action in ('list', 'show', 'logs', 'status')))
         store = Store(read_only=inspection)
         try:
+            if args.action == 'group':
+                from . import groups
+                if args.group_action=='create':
+                    handle=groups.create(store,args.jobs,args.name)
+                    print(json.dumps(dict(group_id=handle,state='observing existing jobs; no commands submitted')))
+                    return 0
+                if args.group_action=='list':
+                    with store.read_snapshot():
+                        result=groups.listing(store,args.limit)
+                    print(json.dumps(result,indent=2))
+                    return 0
+                if args.group_action=='wait':
+                    result=groups.wait(store,args.group,args.timeout,args.tail)
+                elif args.group_action=='export':
+                    result=groups.export(store,args.group)
+                    if args.output:
+                        from .plans import write_export
+                        write_export(args.output,result)
+                        print(str(Path(args.output).expanduser().absolute()))
+                        return 0
+                else:
+                    with store.read_snapshot():
+                        result=groups.get(store,args.group)
+                print(json.dumps(result,indent=2) if args.json or args.group_action=='export' else '\n'.join(groups.text(result)))
+                return result['exit_code'] if args.group_action=='wait' else 0
             if args.action == 'plan':
                 from . import plans
+                from .plan_output import compact, text as summary_text, validate_tail
+                if args.plan_action=='draft':
+                    from .plan_draft import draft
+                    result=draft(store,args.jobs,args.cwd,args.capture_input)
+                    if args.output:
+                        plans.write_export(args.output,result['manifest'])
+                        result['output_path']=str(Path(args.output).expanduser().absolute())
+                    print(json.dumps(result,indent=2))
+                    return 0
+                if getattr(args, 'summary', False) or getattr(args, 'tail', 0):
+                    validate_tail(getattr(args, 'tail', 0))
+                if getattr(args, 'tail', 0) and not getattr(args, 'summary', False):
+                    raise ValueError('--tail requires --summary')
                 if args.plan_action in ('run', 'validate'):
                     definition = plans.read_manifest(args.manifest, args.cwd, store.config())
                     if args.plan_action == 'validate':
@@ -224,11 +293,16 @@ def main():
                     print(json.dumps(dict(plan_id=handle, state='submitted', stages=len(definition['stages']))), flush=True)
                     if args.wait:
                         result = plans.wait(store, handle)
+                        if args.summary:
+                            result = compact(result, args.tail)
                         print(json.dumps(result, indent=2))
                         return result['exit_code']
                     return 0
                 if args.plan_action == 'list':
-                    result = plans.listing(store, args.active)
+                    if not 1 <= args.limit <= 200:
+                        raise ValueError('Plan list limit must be between 1 and 200')
+                    with store.read_snapshot():
+                        result = plans.listing(store, args.active, args.limit)
                 elif args.plan_action == 'show':
                     with store.read_snapshot():
                         result = plans.get(store, args.plan)
@@ -254,9 +328,14 @@ def main():
                     args.job = stage['job_id']
                     args.action = 'logs'
                 if args.action == 'plan':
+                    if getattr(args, 'summary', False):
+                        result = compact(result, getattr(args, 'tail', 0))
                     if args.json or args.plan_action in ('export', 'list'):
                         print(json.dumps(result, indent=2))
                     else:
+                        if getattr(args, 'summary', False):
+                            print('\n'.join(summary_text(result)))
+                            return result['exit_code'] if args.plan_action == 'wait' else 0
                         current = result.get('plan', result)
                         if 'stages' in current:
                             print('{} {} | {}'.format(current['id'], current['state'], current['name']))
@@ -308,7 +387,7 @@ def main():
                     print(result['note'])
             elif args.action == 'advise':
                 from .advice import report, lines
-                result = report(store, args.repo, args.hours, args.limit)
+                result = report(store, args.repo, args.hours, args.limit, args.policy)
                 print(json.dumps(result, indent=2) if args.json else '\n'.join(lines(result)))
             elif args.action == 'stats':
                 from .telemetry import statistics

@@ -13,6 +13,7 @@ from .metrics import snapshot
 from .budgets import worker_budget
 from .scheduler import POLICY_VERSION, choose
 from . import waits
+from . import __version__
 
 DEFAULTS = dict(cpu_slots=6, max_running=3, max_heavy=2, memory_gb=16,
                 min_free_gb=10, quick_jobs=2, heavy_jobs=3, nice=10,
@@ -79,7 +80,8 @@ class Store:
                                      ('usage', "TEXT NOT NULL DEFAULT '{}'"),
                                      ('policy_version', "TEXT NOT NULL DEFAULT ''"),
                                      ('source', "TEXT NOT NULL DEFAULT '{}'"),
-                                     ('wait_history', "TEXT NOT NULL DEFAULT '{}'")]:
+                                     ('wait_history', "TEXT NOT NULL DEFAULT '{}'"),
+                                     ('runner_version', "TEXT NOT NULL DEFAULT ''")]:
                 if name not in columns:
                     self.db.execute('ALTER TABLE jobs ADD COLUMN ' + name + ' ' + definition)
         self.db.execute('''CREATE TABLE IF NOT EXISTS announcements (
@@ -91,6 +93,8 @@ class Store:
             detail TEXT, updated REAL NOT NULL,
             PRIMARY KEY (announcement_id,pane))''')
         with self.transaction():
+            self.db.execute('''CREATE TABLE IF NOT EXISTS job_groups (
+                id TEXT PRIMARY KEY, name TEXT NOT NULL, created REAL NOT NULL, jobs TEXT NOT NULL)''')
             self.db.execute('''CREATE TABLE IF NOT EXISTS plans (
                 id TEXT PRIMARY KEY, name TEXT NOT NULL, cwd TEXT NOT NULL, definition TEXT NOT NULL,
                 created REAL NOT NULL, finished REAL, state TEXT NOT NULL, reason TEXT NOT NULL DEFAULT '',
@@ -197,6 +201,7 @@ class Store:
         row['origin'] = json.loads(row.get('herdr') or '{}')
         row['usage'] = json.loads(row.get('usage') or '{}')
         row['source'] = json.loads(row.get('source') or '{}')
+        row['runner_version'] = row.get('runner_version') or 'unrecorded'
         row['worker_budget'] = worker_budget(row['argv'], row['slots'])
         if row['state'] == 'queued' and row['wait_context']:
             observed = self.reservation_snapshot()
@@ -283,11 +288,11 @@ class Store:
         created = time.time()
         self.db.execute('''INSERT INTO jobs
             (id,state,created,owner_pid,owner_start,cwd,command,backend,lane,
-             slots,memory_gb,resource_key,image,timeout,herdr,min_free_gb,scratch_gb,policy_version,wait_history)
-            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+             slots,memory_gb,resource_key,image,timeout,herdr,min_free_gb,scratch_gb,policy_version,wait_history,runner_version)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
             (job, 'queued', created, os.getpid(), identity(os.getpid()), str(cwd),
              json.dumps(command), backend, lane, slots, memory, resource_key, image,
-             timeout, json.dumps(origin), min_free_gb, scratch_gb, POLICY_VERSION, json.dumps(waits.begin(created))))
+             timeout, json.dumps(origin), min_free_gb, scratch_gb, POLICY_VERSION, json.dumps(waits.begin(created)), __version__))
         return job
 
     def recover(self):

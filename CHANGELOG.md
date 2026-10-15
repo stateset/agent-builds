@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.10.0
+
+- Group already-submitted jobs under one durable observation handle without
+  dispatching, retrying, cancelling or inventing dependency guarantees.
+- Add compact plan summaries with native/verification exit distinctions,
+  bounded failure tails and preserved read-only wait/timeout behavior.
+- Draft reviewable plans from existing argv and reservations; optionally record
+  explicit harness hashes as present-time observations, never historic evidence.
+- Add `when: always` cleanup stages after settled prerequisites while preserving
+  original failures, global cancellation and uncertain-result reservations.
+- Split advisor history by policy, loaded runner version, instrumentation and
+  lane; add consistent policy filtering and optional tiny-check CPU trials.
+- Add the existing-job group dashboard view and document migration workflows.
+
 ## 0.9.0
 
 - Add a read-only queue advisor with evidence-linked lane, memory and CPU trials,

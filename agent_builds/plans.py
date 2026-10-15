@@ -41,7 +41,7 @@ def validate(definition, cwd, config):
     stages = []
     known = set()
     fields = {'name', 'command', 'after', 'cwd', 'lane', 'jobs', 'memory_gb', 'timeout', 'backend',
-              'image', 'min_free_gb', 'scratch_gb', 'resource_key', 'artifacts', 'source_policy'}
+              'image', 'min_free_gb', 'scratch_gb', 'resource_key', 'artifacts', 'source_policy', 'when'}
     for stage in raw:
         if not isinstance(stage, dict) or set(stage) - fields:
             raise ValueError('Stage contains unsupported fields')
@@ -89,6 +89,9 @@ def validate(definition, cwd, config):
         source_policy = stage.get('source_policy', policy)
         if source_policy not in ('report', 'require_unchanged'):
             raise ValueError('Invalid stage source policy')
+        when = stage.get('when','success')
+        if when not in ('success','always'):
+            raise ValueError('Stage when must be success or always')
         image = stage.get('image', config['docker_image'])
         if not isinstance(image, str) or (backend == 'docker' and (not image or ',' in str(location))):
             raise ValueError('Docker stages require an image and a supported bind path')
@@ -97,7 +100,7 @@ def validate(definition, cwd, config):
             raise ValueError('resource_key must be nonempty text')
         stages.append(dict(name=name, command=command, after=after, cwd=str(location), lane=lane,
             backend=backend, jobs=slots, memory_gb=memory, timeout=timeout, image=image,
-            resource_key=resource, artifacts=artifacts, source_policy=source_policy, **disk))
+            resource_key=resource, artifacts=artifacts, source_policy=source_policy, when=when, **disk))
         known.add(name)
     graph = {s['name']: s['after'] for s in stages}
     done = set()
@@ -200,6 +203,8 @@ def spawn(store, plan):
 
 
 def attach_job(store, job, token):
+    from . import __version__
+    from .scheduler import POLICY_VERSION
     with store.transaction():
         stage = store.db.execute('SELECT * FROM plan_stages WHERE job_id=?', (job,)).fetchone()
         if stage is None or stage['launch_token'] != token or stage['attached']:
@@ -208,7 +213,8 @@ def attach_job(store, job, token):
         if row['state'] != 'queued':
             raise ValueError('Prepared stage outcome changed; work will not be retried')
         store.db.execute('UPDATE plan_stages SET attached=1 WHERE job_id=?', (job,))
-        store.db.execute('UPDATE jobs SET owner_pid=?,owner_start=? WHERE id=?', (os.getpid(), identity(os.getpid()), job))
+        store.db.execute('UPDATE jobs SET owner_pid=?,owner_start=?,runner_version=?,policy_version=? WHERE id=?',
+                         (os.getpid(), identity(os.getpid()), __version__, POLICY_VERSION, job))
     definition = json.loads(stage['definition'])
     return Namespace(cwd=row['cwd'], command=row['argv'], lane=row['lane'], backend=row['backend'],
         jobs=row['slots'], memory_gb=row['memory_gb'], timeout=row['timeout'], image=row['image'],
@@ -326,11 +332,12 @@ def control(plan_id):
                     continue
                 dependencies = stage['definition']['after']
                 failed = [d for d in dependencies if states[d] in STAGE_TERMINAL and states[d] != 'succeeded']
-                if plan['cancel_requested'] or failed:
+                always = stage['definition'].get('when','success')=='always'
+                if plan['cancel_requested'] or (failed and not always):
                     state = 'cancelled' if plan['cancel_requested'] else 'skipped'
                     reason = 'plan cancelled before stage submission' if plan['cancel_requested'] else 'prerequisite did not succeed: '+', '.join(failed)
                     store.db.execute('UPDATE plan_stages SET state=?,reason=? WHERE plan_id=? AND name=?', (state, reason, plan_id, stage['name']))
-                elif all(states[d] == 'succeeded' for d in dependencies) and active < plan['definition']['max_parallel']:
+                elif all(states[d] in STAGE_TERMINAL if always else states[d]=='succeeded' for d in dependencies) and active < plan['definition']['max_parallel']:
                     prepared = prepare(store, plan, stage)
                     if prepared is None:
                         continue
