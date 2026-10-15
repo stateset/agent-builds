@@ -25,8 +25,8 @@ def validate(value):
         raise ValueError('Batch requires 1 to 32 foreground checks')
     names, result = set(), []
     for check in checks:
-        if not isinstance(check,dict) or set(check)!={'name','command'}:
-            raise ValueError('Each check needs only name and literal command argv')
+        if not isinstance(check,dict) or set(check)-{'name','command','jobs'} or not {'name','command'}<=set(check):
+            raise ValueError('Each check needs name, literal command argv and optional jobs')
         name = check['name']
         if not isinstance(name,str):
             raise ValueError('Check name must be text')
@@ -38,7 +38,15 @@ def validate(value):
         if not isinstance(argv,list) or not argv or not argv[0] or len(argv)>128 or any(
                 not isinstance(arg,str) or '\0' in arg or len(arg)>4096 for arg in argv):
             raise ValueError('Check command must be a bounded nonempty argv array')
-        result.append(dict(name=name,command=argv))
+        item=dict(name=name,command=argv)
+        if 'jobs' in check:
+            if type(check['jobs']) is not int or not 1<=check['jobs']<=64:
+                raise ValueError('Check jobs must be an integer from 1 to 64')
+            item['jobs']=check['jobs']
+        result.append(item)
+    if any('jobs' in check for check in result):
+        for check in result:
+            check.setdefault('jobs',1)
     value = dict(version=1,checks=result,keep_going=value.get('keep_going',True))
     # Preserve the legacy encoding when parallelism is not requested.
     if parallel != 1:
@@ -59,7 +67,20 @@ def worker_slots(definition, slots):
     parallel = definition.get('max_parallel', 1)
     if type(slots) is not int or slots < parallel:
         raise ValueError('Batch max_parallel must fit the CPU reservation; increase --jobs or lower max_parallel')
+    if any('jobs' in check for check in definition['checks']):
+        if max(check.get('jobs',1) for check in definition['checks'])>slots:
+            raise ValueError('Each check CPU budget must fit the batch reservation')
+        return None  # Explicit checks have individual hints, never a uniform one.
     return slots // min(parallel, len(definition['checks']))
+
+
+def allocations(definition, slots):
+    uniform=worker_slots(definition,slots)
+    return [check.get('jobs',1) if uniform is None else uniform for check in definition['checks']]
+
+
+def minimum_slots(definition):
+    return max([definition.get('max_parallel',1)]+[check.get('jobs',1) for check in definition['checks']])
 
 
 def run(encoded):
@@ -77,12 +98,14 @@ def run(encoded):
         if row['state']!='running' or row['backend']!='local' or row['argv'][-2:]!=['batch-worker',encoded]:
             raise ValueError('Batch definition does not match this running local job')
         slots = worker_slots(definition, row['slots'])
+        budgets = allocations(definition,row['slots'])
         parallel = min(definition.get('max_parallel', 1), len(definition['checks']))
         from .budgets import worker_budget
         report = dict(schema='buildr-batch-v1',keep_going=definition['keep_going'],complete=False,
             max_parallel=parallel, slots_per_check=slots, memory_scope='one aggregate reservation; no per-check memory limit',
-            checks=[dict(name=check['name'],state='pending',exit_code=None,
-                         worker_budget=worker_budget(check['command'],slots)) for check in definition['checks']])
+            cpu_allocation='explicit' if slots is None else 'uniform',
+            checks=[dict(name=check['name'],state='pending',exit_code=None,cpu_slots=budgets[index],
+                         worker_budget=worker_budget(check['command'],budgets[index])) for index,check in enumerate(definition['checks'])])
         def save():
             store.db.execute('UPDATE jobs SET batch=? WHERE id=?', (json.dumps(report),handle))
         def stop(signum, frame):
@@ -91,11 +114,10 @@ def run(encoded):
             print(json.dumps(dict(batch_check=definition['checks'][index]['name'],event=kind,**fields)),flush=True)
         for sig in (signal.SIGTERM,signal.SIGINT):
             previous[sig] = signal.signal(sig,stop)
-        env = dict(os.environ, CARGO_BUILD_JOBS=str(slots), RUST_TEST_THREADS=str(slots))
         failed = False
-        pending = 0
+        pending = list(range(len(definition['checks'])))
         save()
-        while pending < len(definition['checks']) or active:
+        while pending or active:
             # Reap/record finished checks before admitting additional work. A
             # failure stops future launches, while already-running siblings finish.
             for index, item in list(active.items()):
@@ -111,22 +133,26 @@ def run(encoded):
                 del active[index]
                 save()
                 event(index, 'finished', exit_code=code)
-            while pending < len(definition['checks']) and len(active) < parallel:
+            while pending and len(active) < parallel:
                 if stopped[0] or (failed and not definition['keep_going']):
-                    for result in report['checks'][pending:]:
-                        result.update(state='skipped',reason='batch stopped' if stopped[0] else 'earlier check failed')
-                    pending = len(definition['checks'])
+                    for index in pending:
+                        report['checks'][index].update(state='skipped',reason='batch stopped' if stopped[0] else 'earlier check failed')
+                    pending.clear()
                     save()
                     break
-                index = pending
-                pending += 1
+                available=row['slots']-sum(budgets[index] for index in active)
+                index=next((index for index in pending if budgets[index]<=available),None)
+                if index is None:
+                    break
+                pending.remove(index)
                 result = report['checks'][index]
                 result.update(state='running',started=time.time())
                 save()
-                event(index, 'started')
+                event(index, 'started',cpu_slots=budgets[index])
                 try:
                     # All siblings stay in the outer native worker's group:
                     # timeout/cancel/crash cleanup retains its existing boundary.
+                    env=dict(os.environ,CARGO_BUILD_JOBS=str(budgets[index]),RUST_TEST_THREADS=str(budgets[index]))
                     child = subprocess.Popen(definition['checks'][index]['command'],env=env,
                         stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.STDOUT)
                     active[index] = dict(child=child,eof=False)

@@ -172,9 +172,11 @@ def report(store, arguments):
         except ValueError as error:
             errors.append(str(error))
         per_check = None
+        check_budgets = None
         if manifest is not None:
             try:
                 per_check = batch.worker_slots(manifest,count)
+                check_budgets = batch.allocations(manifest,count)
             except ValueError as error:
                 errors.append(str(error))
         arithmetic = capacity(row,running,config,now) if complete else None
@@ -219,10 +221,11 @@ def report(store, arguments):
         if manifest is not None:
             case['batch'] = dict(requested_max_parallel=manifest.get('max_parallel',1),
                 effective_max_parallel=min(manifest.get('max_parallel',1),len(manifest['checks'])),
-                slots_per_check=per_check,checks=len(manifest['checks']),memory_scope='one aggregate reservation')
-            if per_check is not None:
-                for check in manifest['checks']:
-                    case['worker_warnings'] += _worker_warnings(check['command'],per_check,check['name'])
+                slots_per_check=per_check,check_slots=dict(zip((c['name'] for c in manifest['checks']),check_budgets)) if check_budgets else None,
+                checks=len(manifest['checks']),memory_scope='one aggregate reservation')
+            if check_budgets is not None:
+                for check,budget in zip(manifest['checks'],check_budgets):
+                    case['worker_warnings'] += _worker_warnings(check['command'],budget,check['name'])
         elif argv is not None:
             case['worker_budget'] = worker_budget(argv,count)
             case['worker_warnings'] = _worker_warnings(argv,count)
@@ -256,6 +259,9 @@ def lines(result):
         if ram['available_gb'] is not None:
             yield '  RAM {:.3f} GiB available / {:.3f} required; deficit {:.3f}'.format(ram['available_gb'],ram['required_gb'],ram['deficit_gb'])
         if 'batch' in case:
-            yield '  Batch: {} checks, parallel limit {}, {} CPU worker slots per check'.format(
-                case['batch']['checks'],case['batch']['effective_max_parallel'],case['batch']['slots_per_check'])
+            yield '  Batch: {} checks, parallel limit {}, CPU hints {}'.format(
+                case['batch']['checks'],case['batch']['effective_max_parallel'],
+                'individual' if case['batch']['check_slots'] and case['batch']['slots_per_check'] is None else case['batch']['slots_per_check'])
+            if case['batch']['slots_per_check'] is None and case['batch']['check_slots']:
+                yield '  Per-check CPU hints: '+str(case['batch']['check_slots'])
     yield result['note']

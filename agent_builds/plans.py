@@ -177,11 +177,15 @@ def exit_code(plan):
     return 1
 
 
-def create(store, definition):
+def create(store, definition, expected_source=None, plan_id=None):
     if os.environ.get('AGENT_BUILDS_JOB_ID'):
         raise ValueError('Do not run a plan inside a queued job. The plan queues each stage itself.')
     source = capture(definition['cwd'], definition.get('input_files', []))
-    plan = uuid.uuid4().hex[:12]
+    if expected_source is not None and changed(expected_source,source) is not False:
+        raise ValueError('Source or declared inputs changed before plan creation; no plan was submitted')
+    plan = uuid.uuid4().hex[:12] if plan_id is None else plan_id
+    if not isinstance(plan,str) or len(plan)!=12 or any(char not in '0123456789abcdef' for char in plan):
+        raise ValueError('Invalid preallocated plan handle')
     with store.transaction():
         store.db.execute('INSERT INTO plans (id,name,cwd,definition,created,state,source,reserve_protocol,input_protocol) VALUES (?,?,?,?,?,?,?,2,?)',
             (plan, definition['name'], definition['cwd'], json.dumps(definition), time.time(), 'queued', json.dumps(source),

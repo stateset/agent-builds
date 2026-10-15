@@ -8,6 +8,16 @@ Agents can use the same queue through MCP: start `buildr mcp serve` as a stdio
 server. It exposes job submission, durable reconnects, bounded logs/waits and
 verification plans. See [MCP setup and tool reference](docs/mcp.md).
 
+Press `r` in the jobs view, or use `buildr workbench JOB`, to combine bottlenecks,
+CPU/RAM alternatives and measured trial candidates. Reviewed profiles follow
+`task propose` → `task trial` → `task review` → `task promote`, with strict source
+checks on subsequent reuse. See [reviewed resource profiles](docs/reviewed-profiles.md).
+
+Use `plan review` to find long quick-lane work, optional per-check batch `jobs`
+to pack unequal CPU requirements, and `experiment workflow` to compare explicit
+representative manifests through the shared queue. See
+[workflow comparisons](docs/workflow-studies.md) and [batch CPU budgets](docs/verification.md).
+
 Use `buildr preflight --cwd /absolute/repo --lane quick --jobs 2 --compare-jobs 1`
 to inspect resource budgets, queue ordering, locks and host headroom before
 submitting. Add `--memory-gb 4 --compare-memory-gb 2` to compare RAM as well as CPU

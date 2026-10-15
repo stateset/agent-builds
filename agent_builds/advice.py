@@ -22,9 +22,8 @@ def minimum_cpu_slots(row):
     try:
         if row['argv'][-2] != 'batch-worker':
             return row['slots']
-        parallel = json.loads(row['argv'][-1]).get('max_parallel', 1)
-        if type(parallel) is int and 1 <= parallel <= 16:
-            return parallel
+        from .batch import validate, minimum_slots
+        return minimum_slots(validate(json.loads(row['argv'][-1])))
     except (ValueError, IndexError, TypeError, AttributeError):
         pass
     return row['slots']  # incomplete legacy metadata cannot justify CPU downsizing

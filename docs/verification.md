@@ -138,6 +138,37 @@ Measure this strategy on representative checks before adopting it. It amortizes
 per-submission overhead and allows independent verification to overlap; it does
 not make every build faster or guarantee higher useful throughput.
 
+## Explicit per-check CPU budgets (v0.21)
+
+Checks may specify `jobs`, for example:
+
+```json
+{"max_parallel":3,"checks":[
+  {"name":"compile","jobs":2,"command":["cargo","check"]},
+  {"name":"format","jobs":1,"command":["cargo","fmt","--check"]},
+  {"name":"diff","jobs":1,"command":["git","diff","--check"]}
+]}
+```
+
+Run this with at least three outer CPU slots. Once any check declares `jobs`,
+omitted checks default to one slot. Every check must fit the outer reservation,
+and `max_parallel` must still fit it. The worker launches the first pending check
+that fits both remaining CPU and concurrent-check capacity. Small independent
+checks may start ahead of a pending full-budget check; aggregate failure still
+follows manifest order. Active CPU budgets never sum above the one outer budget.
+Hints stay fixed until that check settles; explicit native flags can override
+them and local reservations remain estimates. RAM stays one aggregate budget.
+
+Without check budgets, the existing equal-share behavior and encoding remain
+unchanged. Weighted reports use `slots_per_check:null`, individual `cpu_slots`
+and worker settings per result. Preflight explains individual hints and rejects
+oversized checks before submission/key binding. Old workers reject the new
+manifest fields instead of silently ignoring their meaning. Cancellation,
+timeout, unknown results and fail-fast retain the outer cleanup boundary.
+
+Use [reviewed profiles](reviewed-profiles.md) and [workflow comparisons](workflow-studies.md)
+to validate resource choices and measure representative outcomes.
+
 Resource-advisor CPU trials preserve the requested parallel limit, including when
 the check count makes effective concurrency lower. Incomplete legacy batch request
 metadata does not justify reducing CPU slots. Trials remain advisory.

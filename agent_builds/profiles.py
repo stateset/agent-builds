@@ -49,7 +49,14 @@ def task_key(cwd, task):
     return repository(cwd) + ':' + name(task)
 
 
+def tasks(store):
+    data=load(store)
+    return dict(data.get('tasks',{}),**data.get('reviewed_tasks',{}))
+
+
 def save_task(store, args):
+    if task_key(args.cwd,args.name) in load(store).get('reviewed_tasks',{}):
+        raise ValueError('This name belongs to a reviewed profile; use a new name or promote a fresh validated proposal')
     command = list(args.command)
     if command and command[0] == '--':
         command.pop(0)
@@ -79,7 +86,7 @@ def save_task(store, args):
 
 def task_args(store, args):
     from argparse import Namespace
-    task = load(store).get('tasks', {}).get(task_key(args.cwd, args.name))
+    task = tasks(store).get(task_key(args.cwd, args.name))
     if task is None:
         raise ValueError('Unknown shortcut in this repository: ' + args.name)
     values = dict(task)

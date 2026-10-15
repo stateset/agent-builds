@@ -66,6 +66,9 @@ def parser():
     sub = root.add_subparsers(dest='action')
     tui = sub.add_parser('tui', help='Open the terminal dashboard (default)')
     tui.add_argument('--cwd', default=os.getcwd())
+    workbench=sub.add_parser('workbench',help='Inspect bottlenecks, CPU/RAM comparisons and reviewed trials for one job')
+    workbench.add_argument('job')
+    workbench.add_argument('--json',action='store_true')
     preflight_options(sub.add_parser('preflight',help='Compare CPU/RAM requests before submission; read only, no reservation or execution'))
     run = sub.add_parser('run', help='Queue work, stream output and preserve its exit code')
     run.add_argument('--cwd', default=os.getcwd())
@@ -177,6 +180,18 @@ def parser():
     clean.add_argument('--json', action='store_true')
     tasks = sub.add_parser('task', help='Manage explicit per-repository build shortcuts')
     task_sub = tasks.add_subparsers(dest='task_action', required=True)
+    proposal=task_sub.add_parser('propose',help='Draft a measured resource trial from an explicitly selected successful job')
+    proposal.add_argument('job')
+    proposal.add_argument('--kind',choices=['memory_trial','low_average_cpu','tiny_check_trial','long_quick_command'],default='memory_trial')
+    proposal.add_argument('--name',required=True)
+    proposal.add_argument('--output',required=True)
+    trial=task_sub.add_parser('trial',help='Submit a reviewed proposal as three to five strict queued verification stages')
+    trial.add_argument('proposal')
+    trial.add_argument('--repeats',type=int,default=3)
+    for action in ('review','promote'):
+        command=task_sub.add_parser(action)
+        command.add_argument('proposal')
+        command.add_argument('--plan',required=True)
     task_add = task_sub.add_parser('add', usage='%(prog)s NAME [options] -- COMMAND [ARG ...]')
     task_add.add_argument('name')
     task_add.add_argument('--cwd', default=os.getcwd())
@@ -239,6 +254,10 @@ def parser():
             plan_action.add_argument('--wait', action='store_true')
             plan_action.add_argument('--summary', action='store_true')
             plan_action.add_argument('--tail', type=int, default=0)
+    plan_review=plan_sub.add_parser('review',help='Review explicit stages for long quick-lane work; never execute commands')
+    plan_review.add_argument('manifest')
+    plan_review.add_argument('--cwd',default=os.getcwd())
+    plan_review.add_argument('--output')
     plan_list = plan_sub.add_parser('list')
     plan_list.add_argument('--active', action='store_true')
     plan_list.add_argument('--json', action='store_true')
@@ -290,6 +309,17 @@ def parser():
             command.add_argument('--output')
     experiment = sub.add_parser('experiment', help='Bounded paired local experiments; run the whole driver through the shared queue')
     experiment_sub=experiment.add_subparsers(dest='experiment_action',required=True)
+    study=experiment_sub.add_parser('workflow',help='Run explicit representative plan pairs; stages use the shared queue')
+    study.add_argument('baseline')
+    study.add_argument('candidate')
+    study.add_argument('--cwd',default=os.getcwd())
+    study.add_argument('--output',required=True)
+    study.add_argument('--pairs',type=int,default=2)
+    study.add_argument('--timeout',type=float,default=3600)
+    compare=experiment_sub.add_parser('compare',help='Read-only comparison of two existing verification plan handles')
+    compare.add_argument('baseline')
+    compare.add_argument('candidate')
+    compare.add_argument('--output')
     experiment_run=experiment_sub.add_parser('run')
     experiment_run.add_argument('--output',required=True)
     experiment_run.add_argument('--pairs',type=int,default=3)
@@ -360,6 +390,15 @@ def main():
     else:
         args = parser().parse_args(arguments)
     try:
+        if args.action=='workbench':
+            from .workbench import report,lines
+            reader=Store(read_only=True)
+            try:
+                result=report(reader,args.job)
+            finally:
+                reader.close()
+            print(json.dumps(result,indent=2) if args.json else '\n'.join(lines(result)))
+            return 0
         if args.action=='preflight' or (args.action=='batch' and args.batch_action=='preflight'):
             return preflight_command(args)
         if args.action == 'batch-worker':
@@ -441,6 +480,22 @@ def main():
         if args.action == 'run':
             return execute(args)
         if args.action == 'experiment':
+            if args.experiment_action in ('workflow','compare'):
+                from . import workflow_study
+                study_store=Store(read_only=args.experiment_action=='compare')
+                try:
+                    if args.experiment_action=='workflow':
+                        result=workflow_study.run(study_store,args.baseline,args.candidate,args.cwd,args.output,args.pairs,args.timeout)
+                        print(json.dumps(dict(output=args.output,pairs=result['pairs'],comparisons=result['comparisons']),indent=2))
+                    else:
+                        result=workflow_study.compare(study_store,args.baseline,args.candidate)
+                        if args.output:
+                            from .plans import write_export
+                            write_export(args.output,result)
+                        print(json.dumps(result,indent=2))
+                finally:
+                    study_store.close()
+                return 0
             from .experiments import run as experiment_run
             result=experiment_run(args.output,args.pairs,args.agents,args.cpus,args.scenario,args.include_batches)
             print(json.dumps(dict(output=args.output,comparisons=result['comparisons'],note=result['note']),indent=2))
@@ -477,10 +532,10 @@ def main():
             or (args.action == 'announce' and not args.send)
             or (args.action == 'config' and not args.init and not args.set)
             or (args.action == 'clean' and not args.apply)
-            or (args.action == 'task' and args.task_action == 'list')
+            or (args.action == 'task' and args.task_action in ('list','propose','review'))
             or (args.action == 'worker' and args.worker_action != 'add')
             or (args.action == 'group' and args.group_action != 'create')
-            or (args.action == 'plan' and args.plan_action in ('list', 'show', 'wait', 'logs', 'validate', 'export', 'draft'))
+            or (args.action == 'plan' and args.plan_action in ('list', 'show', 'wait', 'logs', 'validate', 'review', 'export', 'draft'))
             or (args.action == 'remote' and args.remote_action in ('list', 'show', 'logs', 'status')))
         store = Store(read_only=inspection)
         try:
@@ -511,6 +566,18 @@ def main():
                 return result['exit_code'] if args.group_action=='wait' else 0
             if args.action == 'plan':
                 from . import plans
+                if args.plan_action=='review':
+                    from .workflow import report
+                    with Path(args.manifest).expanduser().open('rb') as source:
+                        raw=source.read(256*1024+1)
+                    if len(raw)>256*1024:
+                        raise ValueError('Plan review input exceeds 256 KiB')
+                    result=report(store,json.loads(raw),args.cwd)
+                    if args.output:
+                        plans.write_export(args.output,result['manifest'])
+                        result['output_path']=str(Path(args.output).expanduser().absolute())
+                    print(json.dumps(result,indent=2))
+                    return 0
                 from .plan_output import compact, text as summary_text, validate_tail
                 if args.plan_action=='draft':
                     from .plan_draft import draft
@@ -667,14 +734,36 @@ def main():
                         if not args.apply:
                             print('Use --apply to delete eligible logs.')
             elif args.action == 'task':
-                from .profiles import load, repository, save_task, task_args
+                from .profiles import load, repository, save_task, task_args, tasks
+                if args.task_action in ('propose','trial','review','promote'):
+                    from . import task_review
+                    if args.task_action=='propose':
+                        result=task_review.propose(store,args.job,args.kind,args.name)
+                        target=Path(args.output).expanduser().absolute()
+                        if Path(result['source']['repository']) in target.parents:
+                            raise ValueError('Save proposals outside the source checkout, for example under /tmp')
+                        from .plans import write_export
+                        write_export(target,result)
+                        print(json.dumps(dict(proposal_path=str(target),proposal=result),indent=2))
+                    elif args.task_action=='trial':
+                        if os.environ.get('AGENT_BUILDS_JOB_ID'):
+                            raise ValueError('Profile trial is a controller; do not run it inside a queued job')
+                        task_review.trial(store,args.proposal,args.repeats)
+                    else:
+                        result=getattr(task_review,args.task_action)(store,args.proposal,args.plan)
+                        print(json.dumps(result,indent=2))
+                    return 0
                 if args.task_action == 'add':
                     print(json.dumps(save_task(store, args), indent=2))
                 elif args.task_action == 'list':
                     prefix = repository(args.cwd) + ':'
-                    print(json.dumps([v for k, v in load(store).get('tasks', {}).items() if k.startswith(prefix)], indent=2))
+                    print(json.dumps([v for k, v in tasks(store).items() if k.startswith(prefix)], indent=2))
                 else:
-                    return execute(task_args(store, args))
+                    values=task_args(store,args)
+                    if getattr(values,'review',None):
+                        from .task_review import run_saved
+                        return run_saved(store,values)
+                    return execute(values)
             elif args.action == 'worker':
                 from .profiles import load, save_worker
                 from .remote import rpc, worker_for

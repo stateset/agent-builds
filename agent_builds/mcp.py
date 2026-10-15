@@ -43,7 +43,8 @@ BATCH = dict(type='object',additionalProperties=False,required=['checks'],proper
         description='Only independent checks may overlap; must fit jobs. CPU worker hints divide across checks; memory is one aggregate reservation.'),
     checks=dict(type='array',minItems=1,maxItems=32,items=dict(type='object',additionalProperties=False,
         required=['name','command'],properties=dict(name=string(64,pattern='^[A-Za-z0-9][A-Za-z0-9_.-]*$'),
-            command=dict(type='array',minItems=1,maxItems=128,items=dict(type='string',maxLength=4096)))))))
+            command=dict(type='array',minItems=1,maxItems=128,items=dict(type='string',maxLength=4096)),
+            jobs=dict(type='integer',minimum=1,maximum=64,description='Explicit CPU hint for this check; enables bounded CPU packing. Omitted checks then default to one slot.'))))))
 
 
 def tool(name, description, properties=None, required=(), read=True, idempotent=True):
@@ -54,6 +55,7 @@ def tool(name, description, properties=None, required=(), read=True, idempotent=
 
 
 TOOLS = [
+    tool('buildr_workbench','Read one job bottleneck, future-run CPU/RAM alternatives and matching measured trial suggestions. No execution, reservation, resizing, profile promotion or tuning.',dict(job_id=HANDLE),('job_id',)),
     tool('buildr_status', 'Read machine pressure, unchanged queue budgets, counts and bounded job summaries.', dict(
         active=dict(type='boolean', default=True), repo=CWD, limit=dict(type='integer', minimum=1, maximum=50, default=10))),
     tool('buildr_diagnose', 'Explain current disk deficits, recorded blocker chains and protection-draining conditions. Read-only; no cache deletion, recovery, retries or tuning.', dict(
@@ -178,6 +180,9 @@ def call(name, args, read_only=False):
         return submit(name, args)
     store = Store(read_only=spec['annotations']['readOnlyHint'])
     try:
+        if name=='buildr_workbench':
+            from .workbench import report
+            return report(store,args['job_id'])
         if name=='buildr_preflight':
             from .preflight import report
             return report(store,args)

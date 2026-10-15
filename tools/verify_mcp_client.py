@@ -55,7 +55,7 @@ async def verify(output):
         async with ClientSession(reader, writer) as session:
             initialized = await session.initialize()
             tools = await session.list_tools()
-            assert len(tools.tools) == 21
+            assert len(tools.tools) == 22
             assert all(tool.inputSchema['type'] == 'object' for tool in tools.tools)
             status = await call(session, 'buildr_status', {})
             assert status['initialized'] is False
@@ -86,6 +86,8 @@ async def verify(output):
             result = await call(session, 'buildr_wait', dict(job_ids=[handle], timeout=5))
             assert result['complete'] and result['exit_code'] == 7
             job = await call(session, 'buildr_job', dict(job_id=handle))
+            workbench=await call(session,'buildr_workbench',dict(job_id=handle))
+            assert workbench['job_id']==handle and workbench['changes_applied'] is False
             assert job['resource_keys'] == ['sdk-checkout', 'sdk-output']
             import hashlib
             assert job['source']['submission']['inputs']['files'][0]['sha256'] == hashlib.sha256(b'original SDK helper').hexdigest()
@@ -169,13 +171,26 @@ async def verify(output):
             assert [case['submission_acceptable'] for case in batch_preview['cases']]==[True,True,False,False]
             assert [case['memory_gb'] for case in batch_preview['cases']]==[1,.5,1,.5]
             assert batch_preview['commands_submitted'] is False
+            weighted_args=dict(request_key=key+'-weighted',cwd=str(root),jobs=2,memory_gb=.5,
+                manifest=dict(max_parallel=2,checks=[
+                    dict(name='full',jobs=2,command=[sys.executable,'-c','import os,time; assert os.environ["CARGO_BUILD_JOBS"]=="2"; time.sleep(.15)']),
+                    dict(name='small-a',jobs=1,command=[sys.executable,'-c','import os,time; assert os.environ["CARGO_BUILD_JOBS"]=="1"; time.sleep(.15)']),
+                    dict(name='small-b',jobs=1,command=[sys.executable,'-c','import time; time.sleep(.15)'])]))
+            weighted=await call(session,'buildr_batch_submit',weighted_args)
+            again=await call(session,'buildr_batch_submit',weighted_args)
+            assert weighted['result']['job_id']==again['result']['job_id']
+            weighted_done=await call(session,'buildr_wait',dict(job_ids=[weighted['result']['job_id']],timeout=5))
+            assert weighted_done['exit_code']==0
+            weighted_job=await call(session,'buildr_job',dict(job_id=weighted['result']['job_id']))
+            assert weighted_job['batch']['slots_per_check'] is None
+            assert [check['cpu_slots'] for check in weighted_job['batch']['checks']]==[2,1,1]
             latency=await call(session,'buildr_latency',dict(target_seconds=30))
             assert latency['changes_applied'] is False and latency['cohorts']
             diagnostics=await call(session,'buildr_diagnose',dict(job_id=batched['result']['job_id']))
             assert diagnostics['jobs'][0]['state']=='failed' and not diagnostics['changes_applied']
     reader = Store(state, read_only=True)
     try:
-        assert len(reader.rows()) == 9  # prior seven jobs plus serial and parallel batches
+        assert len(reader.rows()) == 10  # prior fixtures plus explicit CPU packing
         other=reader.get(full_budget['result']['job_id'])
         first=reader.get(watch['probes'][0]['job_id'])
         second=reader.get(watch['probes'][1]['job_id'])
@@ -201,6 +216,7 @@ async def verify(output):
                 'batch duplicate prevention and per-check native outcomes',
                 'parallel batch overlap and divided CPU hints', 'parallel batch duplicate prevention',
                 'CPU/RAM preflight comparisons without state creation or command execution', 'batch preflight minimum CPU guard',
+                'read-only workbench', 'explicit per-check CPU budgets and durable duplicate prevention',
                 'read-only latency report'], production_jobs_submitted=0,
         shared_output_locks=dict(first_job_id=lock_a['id'],second_job_id=lock_b['id'],
             competing_submission=True,overlap=False,second_wait_seconds=lock_b['wait_seconds']),

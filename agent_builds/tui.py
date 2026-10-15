@@ -37,7 +37,7 @@ def paint(screen, y, x, text, attr=0):
         pass
 
 
-def compact_lines(rows, selected, plans, plan_index, view, config, height, width, watches=None, watch_index=0, health=None, health_offset=0):
+def compact_lines(rows, selected, plans, plan_index, view, config, height, width, watches=None, watch_index=0, health=None, health_offset=0, workbench=None, workbench_offset=0):
     """A monitor for narrow split panes; editing actions need the full view."""
     lines = ['BUILDR ' + __version__ + (' PAUSED' if config['paused'] else '')]
     if height < 8 or width < 20:
@@ -46,7 +46,14 @@ def compact_lines(rows, selected, plans, plan_index, view, config, height, width
     lines += ['CPU {}/{} reserved'.format(sum(r['slots'] for r in running), config['cpu_slots']),
               'RAM {:.1f}/{}G est.'.format(sum(r['memory_gb'] for r in running), config['memory_gb'])]
     selected_row = None
-    if view == 11:
+    if view == 12:
+        from .workbench import lines as workbench_lines
+        content=list(workbench_lines(workbench)) if workbench and 'error' not in workbench else [workbench.get('error','Loading workbench') if workbench else 'Loading workbench']
+        wrapped=[part for line in content for part in textwrap.wrap(line,max(1,width-1))]
+        room=max(1,height-len(lines)-1)
+        workbench_offset=min(max(0,workbench_offset),max(0,len(wrapped)-room))
+        lines+=wrapped[workbench_offset:workbench_offset+room]
+    elif view == 11:
         from .diagnostics import lines as health_lines
         lines += ['HEALTH (read only)']
         if health:
@@ -87,7 +94,7 @@ def compact_lines(rows, selected, plans, plan_index, view, config, height, width
             lines += tail(Path(selected_row['log_path']), max(1, height-len(lines)-2))
         else:
             lines += ['No jobs yet']
-    return lines[:height-1] + ['j/k scroll u back q' if view==11 else 'j/k move v views q']
+    return lines[:height-1] + ['j/k scroll r back q' if view==12 else 'j/k scroll u back q' if view==11 else 'j/k move r workbench v q']
 
 
 def prompt(screen, title, initial=''):
@@ -165,6 +172,8 @@ def main(screen, cwd):
     advice_offset = 0
     last_advice = 0
     health_result, health_offset, last_health = None, 0, 0
+    workbench_result,workbench_future,workbench_job = None,None,None
+    workbench_offset,workbench_candidate,last_workbench = 0,0,0
     group_rows = []
     group_index = 0
     group_id = None
@@ -176,6 +185,15 @@ def main(screen, cwd):
         reader = Store(store.root, read_only=True)
         try:
             return inventory(reader, repository)
+        finally:
+            reader.close()
+    def inspect_job(handle):
+        from .workbench import report
+        reader=Store(store.root,read_only=True)
+        try:
+            return report(reader,handle)
+        except (ValueError,OSError) as error:
+            return dict(error=str(error))
         finally:
             reader.close()
     try:
@@ -193,6 +211,18 @@ def main(screen, cwd):
                 processes = sampler.sample()
                 last_sample = time.monotonic()
             config = store.config()
+            if view==12 and rows:
+                desired=rows[selected]['id']
+                if workbench_future is not None and workbench_future.done():
+                    observed=workbench_future.result()
+                    workbench_result=observed if workbench_job==desired else None
+                    workbench_future=None
+                if workbench_job!=desired:
+                    workbench_result=None
+                if workbench_future is None and (workbench_job!=desired or time.monotonic()-last_workbench>=3):
+                    workbench_job=desired
+                    workbench_future=disk_pool.submit(inspect_job,desired)
+                    last_workbench=time.monotonic()
             if view == 11 and time.monotonic()-last_health >= 2:
                 from .diagnostics import report
                 reader = Store(store.root, read_only=True)
@@ -226,7 +256,7 @@ def main(screen, cwd):
             height, width = screen.getmaxyx()
             compact = height < 15 or width < 65
             if compact:
-                for index, line in enumerate(compact_lines(rows, selected, plan_rows, plan_index, view, config, height, width, watch_rows, watch_index, health_result, health_offset)):
+                for index, line in enumerate(compact_lines(rows, selected, plan_rows, plan_index, view, config, height, width, watch_rows, watch_index, health_result, health_offset,workbench_result,workbench_offset)):
                     paint(screen, index, 0, line)
             else:
                 context = ' | Herdr ' + os.environ.get('HERDR_PANE_ID', '') if os.environ.get('HERDR_ENV') == '1' else ''
@@ -255,7 +285,16 @@ def main(screen, cwd):
                 if not rows:
                     paint(screen, 6, 0, 'No jobs yet. Press n, or run: agent-builds run -- cargo check')
                 log_top = 7 + count
-                if view == 11:
+                if view == 12:
+                    from .workbench import lines as workbench_lines
+                    content=list(workbench_lines(workbench_result,workbench_candidate)) if workbench_result and 'error' not in workbench_result else [workbench_result.get('error','Loading workbench') if workbench_result else 'Loading workbench']
+                    wrapped=[part for line in content for part in textwrap.wrap(line,max(1,width-1))]
+                    visible=max(1,height-log_top-3)
+                    workbench_offset=min(max(0,workbench_offset),max(0,len(wrapped)-visible))
+                    paint(screen,log_top-1,0,'WORKBENCH | future runs, measurements and reviewed profiles',curses.A_BOLD)
+                    for index,line in enumerate(wrapped[workbench_offset:workbench_offset+visible]):
+                        paint(screen,log_top+index,0,line)
+                elif view == 11:
                     from .diagnostics import lines as health_lines
                     lines = [part for line in health_lines(health_result) for part in (textwrap.wrap(line,max(1,width-2)) or [''])] if health_result else ['Loading diagnostics']
                     room = max(1,height-log_top-3)
@@ -296,10 +335,11 @@ def main(screen, cwd):
                         'Worker settings describe configuration; runtime concurrency is not measured.']
                     batch=row.get('batch',{})
                     if 'max_parallel' in batch:
-                        lines += ['Batch: up to {} checks | {} CPU worker slots per check | one aggregate RAM reservation'.format(
-                            batch['max_parallel'],batch['slots_per_check'])]
+                        lines += ['Batch: up to {} checks | CPU hints {} | one aggregate RAM reservation'.format(
+                            batch['max_parallel'],'individual' if batch['slots_per_check'] is None else batch['slots_per_check'])]
                     for check in batch.get('checks',[]):
-                        lines += ['Check {}: {} | native exit {}'.format(check['name'],check['state'],check['exit_code'])]
+                        lines += ['Check {}: {} | CPU {} | native exit {}'.format(check['name'],check['state'],
+                            check.get('cpu_slots',batch.get('slots_per_check','unrecorded')),check['exit_code'])]
                     usage = row['usage']
                     if usage:
                         lines += ['Measured CPU {:.2f}s | sampled peak RSS {:.3f} GiB | {} samples'.format(
@@ -459,16 +499,62 @@ def main(screen, cwd):
                     for index, line in enumerate(tail(store.log_path(row['id']), max(1, height - log_top - offset - 3))):
                         paint(screen, log_top + offset + index, 0, line)
                 paint(screen, height - 2, 0, message)
-                paint(screen, height - 1, 0, 'o plan  t task  i details  h advisor  u health  v views  q quit' if view != 7 else 'o plan  c cancel plan  r resume  e export  PgUp/PgDn scroll  v views  q quit')
+                paint(screen, height - 1, 0, 'o plan  t task  i details  r workbench  h advisor  u health  v views  q quit' if view != 7 else 'o plan  c cancel plan  r resume  e export  PgUp/PgDn scroll  v views  q quit')
                 if view==10:
                     paint(screen,height-1,0,'c stop observation  r resume controller  e export  Enter probe log  v views  q quit')
                 elif view==11:
                     paint(screen,height-1,0,'j/k scroll  PgUp/PgDn page  u jobs  v views  q quit | read only')
+                elif view==12:
+                    paint(screen,height-1,0,'j/k scroll  f next trial  e draft profile  t trial reviewed file  r jobs  q quit')
             screen.refresh()
             key = screen.getch()
             if key in (ord('q'), 27):
                 break
-            if compact and key not in (ord('j'), ord('k'), curses.KEY_DOWN, curses.KEY_UP, ord('v'), ord('u')):
+            if compact and key not in (ord('j'), ord('k'), curses.KEY_DOWN, curses.KEY_UP, ord('v'), ord('u'),ord('r')):
+                continue
+            if key==ord('r') and view in (0,3,12):
+                view=0 if view==12 else 12
+                workbench_offset,workbench_candidate,last_workbench=0,0,0
+                continue
+            if view==12:
+                if key in (ord('j'),curses.KEY_DOWN,curses.KEY_NPAGE):
+                    workbench_offset+=max(1,height-10) if key==curses.KEY_NPAGE else 1
+                elif key in (ord('k'),curses.KEY_UP,curses.KEY_PPAGE):
+                    workbench_offset=max(0,workbench_offset-(max(1,height-10) if key==curses.KEY_PPAGE else 1))
+                elif key==ord('v'):
+                    view=0
+                elif not compact and key==ord('f') and workbench_result and workbench_result.get('candidates'):
+                    workbench_candidate=(workbench_candidate+1)%len(workbench_result['candidates'])
+                    workbench_offset=0
+                elif not compact and key==ord('e') and workbench_result and workbench_result.get('candidates'):
+                    candidates=workbench_result['candidates']
+                    candidate=candidates[workbench_candidate%len(candidates)]
+                    name=prompt(screen,'Saved task name','reviewed-task')
+                    output=prompt(screen,'New proposal file','/tmp/buildr-'+candidate['anchor_job']+'-'+candidate['kind']+'.json') if name else None
+                    if name and output:
+                        reader=Store(store.root,read_only=True)
+                        try:
+                            from .task_review import propose
+                            from .plans import write_export
+                            proposal=propose(reader,candidate['anchor_job'],candidate['kind'],name)
+                            target=Path(output).expanduser().absolute()
+                            if Path(proposal['source']['repository']) in target.parents:
+                                raise ValueError('Save proposals outside the source checkout')
+                            write_export(target,proposal)
+                            message='Draft saved: '+str(target)+'; review before using t to trial it'
+                        except (ValueError,OSError) as error:
+                            message=str(error)
+                        finally:
+                            reader.close()
+                elif not compact and key==ord('t'):
+                    filename=prompt(screen,'Reviewed proposal file to trial')
+                    if filename:
+                        try:
+                            from .task_review import trial
+                            handle=trial(store,filename,emit=False,processes=children)
+                            message='Profile trial plan '+handle+' submitted; stages use the shared queue'
+                        except (ValueError,OSError) as error:
+                            message=str(error)
                 continue
             if key == ord('u'):
                 view = 0 if view == 11 else 11
@@ -531,7 +617,7 @@ def main(screen, cwd):
                     selected = max(0, selected - 1)
                     selected_id = rows[selected]['id'] if rows else None
             elif key == ord('v'):
-                view = ({0:7,7:10,10:11,11:0}.get(view,0)) if compact else (view + 1) % 12
+                view = ({0:7,7:10,10:11,11:12,12:0}.get(view,0)) if compact else (view + 1) % 13
             elif key == ord('h'):
                 view = 0 if view == 8 else 8
                 advice_offset, last_advice = 0, 0
@@ -644,13 +730,13 @@ def main(screen, cwd):
                 if disk_future is None:
                     disk_future = disk_pool.submit(scan_disk, rows[selected]['cwd'] if rows else cwd)
             elif key == ord('t') and height >= 15 and width >= 65:
-                from .profiles import load, repository
+                from .profiles import tasks as saved_tasks, repository
                 try:
                     location = prompt(screen, 'Task repository', rows[selected]['cwd'] if rows else str(cwd))
                     if location is None:
                         continue
                     prefix = repository(location) + ':'
-                    tasks = [v['name'] for k, v in load(store).get('tasks', {}).items() if k.startswith(prefix)]
+                    tasks = [v['name'] for k, v in saved_tasks(store).items() if k.startswith(prefix)]
                     if not tasks:
                         message = 'No shortcuts. Register one with agent-builds task add NAME --cwd PATH -- COMMAND'
                         continue

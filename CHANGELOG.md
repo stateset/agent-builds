@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.21.0
+
+- Connect measured advisor findings to explicit profile proposals, strict queued
+  trial plans and evidence-gated promotion. Require complete measured headroom
+  for RAM reductions and guard reviewed profile reuse against source/input drift.
+  Hide reviewed profiles from old task runners that cannot enforce that guard.
+- Review explicit plans for repeated long quick-lane work and propose compatible
+  heavy-lane stages without parsing scripts or changing running jobs or budgets.
+- Pack explicit per-check CPU budgets within one batch reservation; retain legacy
+  equal-share behavior, fail-fast semantics, native results and outer cleanup.
+- Add a background-loaded TUI workbench, compact inspection, explicit proposal/
+  trial actions, and read-only CLI/MCP views of bottlenecks and measured candidates.
+- Compare explicitly supplied representative plans through the shared queue with
+  counterbalanced order, strict source checks, durable attempted-submission handles,
+  native failures, verified throughput, wait tails, telemetry coverage, host pressure
+  and heavy progress. Withhold performance ratios for incomplete or failed evidence.
+
 ## 0.20.0
 
 - Compare explicit RAM alternatives as well as CPU in CLI and MCP preflight.

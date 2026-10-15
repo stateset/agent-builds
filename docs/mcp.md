@@ -83,6 +83,7 @@ is retained. The server itself holds no CPU/RAM build reservation.
 | Tool | Behavior |
 | --- | --- |
 | `buildr_status` | Machine pressure, budgets, counts and bounded job summaries; defaults to active jobs |
+| `buildr_workbench` | One job's bottleneck, future-run CPU/RAM projections and matching measured trial suggestions |
 | `buildr_preflight` | Read-only reservation comparisons before submission; no command execution or capacity reservation |
 | `buildr_diagnose` | Current disk deficits, reservation contributors and recorded blocker chains |
 | `buildr_submit` | Asynchronous job submission with one durable attempt per request key |
@@ -104,7 +105,7 @@ is retained. The server itself holds no CPU/RAM build reservation.
 | `buildr_watch_cancel` | Stop observation and its active local probe; external task continues |
 | `buildr_watch_resume` | Resume controller monitoring without retrying unknown probe outcomes |
 
-There are 21 tools, including 13 inspection tools in read-only mode. See
+There are 22 tools, including 14 inspection tools in read-only mode. See
 [external completion watches](external-watches.md) for the explicit probe contract,
 native pending exit 75, resource release and recovery behavior. Reconnect clients
 that were already running against an older server to discover the added tools.
