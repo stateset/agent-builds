@@ -16,7 +16,7 @@ verification latency at a possible cost to heavy throughput; it does not make
 every build faster or guarantee an ETA.
 
 Activation is transactional and guarded across versions. A request first drains
-jobs from workers without reserve-protocol support, existing oversized heavy
+jobs and active plan/watch controllers without reserve-protocol support, existing oversized heavy
 work and heavy reservations exceeding the protected pool. Those jobs are not
 cancelled, restarted or retried. New writable submission/admission attempts
 activate the request when the blockers have settled. `config` shows effective,

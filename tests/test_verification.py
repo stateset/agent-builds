@@ -95,6 +95,21 @@ class VerificationTests(unittest.TestCase):
         self.job('next','quick')
         self.assertTrue(self.store.config()['protected_quick'])
 
+    def test_idle_legacy_controller_cannot_be_stranded_by_policy_activation(self):
+        from agent_builds import plans, external
+        with mock.patch.dict(os.environ,self.env,clear=True):
+            plan=plans.create(self.store,plans.validate(dict(stages=[dict(name='check',command=['true'])]),self.root,self.store.config()))
+            watch=external.create(self.store,dict(cwd=str(self.root),command=['true'],read_only_probe=True,external_ref='fixture',track_source=False))
+        self.store.db.execute('UPDATE plans SET reserve_protocol=0 WHERE id=?',(plan,))
+        self.store.db.execute('UPDATE external_watches SET reserve_protocol=0 WHERE id=?',(watch,))
+        self.store.update_config(dict(protected_quick=True))
+        self.assertFalse(self.store.config()['protected_quick'])
+        self.assertEqual(len(protection.status(self.store)['blocking_controllers']),2)
+        self.store.db.execute("UPDATE plans SET state='succeeded' WHERE id=?",(plan,))
+        self.store.db.execute("UPDATE external_watches SET state='succeeded' WHERE id=?",(watch,))
+        self.job('new','quick')
+        self.assertTrue(self.store.config()['protected_quick'])
+
     def test_new_large_heavy_job_is_rejected_before_creation(self):
         self.store.update_config(dict(protected_quick=True))
         with self.assertRaisesRegex(ValueError,'protected quick reserves'):

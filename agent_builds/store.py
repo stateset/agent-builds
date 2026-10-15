@@ -140,6 +140,12 @@ class Store:
                 launch_token TEXT, attached INTEGER NOT NULL DEFAULT 0, evidence TEXT NOT NULL DEFAULT '{}',
                 PRIMARY KEY (plan_id,name))''')
 
+        with self.transaction():
+            for table in ('plans','external_watches'):
+                columns={row[1] for row in self.db.execute('PRAGMA table_info('+table+')')}
+                if 'reserve_protocol' not in columns:
+                    self.db.execute('ALTER TABLE '+table+' ADD COLUMN reserve_protocol INTEGER NOT NULL DEFAULT 0')
+
     def close(self):
         if self.db is not None:
             self.db.close()
