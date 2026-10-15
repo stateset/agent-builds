@@ -25,7 +25,7 @@ Use `group create JOB...` to observe existing work under one handle,
 
 Use `agent-builds advise` (or `h` in the full TUI) for evidence-based queue and
 reservation findings. `agent-builds simulate --fixture` compares conservative
-quick backfill with the prior policy without executing commands or changing
+quick backfill with a draining model without executing commands or changing
 settings. See [advisor and replay](docs/advisor.md) and [quality gates](docs/quality-gates.md).
 
 Queue wait diagnostics preserve primary blocker timings and observation coverage;

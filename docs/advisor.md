@@ -19,7 +19,7 @@ keys or PgUp/PgDn scroll the advisor. Editing controls are disabled in this view
 `h` returns to logs. Narrow panes retain the jobs/plans monitor.
 
 Command trials require at least three successful executions with matching cwd,
-resource key, literal argv, backend, lane and reservations in the selected
+complete declared resource-key set, literal argv, backend, lane and reservations in the selected
 history. Quick commands with a median runtime of at least 60 seconds get a
 heavy-lane/split-stage suggestion. Resource trials additionally require local,
 completed process-tree measurements, at least three samples and a runtime of at
@@ -63,12 +63,20 @@ policy to an older runner. No global budgets change in this release.
 
 ## Replay limits
 
-`simulate --fixture` compares v1 draining with v2 on a documented spare-capacity
+The original v0.9 `simulate --fixture` compared v1 draining with v2 on a documented spare-capacity
 case: two one-slot heavy jobs fill the heavy-job count; an aged one-slot heavy
 job waits; a two-slot, one-second quick check arrives. V1 starts the quick job
 after 50 seconds. V2 starts it immediately, with identical aged-head start time
 and modeled makespan. This is a controlled model result, not a measured speedup
 for the whole machine.
+
+Since v0.14, both replay models preserve all declared resource keys. The baseline
+is explicitly labeled `current-locks-no-backfill-model`; the candidate uses
+`quick-aging-locks-v3` with safe backfill. The fixture still has single keys and
+the same modeled result. This comparison isolates backfill under current lock
+semantics rather than claiming an exact replay of older worker code. Legacy
+worker draining and the live insertion guard are not modeled. History does not
+invent extra keys for jobs that never declared them.
 
 History replay uses the latest 100 started successful/failed executions finished
 in the selected window (maximum 500). Recorded arrival times and runtimes feed a
