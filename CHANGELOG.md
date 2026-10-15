@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.16.0
+
+- Act on a fresh nine-agent feedback round: concise active-job status by default,
+  explicit detailed history with stable cursors, and one read-only diagnostics
+  command through CLI, MCP and full/compact TUI (`u`).
+- Explain fresh disk deficits, floor/scratch components, contributing reservation
+  handles, recorded blocker chains, stale observations and cache review commands.
+  Cache inventory labels ownership, mtime and unknown last use; it never deletes
+  repository caches or promises scratch will be released.
+- Explain protected-quick drain conditions, blocking runner/controller handles
+  and known versions. Record new request/activation timestamps and loaded
+  controller versions; older observations remain explicitly unrecorded.
+- Report short quick-check latency separately by recorded policy/admission
+  cohort, alongside maximum completed waits and still-waiting work.
+- Make announcement previews read-only. Verify prerequisite failure propagation
+  without resource admission; document existing plan/lock migration options.
+
 ## 0.15.0
 
 - Add protected quick reserves with transactional activation after incompatible

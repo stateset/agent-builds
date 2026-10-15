@@ -11,6 +11,7 @@ import uuid
 from argparse import Namespace
 
 from .store import Store, TERMINAL, alive, identity
+from . import __version__
 
 FINISHED = ('succeeded', 'failed', 'cancelled', 'uncertain', 'timed_out', 'exhausted')
 STATES = ('queued', 'probing', 'waiting', 'cancelling')+FINISHED
@@ -326,8 +327,8 @@ def control(handle):
                 return
             if alive(row['owner_pid'], row['owner_start']):
                 raise ValueError('Another controller owns this external watch')
-            store.db.execute('UPDATE external_watches SET owner_pid=?,owner_start=?,reason=?,reserve_protocol=1 WHERE id=?',
-                             (os.getpid(), token, 'Controller monitoring durable probes', handle))
+            store.db.execute('UPDATE external_watches SET owner_pid=?,owner_start=?,reason=?,reserve_protocol=1,runner_version=? WHERE id=?',
+                             (os.getpid(), token, 'Controller monitoring durable probes', __version__, handle))
         def stop_controller(signum, frame):
             stop[0] = True
         for sig in (signal.SIGTERM, signal.SIGINT):

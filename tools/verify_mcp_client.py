@@ -53,10 +53,12 @@ async def verify(output):
         async with ClientSession(reader, writer) as session:
             initialized = await session.initialize()
             tools = await session.list_tools()
-            assert len(tools.tools) == 19
+            assert len(tools.tools) == 20
             assert all(tool.inputSchema['type'] == 'object' for tool in tools.tools)
             status = await call(session, 'buildr_status', {})
             assert status['initialized'] is False
+            diagnostics = await call(session,'buildr_diagnose',{})
+            assert diagnostics['initialized'] is False and not diagnostics['changes_applied']
             assert not state.exists()
             # Configure only this isolated fixture before its first submission.
             store = Store(state)
@@ -141,6 +143,8 @@ async def verify(output):
             assert [check['exit_code'] for check in batch_job['batch']['checks']]==[0,7,0]
             latency=await call(session,'buildr_latency',dict(target_seconds=30))
             assert latency['changes_applied'] is False and latency['cohorts']
+            diagnostics=await call(session,'buildr_diagnose',dict(job_id=batched['result']['job_id']))
+            assert diagnostics['jobs'][0]['state']=='failed' and not diagnostics['changes_applied']
     reader = Store(state, read_only=True)
     try:
         assert len(reader.rows()) == 8  # prior seven jobs plus one three-check batch

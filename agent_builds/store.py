@@ -91,6 +91,10 @@ class Store:
                     self.db.execute('ALTER TABLE jobs ADD COLUMN ' + name + ' ' + definition)
             self.db.execute('CREATE TABLE IF NOT EXISTS admission_policy (id INTEGER PRIMARY KEY CHECK(id=1), requested INTEGER NOT NULL DEFAULT 0, effective INTEGER NOT NULL DEFAULT 0)')
             self.db.execute('INSERT OR IGNORE INTO admission_policy (id) VALUES (1)')
+            policy_columns = {row[1] for row in self.db.execute('PRAGMA table_info(admission_policy)')}
+            for name in ('requested_at', 'effective_at'):
+                if name not in policy_columns:
+                    self.db.execute('ALTER TABLE admission_policy ADD COLUMN '+name+' REAL')
             self.db.execute("""CREATE TRIGGER IF NOT EXISTS protected_policy_guard BEFORE INSERT ON jobs
                 WHEN NEW.reserve_protocol!=1 AND (SELECT effective FROM admission_policy WHERE id=1)=1
                 BEGIN SELECT RAISE(ABORT, 'Protected quick capacity active; use the installed Buildr runner'); END""")
@@ -145,6 +149,8 @@ class Store:
                 columns={row[1] for row in self.db.execute('PRAGMA table_info('+table+')')}
                 if 'reserve_protocol' not in columns:
                     self.db.execute('ALTER TABLE '+table+' ADD COLUMN reserve_protocol INTEGER NOT NULL DEFAULT 0')
+                if 'runner_version' not in columns:
+                    self.db.execute("ALTER TABLE "+table+" ADD COLUMN runner_version TEXT NOT NULL DEFAULT ''")
 
     def close(self):
         if self.db is not None:
@@ -206,7 +212,11 @@ class Store:
                             sum(row['memory_gb'] for row in heavy)>result['memory_gb']-result['quick_reserve_memory_gb'] or
                             len(heavy)>result['max_running']-result['quick_reserve_jobs']):
                         raise ValueError('Wait for active heavy reservations to drain before changing protected reserves')
-            self.db.execute('UPDATE admission_policy SET requested=?,effective=CASE WHEN ?=0 THEN 0 ELSE effective END WHERE id=1', (int(requested), int(requested)))
+            self.db.execute('''UPDATE admission_policy SET
+                requested_at=CASE WHEN ?=1 AND requested=0 THEN ? ELSE requested_at END,
+                effective_at=CASE WHEN ?=0 THEN NULL ELSE effective_at END,
+                requested=?,effective=CASE WHEN ?=0 THEN 0 ELSE effective END WHERE id=1''',
+                (int(requested),time.time(),int(requested),int(requested),int(requested)))
             activate(self, result)
             result = {key:value for key,value in result.items() if key not in ('protected_quick_requested','protected_quick_pending')}
             result['protected_quick'] = requested

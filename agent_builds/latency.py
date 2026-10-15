@@ -28,12 +28,20 @@ def report(store, hours=24, target=30, repo=None):
     output=[]
     for (version,runner,lane,admission),jobs in sorted(cohorts.items()):
         waits=sorted(job['wait_seconds'] for job in jobs)
+        short=[job for job in jobs if lane=='quick' and job['elapsed_seconds']<=30]
+        short_waits=sorted(job['wait_seconds'] for job in short)
+        short_summary=dict(runtime_ceiling_seconds=30,jobs=len(short),
+            wait_p50_seconds=short_waits[math.ceil(len(short_waits)*.5)-1] if short else None,
+            wait_p95_seconds=short_waits[math.ceil(len(short_waits)*.95)-1] if short else None,
+            target_met_fraction=sum(wait<=target for wait in short_waits)/len(short) if short else None,
+            native_failures=sum(job['state']!='succeeded' for job in short))
         blockers={}
         for job in jobs:
             for category,seconds in job['wait_breakdown']['seconds'].items():
                 blockers[category]=blockers.get(category,0)+seconds
         output.append(dict(policy_version=version,runner_version=runner,lane=lane,admission=json.loads(admission),jobs=len(jobs),
             wait_p50_seconds=waits[math.ceil(len(waits)*.5)-1],wait_p95_seconds=waits[math.ceil(len(waits)*.95)-1],
+            wait_max_seconds=max(waits), short_quick_checks=short_summary,
             within_target=sum(wait<=target for wait in waits),target_met_fraction=sum(wait<=target for wait in waits)/len(waits),
             runtime_seconds=sum(job['elapsed_seconds'] for job in jobs),wait_seconds=sum(waits),blocker_seconds=blockers))
     evidence=advice.report(store,repo,hours,limit=2000)

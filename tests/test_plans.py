@@ -153,6 +153,22 @@ class PlanTests(unittest.TestCase):
         self.store.update_config(dict(paused=False))
         self.assertEqual(self.finish(handle)['state'],'succeeded')
 
+    def test_failed_prerequisite_skips_dependents_even_when_admission_is_blocked(self):
+        handle=self.create([self.stage('prerequisite'),self.stage('dependent'),self.stage('last')])
+        current=plans.get(self.store,handle)
+        job,token=plans.prepare(self.store,current,current['stages'][0])
+        self.store.finish(job,'failed',7)
+        self.store.update_config(dict(paused=True,min_free_gb=100000))
+        self.children.append(plans.spawn(self.store,handle))
+        result=self.finish(handle)
+        self.assertEqual([stage['state'] for stage in result['stages']],['failed','skipped','skipped'])
+        self.assertEqual(result['exit_code'],7)
+        self.assertIsNone(result['stages'][1]['job_id'])
+        self.assertIsNone(result['stages'][2]['job_id'])
+        self.assertEqual(len(self.store.rows()),1)
+        from agent_builds import __version__
+        self.assertEqual(result['runner_version'],__version__)
+
     def test_plan_cancellation_cancels_pending_and_active_without_affecting_other_jobs(self):
         self.store.update_config(dict(paused=True))
         unrelated = self.store.submit(self.repo, ['true'], 'local','quick',1,.25,'unrelated','',5)

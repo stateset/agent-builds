@@ -21,6 +21,15 @@ guards before execution. See [resource locks](resource-locks.md). Continued real
 mixed-workload observations remain necessary; these tests do not prove an
 overall coding-productivity improvement.
 
+v0.16 acts on a fresh nine-agent survey with bounded status, read-only operational
+diagnostics, explicit disk arithmetic, policy drain explanations and short-check
+cohorts. Acceptance covers missing state without writes, global reservation
+accounting despite repository filters, stale/cyclic/missing blocker links, native
+failure preservation, stable history pagination and failed-prerequisite skipping
+without admission. Real disk stalls remain operational failures to resolve;
+passing these tests does not establish an A+ operational latency result. See
+[operational diagnostics](diagnostics.md) and [agent feedback](agent-feedback-v0.16.md).
+
 External completion watches now use ordinary queued probes and retain no build
 reservation during confirmed idle intervals. Gates cover cancellation races,
 unknown launch/results, controller restarts and full-budget admission between

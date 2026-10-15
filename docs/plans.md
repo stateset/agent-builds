@@ -108,3 +108,25 @@ In the TUI, press `o` to submit a plan and `v` to reach its plan view. Arrows
 select plans, PgUp/PgDn scroll stages, Enter opens a stage job's log, `c` cancels
 the selected plan after confirmation, `r` resumes a stopped controller, and `e`
 exports a report. Queued stages continue to show their ordinary admission reason.
+
+## Replacing shell prerequisite guards
+
+If a queued shell command starts by reading another job's result, it still waits
+for admission before that guard can fail. Put the commands in dependency stages
+instead: a failed prerequisite skips its dependent stages **before job creation**,
+even when the queue is paused or disk headroom blocks admission. Ordinary jobs
+are literal commands; Buildr does not parse shell scripts to infer dependencies.
+
+Use `buildr plan draft JOB... --cwd PATH` to draft a future manifest from existing
+commands, then review dependencies, source scope, resource keys and artifacts.
+The draft does not rerun jobs. Submit the reviewed plan explicitly and obtain one
+compact acceptance result with `buildr plan wait PLAN --summary --json`. Preserve
+unknown, pending and skipped outcomes rather than treating them as passed gates.
+
+Independent checks may declare distinct exact resource keys only when their
+inputs and outputs are compatible. An image-manifest lookup can use a key for
+that image; a compiler and installer writing the same target/node_modules need
+shared locks. Read-only commands can still observe files another stage changes:
+use an immutable checkout for frozen-source checks. Source fingerprinting detects
+some drift but does not make a mutable checkout atomic. Never remove serialization
+merely to improve wait metrics.

@@ -60,12 +60,20 @@ def parser():
     latency.add_argument('--target-seconds', type=float, default=30)
     latency.add_argument('--repo')
     latency.add_argument('--json', action='store_true')
+    diagnose = sub.add_parser('diagnose', help='Explain current blockers, exact headroom deficits and policy draining without changing state')
+    diagnose.add_argument('job', nargs='?')
+    diagnose.add_argument('--repo')
+    diagnose.add_argument('--limit', type=int, default=10)
+    diagnose.add_argument('--json', action='store_true')
     status = sub.add_parser('status', help='Show jobs and machine pressure')
     status.add_argument('--json', action='store_true')
     status.add_argument('--summary', action='store_true', help='Only machine resources, budgets and job counts')
     status.add_argument('--active', action='store_true', help='Only queued/running/cancelling jobs')
     status.add_argument('--repo', help='Filter by absolute repository or worktree path')
-    status.add_argument('--limit', type=int, default=200, help='Maximum detailed jobs returned (default 200)')
+    status.add_argument('--limit', type=int, default=20, help='Maximum jobs returned (default 20)')
+    status.add_argument('--details', action='store_true', help='Include full job evidence instead of concise summaries')
+    status.add_argument('--history', action='store_true', help='List completed jobs instead of active jobs')
+    status.add_argument('--before', help='Continue completed history before this job handle (stable creation-order cursor)')
     logs = sub.add_parser('logs', help='Print the selected job log')
     logs.add_argument('job')
     logs.add_argument('--follow', '-f', action='store_true')
@@ -409,7 +417,8 @@ def main():
             from .announce import work
             work(args.announcement)
             return 0
-        inspection = (args.action in ('latency', 'status', 'logs', 'show', 'wait', 'announcements', 'processes', 'doctor', 'stats', 'disk', 'advise', 'simulate')
+        inspection = (args.action in ('diagnose', 'latency', 'status', 'logs', 'show', 'wait', 'announcements', 'processes', 'doctor', 'stats', 'disk', 'advise', 'simulate')
+            or (args.action == 'announce' and not args.send)
             or (args.action == 'config' and not args.init and not args.set)
             or (args.action == 'clean' and not args.apply)
             or (args.action == 'task' and args.task_action == 'list')
@@ -520,7 +529,11 @@ def main():
                         else:
                             print(json.dumps(result, indent=2))
                     return result['exit_code'] if args.plan_action == 'wait' else 0
-            if args.action == 'latency':
+            if args.action == 'diagnose':
+                from .diagnostics import report, lines
+                result = report(store, args.job, args.repo, args.limit)
+                print(json.dumps(result, indent=2) if args.json else '\n'.join(lines(result)))
+            elif args.action == 'latency':
                 from .latency import report
                 print(json.dumps(report(store,args.hours,args.target_seconds,args.repo),indent=2))
             elif args.action == 'config':
@@ -652,18 +665,28 @@ def main():
                     return 1
             elif args.action == 'status':
                 from .external import counts as watch_counts
+                from .diagnostics import brief, history, policy_summary
                 if not 1 <= args.limit <= 2000:
                     raise ValueError('--limit must be between 1 and 2000')
+                if args.active and args.history:
+                    raise ValueError('--active and --history cannot be combined')
+                if args.before and not args.history:
+                    raise ValueError('--before requires --history')
                 with store.read_snapshot():
                     result = dict(initialized=store.db is not None, state_path=str(store.root),
                                   machine=snapshot(os.getcwd()), config=store.config(),
                                   counts=store.counts(args.active, args.repo),
+                                  protection=policy_summary(store),
                                   external_watch_counts=watch_counts(store),
                                   count_scope=dict(active_only=args.active,
                                       repository=str(Path(args.repo).expanduser().resolve()) if args.repo else None,
                                       limited_by_result_limit=False))
                     if not args.summary:
-                        result['jobs'] = store.rows(args.limit, args.active, args.repo)
+                        jobs = history(store, args.limit+1, args.repo, args.before) if args.history else store.rows(args.limit+1, True, args.repo)
+                        result['jobs'] = [row if args.details else brief(row) for row in jobs[:args.limit]]
+                        result['job_scope'] = 'completed' if args.history else 'active'
+                        result['jobs_truncated'] = len(jobs)>args.limit
+                        result['next_cursor'] = jobs[args.limit-1]['id'] if args.history and len(jobs)>args.limit else None
                 if args.json:
                     print(json.dumps(result, indent=2))
                 elif args.summary:
@@ -673,7 +696,7 @@ def main():
                 else:
                     for row in result['jobs']:
                         print('{} {:11} {:7} {} | {} {}'.format(row['id'], row['state'], row['backend'],
-                            Path(row['cwd']).name, shlex.join(json.loads(row['command'])), row['reason'] or ''))
+                            Path(row['cwd']).name, row['command_display'], row['reason'] or ''))
             elif args.action == 'logs':
                 store.get(args.job)
                 path = store.log_path(args.job)

@@ -8,6 +8,12 @@ Agents can use the same queue through MCP: start `buildr mcp serve` as a stdio
 server. It exposes job submission, durable reconnects, bounded logs/waits and
 verification plans. See [MCP setup and tool reference](docs/mcp.md).
 
+Use `buildr diagnose [JOB]` (or `u` in the dashboard) to explain live blockers,
+exact disk deficits and pending policy activation without changing shared state.
+`status --json` now returns at most 20 concise active-job summaries by default;
+use `status --history --details --json` for completed evidence and `show JOB`
+for one full result. See [operational diagnostics](docs/diagnostics.md).
+
 Use `buildr watch start` for existing external work: short read-only status
 probes use the shared queue, while the durable watch holds no build reservation
 between probes. CLI, MCP and full/compact TUI views retain the same watch handle.

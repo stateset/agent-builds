@@ -38,12 +38,20 @@ def inventory(store, repo=None, extra_paths=()):
         return left == right or left in right.parents or right in left.parents
     for entry in rows:
         path = Path(entry['path'])
+        try:
+            info = path.stat()
+            entry.update(owner_uid=info.st_uid,directory_mtime=info.st_mtime)
+        except OSError:
+            entry.update(owner_uid=None,directory_mtime=None)
+        entry['last_use'] = 'unknown; directory mtime is not last use'
         users = [r for r in active if any(overlaps(path, Path(key)) for key in [r['cwd']]+r['resource_keys'] if Path(key).is_absolute())]
         if entry['kind'] == 'queue logs':
             users = active
         entry['running_jobs'] = [r['id'] for r in users if r['state'] in ('running', 'cancelling')]
         entry['queued_jobs'] = [r['id'] for r in users if r['state'] == 'queued']
         entry['cleanup_status'] = 'active_or_queued' if users else 'requires_owner_review'
+        entry['ownership_scope'] = 'queue-owned logs' if entry['kind']=='queue logs' else 'repository or explicit cache; owner review required'
+        entry['preserve_evidence'] = 'Keep release binaries, test evidence and active outputs. Absence of Buildr users does not rule out direct builds.'
     return dict(paths=sorted(rows, key=lambda r: r['bytes'] or 0, reverse=True),
                 active_scratch_reservations=[dict(job_id=r['id'], cwd=r['cwd'], scratch_gb=r['scratch_gb'])
                     for r in active if r['state'] in ('running', 'cancelling')],

@@ -182,5 +182,13 @@ and `locks` describe one local quick reservation. It defaults to one CPU, 1 GiB
 and a 60-second total timeout. Native results appear in the existing `buildr_job`
 and `buildr_wait` outputs under `batch`. Reuse the exact submission key/arguments
 after disconnecting. `buildr_latency` is read-only and accepts `hours`, `repo`
-and `target_seconds`. There are now 19 tools, 11 available in read-only mode.
+and `target_seconds`. There are now 20 tools, 12 available in read-only mode.
+
+### Operational diagnostics (v0.16)
+
+`buildr_diagnose` accepts optional `job_id`, `repo` and `limit` (1–50, default
+10). It returns current disk deficits and reservation components, bounded
+recorded blocker chains, observation freshness and policy drain conditions.
+It performs no recovery, activation, tuning or cache deletion. `buildr_status`
+also includes bounded protection details. See [operational diagnostics](diagnostics.md).
 See [verification](verification.md) for protected-mode behavior and limitations.

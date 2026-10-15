@@ -37,7 +37,7 @@ def paint(screen, y, x, text, attr=0):
         pass
 
 
-def compact_lines(rows, selected, plans, plan_index, view, config, height, width, watches=None, watch_index=0):
+def compact_lines(rows, selected, plans, plan_index, view, config, height, width, watches=None, watch_index=0, health=None, health_offset=0):
     """A monitor for narrow split panes; editing actions need the full view."""
     lines = ['BUILDR ' + __version__ + (' PAUSED' if config['paused'] else '')]
     if height < 8 or width < 20:
@@ -46,7 +46,17 @@ def compact_lines(rows, selected, plans, plan_index, view, config, height, width
     lines += ['CPU {}/{} reserved'.format(sum(r['slots'] for r in running), config['cpu_slots']),
               'RAM {:.1f}/{}G est.'.format(sum(r['memory_gb'] for r in running), config['memory_gb'])]
     selected_row = None
-    if view == 10:
+    if view == 11:
+        from .diagnostics import lines as health_lines
+        lines += ['HEALTH (read only)']
+        if health:
+            wrapped=[part for line in health_lines(health) for part in textwrap.wrap(line,max(1,width-1))]
+            room=max(1,height-len(lines)-1)
+            health_offset=min(max(0,health_offset),max(0,len(wrapped)-room))
+            lines += wrapped[health_offset:health_offset+room]
+        else:
+            lines += ['Loading diagnostics']
+    elif view == 10:
         watches=watches or []
         lines+=['EXTERNAL | {} shown'.format(len(watches))]
         if watches:
@@ -77,7 +87,7 @@ def compact_lines(rows, selected, plans, plan_index, view, config, height, width
             lines += tail(Path(selected_row['log_path']), max(1, height-len(lines)-2))
         else:
             lines += ['No jobs yet']
-    return lines[:height-1] + ['j/k move v views q']
+    return lines[:height-1] + ['j/k scroll u back q' if view==11 else 'j/k move v views q']
 
 
 def prompt(screen, title, initial=''):
@@ -154,6 +164,7 @@ def main(screen, cwd):
     advice_result = None
     advice_offset = 0
     last_advice = 0
+    health_result, health_offset, last_health = None, 0, 0
     group_rows = []
     group_index = 0
     group_id = None
@@ -182,6 +193,14 @@ def main(screen, cwd):
                 processes = sampler.sample()
                 last_sample = time.monotonic()
             config = store.config()
+            if view == 11 and time.monotonic()-last_health >= 2:
+                from .diagnostics import report
+                reader = Store(store.root, read_only=True)
+                try:
+                    health_result = report(reader)
+                finally:
+                    reader.close()
+                last_health = time.monotonic()
             if view == 7 and time.monotonic()-last_plans >= 1:
                 from .plans import listing
                 plan_rows = listing(store, limit=20)
@@ -207,7 +226,7 @@ def main(screen, cwd):
             height, width = screen.getmaxyx()
             compact = height < 15 or width < 65
             if compact:
-                for index, line in enumerate(compact_lines(rows, selected, plan_rows, plan_index, view, config, height, width, watch_rows, watch_index)):
+                for index, line in enumerate(compact_lines(rows, selected, plan_rows, plan_index, view, config, height, width, watch_rows, watch_index, health_result, health_offset)):
                     paint(screen, index, 0, line)
             else:
                 context = ' | Herdr ' + os.environ.get('HERDR_PANE_ID', '') if os.environ.get('HERDR_ENV') == '1' else ''
@@ -236,7 +255,15 @@ def main(screen, cwd):
                 if not rows:
                     paint(screen, 6, 0, 'No jobs yet. Press n, or run: agent-builds run -- cargo check')
                 log_top = 7 + count
-                if view == 1:
+                if view == 11:
+                    from .diagnostics import lines as health_lines
+                    lines = [part for line in health_lines(health_result) for part in (textwrap.wrap(line,max(1,width-2)) or [''])] if health_result else ['Loading diagnostics']
+                    room = max(1,height-log_top-3)
+                    health_offset = min(max(0,health_offset),max(0,len(lines)-room))
+                    paint(screen,log_top-1,0,'HEALTH | read only | u returns to jobs | j/k or PgUp/PgDn scroll',curses.A_BOLD)
+                    for index,line in enumerate(lines[health_offset:health_offset+room]):
+                        paint(screen,log_top+index,0,line)
+                elif view == 1:
                     paint(screen, log_top - 1, 0, 'SYSTEM PROCESSES (your user; read only; 100% CPU = one logical core)', curses.A_BOLD)
                     paint(screen, log_top, 0, 'PID     CPU%   RSS MiB  PROCESS / DIRECTORY')
                     for index, process in enumerate(processes[:max(1, height - log_top - 4)]):
@@ -420,14 +447,28 @@ def main(screen, cwd):
                     for index, line in enumerate(tail(store.log_path(row['id']), max(1, height - log_top - offset - 3))):
                         paint(screen, log_top + offset + index, 0, line)
                 paint(screen, height - 2, 0, message)
-                paint(screen, height - 1, 0, 'o plan  t task  i details  h advisor  v views  q quit' if view != 7 else 'o plan  c cancel plan  r resume  e export  PgUp/PgDn scroll  v views  q quit')
+                paint(screen, height - 1, 0, 'o plan  t task  i details  h advisor  u health  v views  q quit' if view != 7 else 'o plan  c cancel plan  r resume  e export  PgUp/PgDn scroll  v views  q quit')
                 if view==10:
                     paint(screen,height-1,0,'c stop observation  r resume controller  e export  Enter probe log  v views  q quit')
+                elif view==11:
+                    paint(screen,height-1,0,'j/k scroll  PgUp/PgDn page  u jobs  v views  q quit | read only')
             screen.refresh()
             key = screen.getch()
             if key in (ord('q'), 27):
                 break
-            if compact and key not in (ord('j'), ord('k'), curses.KEY_DOWN, curses.KEY_UP, ord('v')):
+            if compact and key not in (ord('j'), ord('k'), curses.KEY_DOWN, curses.KEY_UP, ord('v'), ord('u')):
+                continue
+            if key == ord('u'):
+                view = 0 if view == 11 else 11
+                health_offset,last_health = 0,0
+                continue
+            if view == 11:
+                if key in (ord('j'),curses.KEY_DOWN,curses.KEY_NPAGE):
+                    health_offset += max(1,height-10) if key==curses.KEY_NPAGE else 1
+                elif key in (ord('k'),curses.KEY_UP,curses.KEY_PPAGE):
+                    health_offset = max(0,health_offset-(max(1,height-10) if key==curses.KEY_PPAGE else 1))
+                elif key == ord('v'):
+                    view = 0
                 continue
             if view == 8 and not compact and key not in (ord('j'), ord('k'), curses.KEY_DOWN, curses.KEY_UP,
                                                        curses.KEY_NPAGE, curses.KEY_PPAGE, ord('v'), ord('h')):
@@ -478,7 +519,7 @@ def main(screen, cwd):
                     selected = max(0, selected - 1)
                     selected_id = rows[selected]['id'] if rows else None
             elif key == ord('v'):
-                view = ({0:7,7:10,10:0}.get(view,0)) if compact else (view + 1) % 11
+                view = ({0:7,7:10,10:11,11:0}.get(view,0)) if compact else (view + 1) % 12
             elif key == ord('h'):
                 view = 0 if view == 8 else 8
                 advice_offset, last_advice = 0, 0

@@ -48,6 +48,8 @@ def tool(name, description, properties=None, required=(), read=True, idempotent=
 TOOLS = [
     tool('buildr_status', 'Read machine pressure, unchanged queue budgets, counts and bounded job summaries.', dict(
         active=dict(type='boolean', default=True), repo=CWD, limit=dict(type='integer', minimum=1, maximum=50, default=10))),
+    tool('buildr_diagnose', 'Explain current disk deficits, recorded blocker chains and protection-draining conditions. Read-only; no cache deletion, recovery, retries or tuning.', dict(
+        job_id=HANDLE,repo=CWD,limit=dict(type='integer',minimum=1,maximum=50,default=10))),
     tool('buildr_submit', 'Submit argv asynchronously through the shared queue. A request_key binds exactly one submission attempt; reuse the same key and identical arguments after a lost response. Never retry uncertain work with a new key.', dict(
         request_key=KEY, cwd=CWD, command=dict(type='array', minItems=1, maxItems=128, items=dict(type='string', maxLength=4096)),
         lane=dict(type='string', enum=['quick', 'heavy'], default='quick'),
@@ -177,11 +179,15 @@ def call(name, args, read_only=False):
         if name == 'buildr_latency':
             from .latency import report
             return report(store,args.get('hours',24),args.get('target_seconds',30),args.get('repo'))
+        if name == 'buildr_diagnose':
+            from .diagnostics import report
+            return report(store,args.get('job_id'),args.get('repo'),args.get('limit',10))
         if name == 'buildr_status':
             from .external import counts as watch_counts
+            from .diagnostics import policy_summary
             with store.read_snapshot():
                 return dict(initialized=store.db is not None, machine=snapshot(args.get('repo', os.getcwd())),
-                    config=store.config(), counts=store.counts(active=args.get('active', True), repo=args.get('repo')),
+                    config=store.config(), protection=policy_summary(store), counts=store.counts(active=args.get('active', True), repo=args.get('repo')),
                     external_watch_counts=watch_counts(store),
                     jobs=[compact(r) for r in store.rows(active=args.get('active', True), repo=args.get('repo'), limit=args.get('limit', 10))])
         if name == 'buildr_submission':
