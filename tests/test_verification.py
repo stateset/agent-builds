@@ -82,6 +82,12 @@ class VerificationTests(unittest.TestCase):
             self.job('large',slots=2)
         self.assertEqual(sum(self.store.counts().values()),0)
 
+    def test_plan_validation_rejects_oversized_heavy_before_controller_creation(self):
+        from agent_builds.plans import validate
+        self.store.update_config(dict(protected_quick=True))
+        with self.assertRaisesRegex(ValueError,'protected quick reserves'):
+            validate(dict(stages=[dict(name='large',command=['true'],lane='heavy',jobs=2)]),self.root,self.store.config())
+
     def test_future_old_insert_fails_before_it_can_borrow_protected_capacity(self):
         self.store.update_config(dict(protected_quick=True))
         with self.assertRaisesRegex(sqlite3.IntegrityError,'installed Buildr runner'):

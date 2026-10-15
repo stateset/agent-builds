@@ -76,6 +76,8 @@ def validate(definition, cwd, config):
             raise ValueError('Stage memory exceeds machine budget')
         if type(timeout) not in (int, float) or not math.isfinite(timeout) or timeout <= 0:
             raise ValueError('Stage timeout must be positive')
+        from .protection import validate_job
+        validate_job(dict(config,protected_quick=config.get('protected_quick_requested',config.get('protected_quick',False))),lane,slots,memory)
         disk = {key: stage.get(key, 0) for key in ('min_free_gb', 'scratch_gb')}
         if any(type(value) not in (int, float) or not math.isfinite(value) or value < 0 for value in disk.values()):
             raise ValueError('Disk reservations must be finite and nonnegative')

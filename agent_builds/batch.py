@@ -60,8 +60,9 @@ def run(encoded):
         row = store.get(handle)
         if row['state']!='running' or row['backend']!='local' or row['argv'][-2:]!=['batch-worker',encoded]:
             raise ValueError('Batch definition does not match this running local job')
+        from .budgets import worker_budget
         report = dict(schema='buildr-batch-v1',keep_going=definition['keep_going'],complete=False,
-            checks=[dict(name=check['name'],state='pending',exit_code=None) for check in definition['checks']])
+            checks=[dict(name=check['name'],state='pending',exit_code=None,worker_budget=worker_budget(check['command'],row['slots'])) for check in definition['checks']])
         def save():
             store.db.execute('UPDATE jobs SET batch=? WHERE id=?', (json.dumps(report),handle))
         def stop(signum, frame):
