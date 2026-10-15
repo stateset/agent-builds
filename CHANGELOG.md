@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.6.0
+
+- Reserve quick-check capacity and prioritize aged queued work without preempting
+  running jobs. Skip externally blocked repos and preserve per-repo FIFO.
+- Record local process-tree CPU time and sampled peak RSS; expose wait/runtime
+  history and advisory memory suggestions without changing reservations.
+- Add bounded disk inventory and preview/apply retention of old completed-job logs.
+- Add explicit per-checkout task shortcuts through the normal queue, including a
+  TUI task picker, history, disk inventory and measured job details.
+- Add opt-in dedicated SSH worker profiles and explicit remote queue commands,
+  with durable dispatch records, duplicate-token protection, and reconciliation
+  after uncertain connection outcomes. No automatic offload or host configuration.
+- Add validated CLI budget updates and TUI quick-reserve/aging controls.
+- Incorporate fresh agent feedback: reserve quick job-count and memory capacity,
+  show age eligibility, add read-only multi-handle `wait` with exit codes and log
+  tails, group statistics by lane/reservation, and mark active caches in inventory.
+- Retain explicit output-directory locks in task shortcuts; reject invalid budget
+  types and zero worker counts without silently replacing them with defaults.
+
 ## 0.5.0
 
 - Fix a live-log-following crash caused by a shadowed `time` import; test an active

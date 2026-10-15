@@ -22,7 +22,7 @@ class QueueTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)
         self.store = Store(self.root / 'state')
-        self.store.config_path.write_text(json.dumps(dict(cpu_slots=3, memory_gb=8, min_free_gb=0, min_available_gb=0, nice=0)))
+        self.store.config_path.write_text(json.dumps(dict(cpu_slots=3, memory_gb=8, min_free_gb=0, min_available_gb=0, nice=0, quick_reserve_slots=0)))
         self.env = dict(os.environ, AGENT_BUILDS_STATE=str(self.store.root), PYTHONPATH=ROOT)
         self.env.pop('AGENT_BUILDS_JOB_ID', None)
         self.processes = []

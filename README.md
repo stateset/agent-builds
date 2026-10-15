@@ -46,6 +46,84 @@ It doesn't invoke a shell implicitly. Explicit shell commands are supported:
 `agent-builds run -- bash -lc 'npm run lint && npm test'`.
 Jobs are noninteractive; run interactive programs in an ordinary pane.
 
+## v0.6.0: shorter feedback loops
+
+The default policy reserves two of the six CPU slots, one job slot, and 2 GiB of
+the memory reservation budget for quick checks. Young
+heavy jobs may use four slots collectively; a three-slot heavy build can run
+alongside a two-slot quick check. This trades some bulk-build throughput for
+responsiveness. After 120 seconds, a queued job gains priority and may use the
+reserved slots. New jobs then wait for existing work to drain rather than
+continually overtaking it. Running work is never preempted or resized.
+An aged job blocked by its repository, disk, physical-memory headroom, or a
+reservation larger than the current total budget does not freeze other repos.
+FIFO is preserved within a shared repository/output directory.
+
+```sh
+agent-builds config --set quick_reserve_slots=2 --set aging_seconds=120
+# Restore full bulk-build capacity if preferred:
+agent-builds config --set quick_reserve_slots=0 --set quick_reserve_jobs=0 --set quick_reserve_memory_gb=0
+agent-builds stats --repo /absolute/repo --json
+agent-builds disk --repo /absolute/repo --json
+agent-builds clean --older-than-days 7          # preview only
+agent-builds clean --older-than-days 7 --apply  # eligible completed-job logs only
+agent-builds wait JOB_ID --json --timeout 300 --tail 10
+agent-builds wait JOB_ID ANOTHER_ID --json
+```
+
+Local jobs now record process-tree CPU time and sampled peak RSS in `usage`.
+Samples run about every half-second and persist about every two seconds; final
+CPU accounting also uses reaped-child accounting. RSS sums can count shared
+pages more than once and miss short peaks. Measurements are observations, not
+resource enforcement. Docker usage stays unmeasured rather than reporting the
+Docker client's memory as container memory. Old jobs retain empty usage.
+`stats` shows wait percentiles, runtime and measured memory for exact commands
+and output-directory keys, lanes and reservations in up to 1,000 recent records,
+with lane-level wait percentiles. Memory suggestions need three measured
+successes and never update budgets automatically. Queued job JSON and TUI details
+show age eligibility and effective reserves; age is not an ETA.
+
+Disk inventory scans only known checkout caches (`target`, `node_modules`,
+`.venv`, `.next`) and queue logs, with time limits. It does not scan your entire
+home directory or delete repository artifacts. Use `--path /explicit/cache` to
+include a custom output directory. Inventory marks caches with active/queued
+users, separates measured sizes from declared scratch reservations, and requires
+owner review before any cache cleanup. `clean` only removes ordinary,
+owned log files belonging to terminal jobs older than the requested retention;
+history and active logs remain available. No cleanup runs automatically.
+
+Register explicit shortcuts per checkout; options may follow the task name,
+and the literal `--` separates the saved command:
+
+```sh
+agent-builds task add check --cwd /absolute/repo --lane quick --jobs 2 -- cargo check
+agent-builds task add test --cwd /absolute/repo --lane heavy --jobs 3 --memory-gb 6 -- cargo test
+agent-builds task list --cwd /absolute/repo
+agent-builds task run check --cwd /absolute/repo
+agent-builds task run test --cwd /absolute/repo --detach
+```
+
+Shortcuts live in private queue configuration and do not edit repository files,
+shell aliases or system Cargo settings. Running a shortcut submits its saved
+argv and budgets through the ordinary queue; it never evaluates command text
+as a shell. Press `t` in the TUI to select a shortcut, `d` for a background disk
+inventory, and `v` to cycle logs, processes, announcements, details, history,
+remote records and disk inventory. The job-details view includes measurements.
+An explicit `task add --resource-key /output/path` can group an independent
+artifact directory; the default still serializes the checkout. Choose an
+override only when the commands really do use independent outputs.
+
+`wait` reconnects read-only to queued, running or completed handles and returns
+the command's exit code. For multiple handles it waits for all and returns the
+first non-success exit in input order. `--timeout` returns 124 while jobs continue;
+JSON distinguishes that wait timeout from a command result. Optional tails are
+bounded to the last 64 KiB and at most 200 lines per job. Lost jobs return failure.
+
+Dedicated SSH workers are opt-in; see [worker setup](docs/workers.md). Nothing
+connects or offloads automatically. Existing Hetzner infrastructure is untouched.
+After an upgrade, already-running and queued runner processes keep their loaded
+policy; newly submitted jobs use the new policy. No runners are restarted.
+
 ## v0.5.0: understand the work using capacity
 
 Running and cancelling jobs appear first in both the TUI and limited status
@@ -148,6 +226,10 @@ Initial settings for the current 8-logical-CPU, 31-GiB workstation:
 | Combined managed CPU reservations | 6 slots |
 | Concurrent managed jobs | 3 |
 | Concurrent heavy jobs | 2 |
+| CPU slots reserved for quick checks | 2 |
+| Job slots reserved for quick checks | 1 |
+| Reserved memory capacity for quick checks | 2 GiB |
+| Age priority for waiting jobs | 120 seconds |
 | Heavy job | 3 CPU slots, 6 GiB reserved |
 | Quick job | 2 CPU slots, 2 GiB reserved |
 | Combined managed memory reservations | 16 GiB |

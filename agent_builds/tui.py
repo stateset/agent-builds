@@ -6,6 +6,7 @@ import shlex
 import subprocess
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 from .metrics import ProcessSampler, snapshot
 from . import __version__
@@ -98,6 +99,16 @@ def main(screen, cwd):
     details_offset = 0
     details_job = None
     last_sample = 0
+    disk_pool = ThreadPoolExecutor(max_workers=1)
+    disk_future = None
+    disk_result = None
+    def scan_disk(repository):
+        from .disk import inventory
+        reader = Store(store.root, read_only=True)
+        try:
+            return inventory(reader, repository)
+        finally:
+            reader.close()
     try:
         while True:
             children = [child for child in children if child.poll() is None]
@@ -131,9 +142,9 @@ def main(screen, cwd):
                 fmt = lambda value: 'n/a' if value is None else '{:.0f}%'.format(value)
                 paint(screen, 3, 0, 'Pressure avg10: CPU {}  memory {}  I/O {} | External builds are not controlled.'.format(
                     fmt(metrics['cpu_pressure']), fmt(metrics['memory_pressure']), fmt(metrics['io_pressure'])))
-                heading = 'JOB DETAILS | arrows select jobs | PgUp/PgDn scroll' if view == 3 else 'JOB           STATE       CPU RAM  BACKEND  REPOSITORY / COMMAND'
+                heading = 'DETAILS / TOOLS | arrows select jobs | v changes view' if view >= 3 else 'JOB           STATE       CPU RAM  BACKEND  REPOSITORY / COMMAND'
                 paint(screen, 5, 0, heading, curses.A_BOLD)
-                count = 0 if view == 3 else min(8, max(3, (height - 12) // 2))
+                count = 0 if view >= 3 else min(8, max(3, (height - 12) // 2))
                 start = max(0, selected - count + 1)
                 for index, row in enumerate(rows[start:start + count], start):
                     text = '{} {:11} {:>2} {:>3g}  {:7}  {} / {}'.format(
@@ -175,6 +186,18 @@ def main(screen, cwd):
                         'Cargo build setting: {} ({})'.format(workers['cargo_build']['configured_value'], workers['cargo_build']['source']),
                         'Rust test setting: {} ({})'.format(workers['rust_tests']['configured_value'], workers['rust_tests']['source']),
                         'Worker settings describe configuration; runtime concurrency is not measured.']
+                    usage = row['usage']
+                    if usage:
+                        lines += ['Measured CPU {:.2f}s | sampled peak RSS {:.3f} GiB | {} samples'.format(
+                            usage.get('cpu_seconds', 0), usage.get('sampled_peak_rss_gb', 0), usage.get('samples', 0)),
+                            'RSS is sampled, may include shared pages, and may miss short peaks.']
+                    else:
+                        lines += ['Job resource usage has not been measured.']
+                    if row.get('scheduling'):
+                        policy = row['scheduling']
+                        lines += ['Age priority: {} | threshold {}s | quick reserve {} CPU / {} jobs / {} GiB'.format(
+                            policy['age_priority'], policy['aging_seconds'], policy['quick_reserve_slots'],
+                            policy['quick_reserve_jobs'], policy['quick_reserve_memory_gb']), policy['note']]
                     if context:
                         lines += [
                             'RAM admission: {} GiB job + {} GiB headroom = {} GiB minimum available'.format(
@@ -189,6 +212,38 @@ def main(screen, cwd):
                     visible = max(1, height - log_top - 3)
                     details_offset = min(max(0, details_offset), max(0, len(lines) - visible))
                     for index, line in enumerate(lines[details_offset:details_offset + visible]):
+                        paint(screen, log_top + index, 0, line)
+                elif view == 4:
+                    from .telemetry import statistics
+                    report = statistics(store, rows[selected]['cwd'] if rows else cwd)
+                    paint(screen, log_top - 1, 0, 'HISTORY | selected repository | memory suggestions never apply automatically', curses.A_BOLD)
+                    for index, entry in enumerate(report['groups'][:max(1, height - log_top - 3)]):
+                        paint(screen, log_top + index, 0, '{} jobs | p95 wait {:.1f}s | runtime {:.1f}s | {}'.format(
+                            entry['jobs'], entry['wait_p95_seconds'], entry['average_runtime_seconds'], entry['command_display']))
+                elif view == 5:
+                    from .remote import dispatches
+                    from .profiles import load
+                    paint(screen, log_top - 1, 0, 'REMOTE WORKERS | explicit dispatch only; no automatic SSH connections', curses.A_BOLD)
+                    records = dispatches(store)
+                    lines = ['Configured dedicated workers: ' + ', '.join(load(store).get('workers', {}))]
+                    lines += ['{} | {} | {} | {}'.format(r['handle'], r['worker'], r['state'], r.get('job_id') or 'outcome unknown') for r in records]
+                    if not records:
+                        lines += ['No remote submissions. No host is configured automatically.']
+                    for index, line in enumerate(lines[:max(1, height - log_top - 3)]):
+                        paint(screen, log_top + index, 0, line)
+                elif view == 6:
+                    paint(screen, log_top - 1, 0, 'DISK INVENTORY | d scans selected repo | caches are never deleted here', curses.A_BOLD)
+                    if disk_future is not None and disk_future.done():
+                        try:
+                            disk_result = disk_future.result()
+                        except (ValueError, OSError) as error:
+                            message = 'Disk scan failed: ' + str(error)
+                        disk_future = None
+                    lines = ['Scanning...' if disk_future else 'Press d to scan the selected repository.']
+                    if disk_result:
+                        lines += ['{} GiB | {}'.format('{:.2f}'.format(r['bytes']/1024**3) if r['bytes'] is not None else '?', r['path']) for r in disk_result['paths']]
+                    lines += ['Old queue logs: agent-builds clean (preview); --apply deletes eligible logs.']
+                    for index, line in enumerate(lines[:max(1, height - log_top - 3)]):
                         paint(screen, log_top + index, 0, line)
                 elif rows:
                     row = rows[selected]
@@ -208,7 +263,7 @@ def main(screen, cwd):
                     for index, line in enumerate(tail(store.log_path(row['id']), max(1, height - log_top - offset - 3))):
                         paint(screen, log_top + offset + index, 0, line)
                 paint(screen, height - 2, 0, message)
-                paint(screen, height - 1, 0, 'n new  c cancel  p pause  b budgets  i details  v views  a announce  q quit')
+                paint(screen, height - 1, 0, 'n new  t task  c cancel  p pause  b budgets  i details  d disk  v views  q quit')
             screen.refresh()
             key = screen.getch()
             if key in (ord('q'), 27):
@@ -221,7 +276,33 @@ def main(screen, cwd):
                 selected = max(0, selected - 1)
                 selected_id = rows[selected]['id'] if rows else None
             elif key == ord('v'):
-                view = (view + 1) % 4
+                view = (view + 1) % 7
+            elif key == ord('d'):
+                view = 6
+                if disk_future is None:
+                    disk_future = disk_pool.submit(scan_disk, rows[selected]['cwd'] if rows else cwd)
+            elif key == ord('t') and height >= 15 and width >= 65:
+                from .profiles import load, repository
+                try:
+                    location = prompt(screen, 'Task repository', rows[selected]['cwd'] if rows else str(cwd))
+                    if location is None:
+                        continue
+                    prefix = repository(location) + ':'
+                    tasks = [v['name'] for k, v in load(store).get('tasks', {}).items() if k.startswith(prefix)]
+                    if not tasks:
+                        message = 'No shortcuts. Register one with agent-builds task add NAME --cwd PATH -- COMMAND'
+                        continue
+                    task = prompt(screen, 'Task: ' + ', '.join(tasks), tasks[0])
+                    if task not in tasks:
+                        continue
+                    env = os.environ.copy()
+                    env['PYTHONPATH'] = str(Path(__file__).resolve().parent.parent) + os.pathsep + env.get('PYTHONPATH', '')
+                    children.append(subprocess.Popen([sys.executable, '-m', 'agent_builds', 'task', 'run', task,
+                        '--cwd', location, '--detach'], env=env, stdin=subprocess.DEVNULL,
+                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True))
+                    message = 'Submitted task ' + task
+                except (ValueError, OSError) as error:
+                    message = 'Task failed: ' + str(error)
             elif key == ord('i'):
                 view = 0 if view == 3 else 3
                 details_offset = 0
@@ -265,6 +346,10 @@ def main(screen, cwd):
                         ('cpu_slots', 'Total CPU slots', int),
                         ('max_running', 'Concurrent jobs', int),
                         ('max_heavy', 'Concurrent heavy jobs', int),
+                        ('quick_reserve_slots', 'CPU slots reserved for quick checks', int),
+                        ('quick_reserve_jobs', 'Job capacity reserved for quick checks', int),
+                        ('quick_reserve_memory_gb', 'RAM GiB reserved for quick checks', float),
+                        ('aging_seconds', 'Aged-job priority after seconds', float),
                         ('memory_gb', 'Total reserved RAM GiB', float),
                         ('min_free_gb', 'Minimum free disk GiB', float),
                         ('min_available_gb', 'RAM headroom GiB', float)]:
@@ -316,6 +401,7 @@ def main(screen, cwd):
                 except (ValueError, OSError) as error:
                     message = str(error)
     finally:
+        disk_pool.shutdown(wait=False)
         store.close()
 
 

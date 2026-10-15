@@ -12,6 +12,7 @@ import time
 import uuid
 
 from .store import Store, TERMINAL, alive, identity
+from .telemetry import JobSampler
 
 
 def resource_key(cwd):
@@ -145,7 +146,7 @@ def execute(args):
     command = list(args.command)
     if command and command[0] == '--':
         command.pop(0)
-    slots = args.jobs or config[args.lane + '_jobs']
+    slots = args.jobs if args.jobs is not None else config[args.lane + '_jobs']
     memory = args.memory_gb if args.memory_gb is not None else (6 if args.lane == 'heavy' else 2)
     timeout = args.timeout if args.timeout is not None else config['timeout_seconds']
     if not math.isfinite(timeout) or timeout <= 0:
@@ -216,6 +217,9 @@ def execute(args):
                                  stdin=subprocess.DEVNULL, start_new_session=True)
         store.db.execute('UPDATE jobs SET child_pid=?,child_start=? WHERE id=?',
                          (child.pid, identity(child.pid), job))
+        sampler = JobSampler(child.pid, identity(child.pid)) if row['backend'] == 'local' else None
+        last_sample = 0
+        last_persist = 0
         selector = selectors.DefaultSelector()
         selector.register(child.stdout, selectors.EVENT_READ)
         deadline = time.monotonic() + timeout
@@ -225,6 +229,12 @@ def execute(args):
             os.chmod(str(store.log_path(job)), 0o600)
             log.write(('$ ' + shlex.join(command) + '\n').encode())
             while selector.get_map() or not exited(child):
+                if sampler is not None and time.monotonic() - last_sample >= .5:
+                    usage = sampler.sample()
+                    last_sample = time.monotonic()
+                    if last_sample - last_persist >= 2:
+                        store.record_usage(job, usage)
+                        last_persist = last_sample
                 row = store.get(job)
                 timed_out = time.monotonic() >= deadline
                 if stopped_at is None and (cancelled[0] or row['cancel_requested'] or timed_out):
@@ -254,6 +264,8 @@ def execute(args):
             code = child.wait()
         selector.close()
         child.stdout.close()
+        if sampler is not None:
+            store.record_usage(job, sampler.result(finished=True))
         if row['backend'] == 'docker' and not docker_stopped(row):
             store.db.execute("UPDATE jobs SET state='cancelling',reason=? WHERE id=?",
                              ('Docker outcome unknown; cancel to reconcile', job))

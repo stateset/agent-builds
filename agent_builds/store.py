@@ -11,10 +11,12 @@ import uuid
 
 from .metrics import snapshot
 from .budgets import worker_budget
+from .scheduler import choose
 
 DEFAULTS = dict(cpu_slots=6, max_running=3, max_heavy=2, memory_gb=16,
                 min_free_gb=10, quick_jobs=2, heavy_jobs=3, nice=10,
-                timeout_seconds=7200, docker_image='', min_available_gb=4, paused=False)
+                timeout_seconds=7200, docker_image='', min_available_gb=4, paused=False,
+                quick_reserve_slots=2, quick_reserve_jobs=1, quick_reserve_memory_gb=2, aging_seconds=120)
 TERMINAL = ('succeeded', 'failed', 'cancelled', 'lost')
 STATES = ('queued', 'running', 'cancelling', 'succeeded', 'failed', 'cancelled', 'lost')
 
@@ -72,7 +74,8 @@ class Store:
             columns = {row[1] for row in self.db.execute('PRAGMA table_info(jobs)')}
             for name, definition in [('min_free_gb', 'REAL NOT NULL DEFAULT 0'),
                                      ('scratch_gb', 'REAL NOT NULL DEFAULT 0'),
-                                     ('wait_context', "TEXT NOT NULL DEFAULT '{}'")]:
+                                     ('wait_context', "TEXT NOT NULL DEFAULT '{}'"),
+                                     ('usage', "TEXT NOT NULL DEFAULT '{}'")]:
                 if name not in columns:
                     self.db.execute('ALTER TABLE jobs ADD COLUMN ' + name + ' ' + definition)
         self.db.execute('''CREATE TABLE IF NOT EXISTS announcements (
@@ -97,17 +100,26 @@ class Store:
     @staticmethod
     def validate_config(result):
         for key in ('cpu_slots', 'max_running', 'max_heavy', 'quick_jobs', 'heavy_jobs'):
-            if not isinstance(result[key], int) or result[key] < 1:
+            if type(result[key]) is not int or result[key] < 1:
                 raise ValueError('{} must be a positive integer'.format(key))
-        for key in ('memory_gb', 'timeout_seconds'):
-            if not isinstance(result[key], (int, float)) or not math.isfinite(result[key]) or result[key] <= 0:
+        for key in ('memory_gb', 'timeout_seconds', 'aging_seconds'):
+            if type(result[key]) not in (int, float) or not math.isfinite(result[key]) or result[key] <= 0:
                 raise ValueError('{} must be positive'.format(key))
-        if (not math.isfinite(result['min_free_gb']) or result['min_free_gb'] < 0 or
-                not math.isfinite(result['min_available_gb']) or result['min_available_gb'] < 0 or
-                not 0 <= result['nice'] <= 19):
-            raise ValueError('Invalid disk watermark or niceness')
+        for key in ('min_free_gb', 'min_available_gb', 'quick_reserve_memory_gb'):
+            if type(result[key]) not in (int, float) or not math.isfinite(result[key]) or result[key] < 0:
+                raise ValueError('{} must be finite and nonnegative'.format(key))
+        if type(result['quick_reserve_slots']) is not int or not 0 <= result['quick_reserve_slots'] < result['cpu_slots']:
+            raise ValueError('quick_reserve_slots must be between zero and cpu_slots - 1')
+        if type(result['quick_reserve_jobs']) is not int or not 0 <= result['quick_reserve_jobs'] < result['max_running']:
+            raise ValueError('quick_reserve_jobs must be between zero and max_running - 1')
+        if result['quick_reserve_memory_gb'] >= result['memory_gb']:
+            raise ValueError('quick_reserve_memory_gb must be below the total memory budget')
+        if type(result['nice']) is not int or not 0 <= result['nice'] <= 19:
+            raise ValueError('nice must be an integer between zero and 19')
         if not isinstance(result['paused'], bool):
             raise ValueError('paused must be true or false')
+        if not isinstance(result['docker_image'], str):
+            raise ValueError('docker_image must be text')
         return result
 
     def update_config(self, changes):
@@ -134,6 +146,7 @@ class Store:
         if self.db is None:
             yield
             return
+        self._reservation_cache = None
         self.db.execute('BEGIN')
         try:
             yield
@@ -167,6 +180,7 @@ class Store:
         row['log_path'] = str(self.log_path(row['id']))
         row['wait_context'] = json.loads(row.get('wait_context') or '{}')
         row['origin'] = json.loads(row.get('herdr') or '{}')
+        row['usage'] = json.loads(row.get('usage') or '{}')
         row['worker_budget'] = worker_budget(row['argv'], row['slots'])
         if row['state'] == 'queued' and row['wait_context']:
             observed = self.reservation_snapshot()
@@ -181,6 +195,12 @@ class Store:
         row['wait_seconds'] = max(0, (row['started'] or row['finished'] or time.time()) - row['created'])
         row['elapsed_seconds'] = max(0, (row['finished'] or time.time()) - row['started']) if row['started'] else 0
         row['age_seconds'] = max(0, (row['finished'] or time.time()) - row['created'])
+        if row['state'] == 'queued':
+            config = self.config()
+            row['scheduling'] = dict(age_priority=row['wait_seconds'] >= config['aging_seconds'],
+                aging_seconds=config['aging_seconds'], quick_reserve_slots=config['quick_reserve_slots'],
+                quick_reserve_jobs=config['quick_reserve_jobs'], quick_reserve_memory_gb=config['quick_reserve_memory_gb'],
+                preemption=False, note='Age grants admission priority, not a guaranteed start time. Only aged jobs may borrow quick capacity.')
         if row['state'] in ('queued', 'running', 'cancelling'):
             # A read-only client may be inside an agent PID namespace. Its
             # /proc view cannot establish that a host runner has exited.
@@ -234,7 +254,8 @@ class Store:
         job = uuid.uuid4().hex[:12]
         origin = {key: os.environ[name] for key, name in
                   [('pane_id', 'HERDR_PANE_ID'), ('tab_id', 'HERDR_TAB_ID'),
-                   ('workspace_id', 'HERDR_WORKSPACE_ID')]
+                   ('workspace_id', 'HERDR_WORKSPACE_ID'),
+                   ('remote_request_id', 'AGENT_BUILDS_REMOTE_REQUEST_ID')]
                   if os.environ.get(name)}
         origin.update(herdr or {})
         self.db.execute('''INSERT INTO jobs
@@ -277,10 +298,10 @@ class Store:
             older = self.db.execute("SELECT * FROM jobs WHERE state='queued' AND created<? AND resource_key=? AND cancel_requested=0 ORDER BY created LIMIT 1",
                                     (row['created'], row['resource_key'])).fetchone()
             measured = snapshot(row['cwd'])
-            disk_free = min(shutil.disk_usage(row['cwd']).free, shutil.disk_usage(self.root).free) / 1024**3
+            free_gb = min(shutil.disk_usage(row['cwd']).free, shutil.disk_usage(self.root).free) / 1024**3
             required_disk = max(config['min_free_gb'], row['min_free_gb']) + row['scratch_gb'] + sum(r['scratch_gb'] for r in running)
             same_repo = next((r for r in running if r['resource_key'] == row['resource_key']), None)
-            context = dict(measured_at=time.time(), disk_free_gb=disk_free, required_free_gb=required_disk,
+            context = dict(measured_at=time.time(), disk_free_gb=free_gb, required_free_gb=required_disk,
                            available_memory_gb=measured['available_gb'], required_memory_gb=row['memory_gb'] + config['min_available_gb'],
                            job_memory_gb=row['memory_gb'], memory_headroom_gb=config['min_available_gb'],
                            reserved_memory_gb=sum(r['memory_gb'] for r in running), total_reserved_memory_gb=config['memory_gb'],
@@ -297,28 +318,30 @@ class Store:
             elif same_repo:
                 reason = 'repository already building'
                 blocker = same_repo
-            elif len(running) >= config['max_running']:
-                reason = 'machine concurrency budget'
-            elif sum(r['slots'] for r in running) + row['slots'] > config['cpu_slots']:
-                reason = 'CPU slot budget'
-            elif sum(r['memory_gb'] for r in running) + row['memory_gb'] > config['memory_gb']:
-                reason = 'memory reservation budget'
-            elif row['lane'] == 'heavy' and sum(r['lane'] == 'heavy' for r in running) >= config['max_heavy']:
-                reason = 'heavy job budget'
-            elif disk_free < required_disk:
-                reason = 'disk below {:.1f} GiB requirement ({:.1f} GiB free)'.format(required_disk, disk_free)
-            elif measured['available_gb'] < row['memory_gb'] + config['min_available_gb']:
-                reason = 'available RAM headroom'
             else:
-                # FIFO among other repositories that are not currently building.
-                earlier = self.db.execute("""SELECT * FROM jobs
-                    WHERE state='queued' AND created<? AND cancel_requested=0 ORDER BY created""",
-                    (row['created'],)).fetchall()
-                busy = {r['resource_key'] for r in running}
-                waiting = next((r for r in earlier if r['resource_key'] not in busy and r['resource_key'] != row['resource_key']), None)
-                if waiting:
-                    reason = 'earlier queued job'
-                    blocker = dict(waiting)
+                queued = [dict(r) for r in self.db.execute("SELECT * FROM jobs WHERE state='queued' AND cancel_requested=0")]
+                disk_by_device = {}
+                def disk_free(candidate):
+                    path = candidate['cwd']
+                    try:
+                        device = os.stat(path).st_dev
+                        if device not in disk_by_device:
+                            disk_by_device[device] = min(shutil.disk_usage(path).free, shutil.disk_usage(self.root).free) / 1024**3
+                        return disk_by_device[device]
+                    except OSError:
+                        return 0
+                selected, skipped = choose(queued, running, config, measured['available_gb'], disk_free)
+                context.update(quick_reserve_slots=config['quick_reserve_slots'], aging_seconds=config['aging_seconds'],
+                               quick_reserve_jobs=config['quick_reserve_jobs'], quick_reserve_memory_gb=config['quick_reserve_memory_gb'])
+                if selected is not None and selected['id'] == job:
+                    reason = skipped.get(job, '')
+                elif job in skipped:
+                    reason = skipped[job]
+                elif selected is not None:
+                    reason = 'aged job waiting for capacity' if time.time() - selected['created'] >= config['aging_seconds'] else 'higher priority queued job'
+                    blocker = selected
+                else:
+                    reason = 'waiting for scheduling capacity'
             if blocker:
                 context['blocking_job'] = {key: value for key, value in self.describe(blocker).items()
                     if key in ('id', 'command_display', 'cwd', 'elapsed_seconds', 'wait_seconds', 'age_seconds', 'log_path', 'state')}
@@ -363,3 +386,6 @@ class Store:
         self.db.execute('UPDATE jobs SET state=?,exit_code=?,finished=?,reason=? WHERE id=?',
                         (state, code, time.time(), reason, job))
         self._reservation_cache = None
+
+    def record_usage(self, job, usage):
+        self.db.execute('UPDATE jobs SET usage=? WHERE id=?', (json.dumps(usage), job))
