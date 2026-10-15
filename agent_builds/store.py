@@ -224,7 +224,7 @@ class Store:
         if row['state'] == 'held':
             row['state'] = 'queued'
         row['resource_keys'] = locks.keys(row)
-        row['locks'] = [key for key in row['resource_keys'] if key != row['resource_key']]
+        row['locks'] = [key for key in row['resource_keys'] if key != row.get('resource_key')]
         row['lock_protocol'] = row.get('lock_protocol', 0)
         row['argv'] = json.loads(row['command'])
         row['command_display'] = shlex.join(row['argv'])

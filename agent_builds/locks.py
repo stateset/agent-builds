@@ -15,7 +15,9 @@ def normalize(primary, extra=None):
 
 def keys(row):
     """Legacy rows declare only their primary key. Never infer missing locks."""
-    primary = row['resource_key']
+    primary = row.get('resource_key')
+    if primary is None:
+        return []
     if not row.get('lock_protocol'):
         return [primary]
     value = row.get('resource_keys') or []
