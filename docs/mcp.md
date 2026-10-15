@@ -83,7 +83,11 @@ is retained. The server itself holds no CPU/RAM build reservation.
 | Tool | Behavior |
 | --- | --- |
 | `buildr_status` | Machine pressure, budgets, counts and bounded job summaries; defaults to active jobs |
+| `buildr_preflight` | Read-only reservation comparisons before submission; no command execution or capacity reservation |
+| `buildr_diagnose` | Current disk deficits, reservation contributors and recorded blocker chains |
 | `buildr_submit` | Asynchronous job submission with one durable attempt per request key |
+| `buildr_batch_submit` | Named sequential or explicitly parallel checks within one quick reservation |
+| `buildr_latency` | Read-only completed and still-waiting latency observations by policy |
 | `buildr_submission` | Read-only lookup of a request key and retained handle/receipt |
 | `buildr_job` | One job's native outcome, source observations, wait breakdown and measurements |
 | `buildr_logs` | Up to 200 lines from the last 64 KiB; missing logs are explicit |
@@ -100,7 +104,7 @@ is retained. The server itself holds no CPU/RAM build reservation.
 | `buildr_watch_cancel` | Stop observation and its active local probe; external task continues |
 | `buildr_watch_resume` | Resume controller monitoring without retrying unknown probe outcomes |
 
-There are 17 tools, including 10 inspection tools in read-only mode. See
+There are 21 tools, including 13 inspection tools in read-only mode. See
 [external completion watches](external-watches.md) for the explicit probe contract,
 native pending exit 75, resource release and recovery behavior. Reconnect clients
 that were already running against an older server to discover the added tools.
@@ -182,7 +186,15 @@ and `locks` describe one local quick reservation. It defaults to one CPU, 1 GiB
 and a 60-second total timeout. Native results appear in the existing `buildr_job`
 and `buildr_wait` outputs under `batch`. Reuse the exact submission key/arguments
 after disconnecting. `buildr_latency` is read-only and accepts `hours`, `repo`
-and `target_seconds`. There are now 20 tools, 12 available in read-only mode.
+and `target_seconds`.
+
+### Preflight before submission (v0.19)
+
+`buildr_preflight` compares explicit CPU counts with current ordering, locks,
+protected budgets and disk/RAM headroom. It accepts a literal command or inline
+batch manifest without executing it. It needs no request key and is available
+in read-only mode. `fits_now` can be unknown; a positive projection reserves
+nothing and does not prove downsizing is safe. See [preflight](preflight.md).
 
 ### Operational diagnostics (v0.16)
 

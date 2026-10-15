@@ -8,6 +8,13 @@ Agents can use the same queue through MCP: start `buildr mcp serve` as a stdio
 server. It exposes job submission, durable reconnects, bounded logs/waits and
 verification plans. See [MCP setup and tool reference](docs/mcp.md).
 
+Use `buildr preflight --cwd /absolute/repo --lane quick --jobs 2 --compare-jobs 1`
+to inspect resource budgets, queue ordering, locks and host headroom before
+submitting. `buildr batch preflight checks.json --jobs 2 --compare-jobs 1`
+also checks the batch's parallel CPU minimum and explicit Cargo worker flags.
+The read-only MCP equivalent is `buildr_preflight`. These projections reserve
+nothing and do not establish that downsizing is safe. See [preflight](docs/preflight.md).
+
 Use `buildr diagnose [JOB]` (or `u` in the dashboard) to explain live blockers,
 exact disk deficits and pending policy activation without changing shared state.
 `status --json` now returns at most 20 concise active-job summaries by default;

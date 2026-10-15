@@ -15,12 +15,57 @@ from .runner import cancel_job, execute
 from .store import DEFAULTS, Store
 
 
+def preflight_options(command, batch=False):
+    command.add_argument('--cwd',default=os.getcwd())
+    command.add_argument('--jobs',type=int)
+    command.add_argument('--memory-gb',type=float)
+    command.add_argument('--timeout',type=float)
+    command.add_argument('--resource-key')
+    command.add_argument('--lock',dest='locks',action='append',default=[])
+    command.add_argument('--min-free-gb',type=float,default=0)
+    command.add_argument('--scratch-gb',type=float,default=0)
+    command.add_argument('--compare-jobs',type=int,action='append',default=[])
+    command.add_argument('--json',action='store_true')
+    if not batch:
+        command.add_argument('--lane',choices=['quick','heavy'],default='heavy')
+        command.add_argument('--backend',choices=['local','docker'],default='local')
+        command.add_argument('--image')
+        command.add_argument('command',nargs=argparse.REMAINDER)
+
+
+def preflight_command(args):
+    from .preflight import report, lines
+    fields=('cwd','lane','backend','jobs','memory_gb','timeout','image','resource_key','locks',
+            'min_free_gb','scratch_gb','compare_jobs')
+    values={key:getattr(args,key) for key in fields if getattr(args,key,None) is not None}
+    if args.action=='batch':
+        with Path(args.manifest).expanduser().open('rb') as source:
+            raw=source.read(32769)
+        if len(raw)>32768:
+            raise ValueError('Batch manifest exceeds 32 KiB')
+        values['manifest']=json.loads(raw)
+    else:
+        argv=list(args.command)
+        if argv and argv[0]=='--':
+            argv.pop(0)
+        if argv:
+            values['command']=argv
+    store=Store(read_only=True)
+    try:
+        result=report(store,values)
+    finally:
+        store.close()
+    print(json.dumps(result,indent=2) if args.json else '\n'.join(lines(result)))
+    return 0
+
+
 def parser():
     root = argparse.ArgumentParser(description='Buildr: shared build queue and TUI for Ghostty and Herdr')
     root.add_argument('--version', action='version', version=__version__)
     sub = root.add_subparsers(dest='action')
     tui = sub.add_parser('tui', help='Open the terminal dashboard (default)')
     tui.add_argument('--cwd', default=os.getcwd())
+    preflight_options(sub.add_parser('preflight',help='Compare resource requests before submission; read only, no reservation or execution'))
     run = sub.add_parser('run', help='Queue work, stream output and preserve its exit code')
     run.add_argument('--cwd', default=os.getcwd())
     run.add_argument('--lane', choices=['quick', 'heavy'], default='heavy')
@@ -42,6 +87,9 @@ def parser():
     run.add_argument('command', nargs=argparse.REMAINDER)
     batches = sub.add_parser('batch', help='Run related short checks in one local reservation')
     batch_sub = batches.add_subparsers(dest='batch_action', required=True)
+    batch_preview=batch_sub.add_parser('preflight',help='Inspect a batch and compare CPU reservations without submitting it')
+    batch_preview.add_argument('manifest')
+    preflight_options(batch_preview,batch=True)
     batch_run = batch_sub.add_parser('run')
     batch_run.add_argument('manifest')
     batch_run.add_argument('--cwd', default=os.getcwd())
@@ -311,6 +359,8 @@ def main():
     else:
         args = parser().parse_args(arguments)
     try:
+        if args.action=='preflight' or (args.action=='batch' and args.batch_action=='preflight'):
+            return preflight_command(args)
         if args.action == 'batch-worker':
             from .batch import run
             return run(args.definition)

@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.19.0
+
+- Add read-only CLI and MCP preflight projections before submission, with explicit
+  CPU comparisons against current queue ordering, resource locks, global and
+  protected budgets, disk floors, scratch reservations and RAM headroom.
+- Validate batch CPU minimums and show per-check worker hints. Warn about direct
+  Cargo build/test worker flags exceeding a reservation without rewriting commands.
+- Preserve uncertainty for pending policy transitions, incompatible old schemas,
+  unavailable host measurements and truncated active snapshots. Inspect scheduling
+  fields without loading large historical command/source payloads or migrating state.
+- Keep scheduler policy, live limits, remote execution and cache ownership unchanged.
+  Preflight creates no jobs or request keys, reserves nothing and offers no ETA or
+  evidence that a smaller reservation is safe.
+
 ## 0.18.0
 
 - Add opt-in parallel batches for independent checks, with CPU worker hints

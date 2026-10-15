@@ -58,6 +58,13 @@ TOOLS = [
         active=dict(type='boolean', default=True), repo=CWD, limit=dict(type='integer', minimum=1, maximum=50, default=10))),
     tool('buildr_diagnose', 'Explain current disk deficits, recorded blocker chains and protection-draining conditions. Read-only; no cache deletion, recovery, retries or tuning.', dict(
         job_id=HANDLE,repo=CWD,limit=dict(type='integer',minimum=1,maximum=50,default=10))),
+    tool('buildr_preflight', 'Compare explicit CPU reservations against current queue ordering, locks, protected pools and host headroom before submitting. Optional command or batch manifest is never executed. This projection reserves nothing and cannot guarantee admission or safe downsizing.', dict(
+        cwd=CWD,command=dict(type='array',minItems=1,maxItems=128,items=dict(type='string',maxLength=4096)),manifest=BATCH,
+        lane=dict(type='string',enum=['quick','heavy'],default='quick'),backend=dict(type='string',enum=['local','docker'],default='local'),
+        jobs=dict(type='integer',minimum=1,maximum=64),memory_gb=dict(type='number',exclusiveMinimum=0,maximum=1024),
+        timeout=dict(type='number',exclusiveMinimum=0,maximum=86400),image=string(),resource_key=string(),locks=LOCKS,
+        min_free_gb=dict(type='number',minimum=0),scratch_gb=dict(type='number',minimum=0),
+        compare_jobs=dict(type='array',maxItems=8,items=dict(type='integer',minimum=1,maximum=64))),('cwd',)),
     tool('buildr_submit', 'Submit argv asynchronously through the shared queue. A request_key binds exactly one submission attempt; reuse the same key and identical arguments after a lost response. Never retry uncertain work with a new key.', dict(
         request_key=KEY, cwd=CWD, command=dict(type='array', minItems=1, maxItems=128, items=dict(type='string', maxLength=4096)),
         lane=dict(type='string', enum=['quick', 'heavy'], default='quick'),
@@ -170,6 +177,9 @@ def call(name, args, read_only=False):
         return submit(name, args)
     store = Store(read_only=spec['annotations']['readOnlyHint'])
     try:
+        if name=='buildr_preflight':
+            from .preflight import report
+            return report(store,args)
         if name in ('buildr_watch','buildr_watches','buildr_watch_cancel','buildr_watch_resume'):
             from . import external
             if name=='buildr_watches':

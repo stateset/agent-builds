@@ -55,12 +55,18 @@ async def verify(output):
         async with ClientSession(reader, writer) as session:
             initialized = await session.initialize()
             tools = await session.list_tools()
-            assert len(tools.tools) == 20
+            assert len(tools.tools) == 21
             assert all(tool.inputSchema['type'] == 'object' for tool in tools.tools)
             status = await call(session, 'buildr_status', {})
             assert status['initialized'] is False
             diagnostics = await call(session,'buildr_diagnose',{})
             assert diagnostics['initialized'] is False and not diagnostics['changes_applied']
+            marker=root/'preflight-must-not-execute'
+            preview=await call(session,'buildr_preflight',dict(cwd=str(root),jobs=2,compare_jobs=[1],
+                command=[sys.executable,'-c','from pathlib import Path; Path({!r}).touch()'.format(str(marker))]))
+            assert preview['initialized'] is False and preview['commands_submitted'] is False
+            assert [case['jobs'] for case in preview['cases']]==[2,1]
+            assert not marker.exists()
             assert not state.exists()
             # Configure only this isolated fixture before its first submission.
             store = Store(state)
@@ -158,6 +164,10 @@ async def verify(output):
             parallel_checks=parallel_job['batch']['checks']
             assert parallel_job['batch']['max_parallel']==2 and parallel_job['batch']['slots_per_check']==1
             assert max(c['started'] for c in parallel_checks[:2]) < min(c['finished'] for c in parallel_checks[:2])
+            batch_preview=await call(session,'buildr_preflight',dict(cwd=str(root),jobs=2,compare_jobs=[1],
+                manifest=parallel_args['manifest']))
+            assert [case['submission_acceptable'] for case in batch_preview['cases']]==[True,False]
+            assert batch_preview['commands_submitted'] is False
             latency=await call(session,'buildr_latency',dict(target_seconds=30))
             assert latency['changes_applied'] is False and latency['cohorts']
             diagnostics=await call(session,'buildr_diagnose',dict(job_id=batched['result']['job_id']))
@@ -189,6 +199,7 @@ async def verify(output):
                 'competing checkouts serialize on shared additional output',
                 'batch duplicate prevention and per-check native outcomes',
                 'parallel batch overlap and divided CPU hints', 'parallel batch duplicate prevention',
+                'preflight comparisons without state creation or command execution', 'batch preflight minimum CPU guard',
                 'read-only latency report'], production_jobs_submitted=0,
         shared_output_locks=dict(first_job_id=lock_a['id'],second_job_id=lock_b['id'],
             competing_submission=True,overlap=False,second_wait_seconds=lock_b['wait_seconds']),
