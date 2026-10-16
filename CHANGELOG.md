@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.24.0
+
+- Show a queue-wide health summary in the dashboard, CLI and MCP status. Identify
+  common disk blockages with current smallest/largest shortfalls, including
+  running scratch reservations and multi-lock waiting jobs.
+- Separate fresh runner reasons from stale, missing and invalid observations.
+  Bound observation parsing while keeping queue counts and disk ranges complete.
+  Keep filtered queue requirements separate from global running reservations.
+- Use the shared opportunistic recovery lease in the dashboard, avoiding a
+  synchronous recovery write when another writer is busy. No resource budgets,
+  queue schema, cancellation, retry or cleanup policies change.
+
 ## 0.23.0
 
 - Defer polling admission and periodic recovery when SQLite's writer is busy,

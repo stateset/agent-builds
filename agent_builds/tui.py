@@ -37,14 +37,18 @@ def paint(screen, y, x, text, attr=0):
         pass
 
 
-def compact_lines(rows, selected, plans, plan_index, view, config, height, width, watches=None, watch_index=0, health=None, health_offset=0, workbench=None, workbench_offset=0):
+def compact_lines(rows, selected, plans, plan_index, view, config, height, width, watches=None, watch_index=0, health=None, health_offset=0, workbench=None, workbench_offset=0, queue_health=None):
     """A monitor for narrow split panes; editing actions need the full view."""
     lines = ['BUILDR ' + __version__ + (' PAUSED' if config['paused'] else '')]
     if height < 8 or width < 20:
         return lines + ['Resize: 20x8 min', 'q quit; jobs continue']
     running = [r for r in rows if r['state'] in ('running', 'cancelling')]
-    lines += ['CPU {}/{} reserved'.format(sum(r['slots'] for r in running), config['cpu_slots']),
-              'RAM {:.1f}/{}G est.'.format(sum(r['memory_gb'] for r in running), config['memory_gb'])]
+    reserved = queue_health['reservations'] if queue_health else dict(cpu_slots=sum(r['slots'] for r in running),memory_gb=sum(r['memory_gb'] for r in running))
+    lines += ['CPU {}/{} reserved'.format(reserved['cpu_slots'], config['cpu_slots']),
+              'RAM {:.1f}/{}G est.'.format(reserved['memory_gb'], config['memory_gb'])]
+    if queue_health:
+        from .queue_health import banner
+        lines += [banner(queue_health, compact=True)]
     selected_row = None
     if view == 12:
         from .workbench import lines as workbench_lines
@@ -172,6 +176,7 @@ def main(screen, cwd):
     advice_offset = 0
     last_advice = 0
     health_result, health_offset, last_health = None, 0, 0
+    queue_health_result, last_queue_health = None, 0
     workbench_result,workbench_future,workbench_job = None,None,None
     workbench_offset,workbench_candidate,last_workbench = 0,0,0
     group_rows = []
@@ -200,7 +205,7 @@ def main(screen, cwd):
         while True:
             children = [child for child in children if child.poll() is None]
             if time.monotonic() - last_recovery > 5:
-                store.recover()
+                store.recover_if_due()
                 last_recovery = time.monotonic()
             rows = store.rows()
             if selected_id:
@@ -211,6 +216,14 @@ def main(screen, cwd):
                 processes = sampler.sample()
                 last_sample = time.monotonic()
             config = store.config()
+            if queue_health_result is None or time.monotonic()-last_queue_health >= 2:
+                from .queue_health import report as queue_report
+                reader = Store(store.root, read_only=True)
+                try:
+                    queue_health_result = queue_report(reader)
+                finally:
+                    reader.close()
+                last_queue_health = time.monotonic()
             if view==12 and rows:
                 desired=rows[selected]['id']
                 if workbench_future is not None and workbench_future.done():
@@ -256,7 +269,7 @@ def main(screen, cwd):
             height, width = screen.getmaxyx()
             compact = height < 15 or width < 65
             if compact:
-                for index, line in enumerate(compact_lines(rows, selected, plan_rows, plan_index, view, config, height, width, watch_rows, watch_index, health_result, health_offset,workbench_result,workbench_offset)):
+                for index, line in enumerate(compact_lines(rows, selected, plan_rows, plan_index, view, config, height, width, watch_rows, watch_index, health_result, health_offset,workbench_result,workbench_offset,queue_health_result)):
                     paint(screen, index, 0, line)
             else:
                 context = ' | Herdr ' + os.environ.get('HERDR_PANE_ID', '') if os.environ.get('HERDR_ENV') == '1' else ''
@@ -266,11 +279,15 @@ def main(screen, cwd):
                 paint(screen, 1, 0, 'CPU {} logical | load {:.1f} | RAM available {:.1f}/{:.1f} GiB | disk free {:.1f} GiB'.format(
                     metrics['cpus'], metrics['load'], metrics['available_gb'], metrics['total_gb'], metrics['free_gb']))
                 paint(screen, 2, 0, 'Managed reservations: {}/{} CPU slots | {:.1f}/{} GiB | {}/{} jobs | local: nice, Docker: hard limits'.format(
-                    sum(r['slots'] for r in active), config['cpu_slots'], sum(r['memory_gb'] for r in active),
-                    config['memory_gb'], len(active), config['max_running']))
+                    queue_health_result['reservations']['cpu_slots'], config['cpu_slots'], queue_health_result['reservations']['memory_gb'],
+                    config['memory_gb'], queue_health_result['reservations']['jobs'], config['max_running']))
                 fmt = lambda value: 'n/a' if value is None else '{:.0f}%'.format(value)
                 paint(screen, 3, 0, 'Pressure avg10: CPU {}  memory {}  I/O {} | External builds are not controlled.'.format(
                     fmt(metrics['cpu_pressure']), fmt(metrics['memory_pressure']), fmt(metrics['io_pressure'])))
+                if queue_health_result:
+                    from .queue_health import banner
+                    color = 4 if queue_health_result['status']=='disk_blocked' else 3 if queue_health_result['waiting_jobs'] else 2
+                    paint(screen, 4, 0, banner(queue_health_result), curses.A_BOLD | curses.color_pair(color))
                 heading = 'DETAILS / TOOLS | arrows select jobs | v changes view' if view >= 3 else 'JOB           STATE       CPU RAM  BACKEND  REPOSITORY / COMMAND'
                 paint(screen, 5, 0, heading, curses.A_BOLD)
                 count = 0 if view >= 3 else min(8, max(3, (height - 12) // 2))

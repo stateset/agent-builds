@@ -63,7 +63,7 @@ def tool(name, description, properties=None, required=(), read=True, idempotent=
 
 TOOLS = [
     tool('buildr_workbench','Read one job bottleneck, future-run CPU/RAM alternatives and matching measured trial suggestions. No execution, reservation, resizing, profile promotion or tuning.',dict(job_id=HANDLE),('job_id',)),
-    tool('buildr_status', 'Read machine pressure, unchanged queue budgets, counts and bounded job summaries.', dict(
+    tool('buildr_status', 'Read machine pressure, unchanged queue budgets, counts, queue-wide disk shortfalls and fresh versus stale wait observations, plus bounded job summaries.', dict(
         active=dict(type='boolean', default=True), repo=CWD, limit=dict(type='integer', minimum=1, maximum=50, default=10))),
     tool('buildr_diagnose', 'Explain current disk deficits, recorded blocker chains and protection-draining conditions. Read-only; no cache deletion, recovery, retries or tuning.', dict(
         job_id=HANDLE,repo=CWD,limit=dict(type='integer',minimum=1,maximum=50,default=10))),
@@ -216,10 +216,12 @@ def call(name, args, read_only=False):
         if name == 'buildr_status':
             from .external import counts as watch_counts
             from .diagnostics import policy_summary
+            from .queue_health import report as queue_health
             with store.read_snapshot():
                 return dict(initialized=store.db is not None, machine=snapshot(args.get('repo', os.getcwd())),
                     config=store.config(), protection=policy_summary(store), counts=store.counts(active=args.get('active', True), repo=args.get('repo')),
                     external_watch_counts=watch_counts(store),
+                    queue_health=queue_health(store, args.get('repo')),
                     jobs=[compact(r) for r in store.rows(active=args.get('active', True), repo=args.get('repo'), limit=args.get('limit', 10))])
         if name == 'buildr_submission':
             return request_result(store, request_row(store, args['request_key']))

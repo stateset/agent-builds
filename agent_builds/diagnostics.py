@@ -130,6 +130,8 @@ def report(store, job=None, repo=None, limit=10):
     now = time.time()
     with store.read_snapshot():
         config = store.config()
+        from .queue_health import report as queue_report
+        queue_health = queue_report(store, repo, config, now)
         counts = store.counts(active=True, repo=repo)
         rows = [store.get(job)] if job else store.rows(active=True, repo=repo, limit=limit)
         # All global reservations contribute, even when the job list is filtered.
@@ -151,7 +153,7 @@ def report(store, job=None, repo=None, limit=10):
         machine=machine, config=config, protection=policy, active_counts=counts,
         global_reservations=dict(cpu_slots=sum(r['slots'] for r in running), memory_gb=sum(r['memory_gb'] for r in running),
                                  jobs=len(running), scratch_gb=sum(r['scratch_gb'] for r in running)),
-        jobs=output, jobs_truncated=not job and sum(counts.values())>len(rows),
+        jobs=output, jobs_truncated=not job and sum(counts.values())>len(rows), queue_health=queue_health,
         repository=repo, changes_applied=False, note=NOTE)
 
 
@@ -159,6 +161,9 @@ def lines(result):
     reserve = result['global_reservations']
     yield 'BUILDR diagnostics | {} queued | {} running | {} GiB scratch reserved'.format(
         result['active_counts']['queued'], reserve['jobs'], reserve['scratch_gb'])
+    if result.get('queue_health'):
+        from .queue_health import lines as queue_lines
+        yield from queue_lines(result['queue_health'])
     policy = result['protection']
     yield 'Quick protection: '+('active' if policy['effective'] else 'draining' if policy['pending'] else 'off')
     for item in policy.get('blocking_job_details', []):
