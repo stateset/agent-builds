@@ -82,10 +82,10 @@ jobs:
           from pathlib import Path
           report=json.loads((Path(os.environ['RUNNER_TEMP'])/'telemetry-scan.json').read_text())
           assert report['result']=='passed' and report['source_changed'] is False
-          assert len(report['records'])==8
-          assert {(r['pair'],r['mode']) for r in report['records']}=={(p,m) for p in range(4) for m in ('baseline','candidate')}
+          assert len(report['records'])==24
+          assert {(r['depth'],r['pair'],r['mode']) for r in report['records']}=={(d,p,m) for d in (1,4,32) for p in range(4) for m in ('baseline','candidate')}
           for record in report['records']:
-              assert record['measurements_match'] and record['samples']==20
+              assert record['measurements_match'] and record['samples']==10
               assert record['processes']==1000 and record['selected_identities']==34
           PYTHON
       - name: Retain telemetry comparison evidence

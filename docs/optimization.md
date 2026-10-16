@@ -209,7 +209,8 @@ buildr run --lane quick --jobs 1 --memory-gb 2 --timeout 120 -- \
 ```
 
 This runs four rotating baseline/candidate pairs against fixed metadata for
-1,000 processes, including a deep process tree and unrelated processes. Every
+1,000 processes, including shallow and deep trees (depths 1, 4 and 32) plus
+unrelated processes. Every
 arm must produce the same identities, CPU counters and peak RSS. Fixture process
 metadata never executes commands. The report preserves source identity and
 failures; timings measure this scanner workload rather than compiler throughput,

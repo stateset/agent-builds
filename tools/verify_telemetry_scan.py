@@ -22,12 +22,14 @@ from agent_builds.plans import write_export
 from agent_builds.source import capture, changed
 
 
-def fixture(root, count=1000):
+def fixture(root, count=1000, depth=32):
     root.mkdir()
     for pid in range(100, 100 + count):
         fields = ["0"] * 22
         fields[0] = "S"
-        fields[1] = str(pid - 1 if 100 < pid <= 132 else 1)
+        fields[1] = str(
+            (100 if (pid - 101) % depth == 0 else pid - 1) if 100 < pid <= 132 else 1
+        )
         fields[2] = str(100 if pid in (100, 133) else pid)
         fields[11], fields[12] = str(pid), "7"
         fields[19], fields[21] = str(pid * 10), "16"
@@ -58,7 +60,7 @@ def run(output):
         outer_reservation=budget,
         records=[],
         automatic_retries=False,
-        note="Fixed proc metadata for 1000 processes, including 34 selected identities and a 32-level tree. No fixture process is launched. Timings measure the sampler, not build throughput or agent productivity. CPU/RSS remain sampled estimates and are not used to authorize signalling.",
+        note="Fixed proc metadata for 1000 processes, including 34 selected identities at depths 1, 4 and 32. No fixture process is launched. Timings measure the sampler, not build throughput or agent productivity. CPU/RSS remain sampled estimates and are not used to authorize signalling.",
     )
     write_export(progress, report)
     try:
@@ -82,71 +84,80 @@ def run(output):
             )
             baseline = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(baseline)
-            proc = root / "proc"
-            fixture(proc)
-            baseline.Path = lambda path: proc if str(path) == "/proc" else Path(path)
-            read = process_tree.read_processes
-            reference = None
-            for pair in range(4):
-                order = (
-                    ("baseline", "candidate")
-                    if pair % 2 == 0
-                    else ("candidate", "baseline")
+            for depth in (1, 4, 32):
+                proc = root / ("proc-" + str(depth))
+                fixture(proc, depth=depth)
+                baseline.Path = lambda path: (
+                    proc if str(path) == "/proc" else Path(path)
                 )
-                for mode in order:
-                    sampler = (
-                        baseline if mode == "baseline" else telemetry
-                    ).JobSampler(100, "1000")
-                    with mock.patch.object(
-                        telemetry, "read_processes", side_effect=lambda: read(proc)
-                    ):
-                        cpu, started = time.process_time(), time.monotonic()
-                        for _ in range(20):
-                            sampler.sample()
-                        cpu, elapsed = (
-                            time.process_time() - cpu,
-                            time.monotonic() - started,
-                        )
-                    proof = dict(
-                        identities=sorted(sampler.known),
-                        counters=sorted(sampler.counters.items()),
-                        peak_bytes=sampler.peak,
-                        samples=sampler.samples,
+                read = process_tree.read_processes
+                reference = None
+                for pair in range(4):
+                    order = (
+                        ("baseline", "candidate")
+                        if pair % 2 == 0
+                        else ("candidate", "baseline")
                     )
-                    if reference is None:
-                        reference = proof
-                    if (
-                        proof != reference
-                        or len(proof["identities"]) != 34
-                        or proof["samples"] != 20
-                    ):
-                        raise ValueError(
-                            "Candidate and baseline process evidence differ"
+                    for mode in order:
+                        sampler = (
+                            baseline if mode == "baseline" else telemetry
+                        ).JobSampler(100, "1000")
+                        with mock.patch.object(
+                            telemetry, "read_processes", side_effect=lambda: read(proc)
+                        ):
+                            cpu, started = time.process_time(), time.monotonic()
+                            for _ in range(10):
+                                sampler.sample()
+                            cpu, elapsed = (
+                                time.process_time() - cpu,
+                                time.monotonic() - started,
+                            )
+                        proof = dict(
+                            identities=sorted(sampler.known),
+                            counters=sorted(sampler.counters.items()),
+                            peak_bytes=sampler.peak,
+                            samples=sampler.samples,
                         )
-                    record = dict(
-                        pair=pair,
-                        mode=mode,
-                        cpu_seconds=cpu,
-                        wall_seconds=elapsed,
-                        processes=1000,
-                        samples=20,
-                        selected_identities=34,
-                        measurements_match=True,
-                    )
-                    report["records"].append(record)
-                    print(json.dumps(record), flush=True)
+                        if reference is None:
+                            reference = proof
+                        if (
+                            proof != reference
+                            or len(proof["identities"]) != 34
+                            or proof["samples"] != 10
+                        ):
+                            raise ValueError(
+                                "Candidate and baseline process evidence differ"
+                            )
+                        record = dict(
+                            depth=depth,
+                            pair=pair,
+                            mode=mode,
+                            cpu_seconds=cpu,
+                            wall_seconds=elapsed,
+                            processes=1000,
+                            samples=10,
+                            selected_identities=34,
+                            measurements_match=True,
+                        )
+                        report["records"].append(record)
+                        print(json.dumps(record), flush=True)
         report["source_after"] = capture(ROOT)
         report["source_changed"] = changed(source, report["source_after"])
         if report["source_changed"] is not False:
             raise ValueError("Source changed during telemetry comparison")
         report["summary"] = {
-            mode: {
-                key: statistics.median(
-                    r[key] for r in report["records"] if r["mode"] == mode
-                )
-                for key in ("cpu_seconds", "wall_seconds")
+            str(depth): {
+                mode: {
+                    key: statistics.median(
+                        r[key]
+                        for r in report["records"]
+                        if r["mode"] == mode and r["depth"] == depth
+                    )
+                    for key in ("cpu_seconds", "wall_seconds")
+                }
+                for mode in ("baseline", "candidate")
             }
-            for mode in ("baseline", "candidate")
+            for depth in (1, 4, 32)
         }
         report["result"] = "passed"
     except BaseException as error:
