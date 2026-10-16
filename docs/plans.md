@@ -7,8 +7,8 @@ explicit shell command only when you want shell evaluation. Do not put queue
 wrappers inside a plan command: the plan already queues each stage.
 
 ```sh
-agent-builds plan validate examples/verify.json --cwd /home/dom/agent-builds
-agent-builds plan run examples/verify.json --cwd /home/dom/agent-builds
+agent-builds plan validate examples/verify.json --cwd /path/to/agent-builds
+agent-builds plan run examples/verify.json --cwd /path/to/agent-builds
 agent-builds plan list --active --json
 agent-builds plan show PLAN_ID --json
 agent-builds plan wait PLAN_ID --timeout 600 --json

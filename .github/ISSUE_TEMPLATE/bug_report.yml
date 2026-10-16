@@ -1,0 +1,25 @@
+name: Bug report
+description: A reproducible problem with Buildr
+body:
+  - type: markdown
+    attributes:
+      value: Please redact private paths, arguments, logs and environment values. Report vulnerabilities privately; see SECURITY.md.
+  - type: input
+    id: versions
+    attributes:
+      label: Buildr, Python and Linux versions
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Minimal reproduction
+      description: Include explicit reservations, locks and relevant job state or wait reason. Use isolated fixture commands.
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Expected and observed behavior
+    validations:
+      required: true
