@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.23.0
+
+- Read only cancellation/control fields during unchanged waits instead of expanding
+  job diagnostics twice every polling cycle. Keep the short cancellation poll,
+  generation wakeups and transactional admission checks.
+- Decode lock lists once per admission snapshot, retaining exact FIFO and
+  additional-lock semantics without changing persisted schema or policy.
+- Add an explicit queued process-scale benchmark with real runners, synthetic
+  backlog/history, exact native-attempt evidence, atomic reservation observations,
+  lock checks, cancellation and queued-owner recovery. Retain 30/100-process CI
+  reports and verify them independently of the runner's exit status.
+
 ## 0.22.2
 
 - Cache configuration files, use read-only queue-generation admission wakeups,

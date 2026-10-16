@@ -395,6 +395,13 @@ class Store:
             raise ValueError('Unknown job: ' + job)
         return self.describe(dict(row))
 
+    def get_control(self, job):
+        """Small cancellation read for idle runners; no diagnostic expansion."""
+        row = self.db.execute('SELECT state,cancel_requested FROM jobs WHERE id=?', (job,)).fetchone() if self.db else None
+        if row is None:
+            raise ValueError('Unknown job: ' + job)
+        return row
+
     def describe(self, row):
         row['storage_state'] = row['state']
         if row['state'] == 'held':
@@ -553,6 +560,10 @@ class Store:
             running = [dict(r) for r in self.db.execute(
                 "SELECT * FROM jobs WHERE state IN ('running','cancelling')")]
             queued = [dict(r) for r in self.db.execute("SELECT * FROM jobs WHERE state IN ('queued','held') AND cancel_requested=0 ORDER BY created,id")]
+            # Scheduler/lock comparisons reuse each row many times. Decode once
+            # in this transaction; never cache across claims or change storage.
+            for item in running+queued:
+                item['resource_keys'] = locks.keys(item)
             candidates = locks.eligible(queued)
             legacy = next((r for r in queued if not r['lock_protocol'] and locks.overlaps(row, r)), None) if len(row['resource_keys'])>1 else None
             older = next((r for r in candidates if (r['created'], r['id']) < (row['created'], job) and locks.overlaps(row, r)), None)

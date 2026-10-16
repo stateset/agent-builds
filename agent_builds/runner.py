@@ -276,12 +276,15 @@ def execute(args, prepared=None, external_probe=None):
         admission_poll = AdmissionPoll(store)
         while True:
             store.recover_if_due()
-            row = store.get(job)
-            if cancelled[0] or row['cancel_requested']:
+            control = store.get_control(job)
+            if cancelled[0] or control['cancel_requested']:
                 store.finish(job, 'cancelled', 130, 'cancelled while queued')
                 event('cancelled', 'cancelled ' + job, exit_code=130)
                 return 130
-            if admission_poll.due() and store.claim(job):
+            if not admission_poll.due():
+                time.sleep(0.3)
+                continue
+            if store.claim(job):
                 break
             row = store.get(job)
             # Cancellation can arrive between the pre-claim read and claim's

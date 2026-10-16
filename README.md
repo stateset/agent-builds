@@ -166,6 +166,7 @@ adopted. Uncertain submissions are never automatically retried.
 | Representative workflow comparisons | [Workflow studies](docs/workflow-studies.md) |
 | Optional worker backends | [Workers](docs/workers.md) |
 | Queue coordination and compatibility | [Scaling](docs/scaling.md) |
+| Real runner processes and retained correctness evidence | [Process-scale checks](docs/process-scale.md) |
 | Additional commands and feature history | [CLI reference](docs/cli-reference.md) |
 
 Tests cover scheduling, recovery, mixed-version compatibility, MCP and native
