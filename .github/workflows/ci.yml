@@ -100,6 +100,14 @@ jobs:
           python -m venv "$RUNNER_TEMP/buildr-wheel"
           "$RUNNER_TEMP/buildr-wheel/bin/python" -m pip install --no-deps dist/*.whl
           python -m agent_builds run --lane quick --jobs 2 --memory-gb 1 --timeout 120 -- python tools/verify_installed.py --python "$RUNNER_TEMP/buildr-wheel/bin/python"
+      - name: Retain verified release distributions
+        if: matrix.python == '3.12'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: distributions
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14
 
   process-scale:
     runs-on: ubuntu-22.04
