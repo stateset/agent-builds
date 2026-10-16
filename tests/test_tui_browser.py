@@ -461,11 +461,12 @@ class TuiBrowserTests(unittest.TestCase):
                 5,
             )
         rows = self.store.rows()
-        for size in ((8, 20), (14, 50)):
+        for size in ((8, 20), (8, 40), (14, 50), (14, 64)):
             expected = rows[page_size(size[0], compact=True, expanded=True)]["id"]
             frames = self.dashboard([9, curses.KEY_NPAGE, ord("l"), ord("q")], size)
             table = "\n".join(frames[2].values())
             self.assertIn(">" + expected, table)
+            self.assertEqual("WAIT" in frames[2][5], size[1] - 1 >= 40)
             self.assertIn(expected, "\n".join(frames[-1].values()))
             self.assertLessEqual(len(frames[2]), size[0])
 

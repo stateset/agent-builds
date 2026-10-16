@@ -90,7 +90,7 @@ def compact_lines(rows, selected, plans, plan_index, view, config, height, width
         else:
             lines += ['No plans yet']
     elif view==0 and browser and browser.get('expanded'):
-        lines += [browser_label(browser['mode'],browser['query'],len(rows),browser['loaded'],browser.get('order','queue'),short=True),columns(width)]
+        lines += [browser_label(browser['mode'],browser['query'],len(rows),browser['loaded'],browser.get('order','queue'),short=True),' '+columns(width-1)]
         count=max(1,height-len(lines)-1)
         start=max(0,selected-count+1)
         lines += [('>' if index==selected else ' ')+job_line(row,width-1) for index,row in enumerate(rows[start:start+count],start)]
