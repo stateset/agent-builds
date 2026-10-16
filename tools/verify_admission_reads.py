@@ -147,7 +147,10 @@ def run(args):
             )
             store.db.execute(
                 "UPDATE jobs SET usage=?,batch=?",
-                (json.dumps(evidence), json.dumps(evidence)),
+                (
+                    json.dumps(evidence),
+                    json.dumps(dict(evidence, checks=[], complete=False)),
+                ),
             )
         finally:
             store.close()
@@ -176,8 +179,13 @@ def run(args):
                     stderr=subprocess.PIPE,
                     text=True,
                     timeout=120,
-                    check=True,
                 )
+                if completed.returncode:
+                    raise RuntimeError(
+                        "{} worker failed (exit {}): {}".format(
+                            name, completed.returncode, completed.stderr[-4000:]
+                        )
+                    )
                 results.setdefault(name, []).append(json.loads(completed.stdout))
         after = {name: identity(path) for name, path in checkouts.items()}
         assert before == after, "Checkout changed during the measurement"
