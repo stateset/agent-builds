@@ -54,8 +54,21 @@ jobs:
       - name: Format and type checks for new coordination modules
         if: matrix.python == '3.12'
         run: |
-          python -m agent_builds run --lane quick --jobs 1 --memory-gb 1 --timeout 120 -- python -m ruff format --check agent_builds/execution_policy.py agent_builds/polling.py agent_builds/launch.py agent_builds/scale.py agent_builds/queue_health.py tests/test_coordination.py tests/test_scale.py tests/test_queue_health.py tools/verify_coordination.py tools/verify_installed.py
+          python -m agent_builds run --lane quick --jobs 1 --memory-gb 1 --timeout 120 -- python -m ruff format --check agent_builds/execution_policy.py agent_builds/polling.py agent_builds/launch.py agent_builds/scale.py agent_builds/queue_health.py tests/test_coordination.py tests/test_scale.py tests/test_queue_health.py tests/test_admission_reads.py tools/verify_admission_reads.py tools/verify_coordination.py tools/verify_installed.py
           python -m agent_builds run --lane quick --jobs 1 --memory-gb 1 --timeout 120 -- python -m mypy --follow-imports=skip --check-untyped-defs agent_builds/execution_policy.py agent_builds/polling.py agent_builds/launch.py
+      - name: Verify bounded admission reads with bulky evidence
+        if: matrix.python == '3.12'
+        run: |
+          git worktree add --detach "$RUNNER_TEMP/buildr-admission-baseline" v0.24.0
+          python -m agent_builds run --lane quick --jobs 1 --memory-gb 2 --timeout 180 -- python tools/verify_admission_reads.py --baseline-checkout "$RUNNER_TEMP/buildr-admission-baseline" --output "$RUNNER_TEMP/admission-reads.json"
+      - name: Retain admission comparison evidence
+        if: always() && matrix.python == '3.12'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: admission-reads
+          path: ${{ runner.temp }}/admission-reads.json
+          if-no-files-found: warn
+          retention-days: 14
       - name: Regression tests through Buildr
         run: >-
           python -m agent_builds run --lane quick --jobs 2 --memory-gb 2

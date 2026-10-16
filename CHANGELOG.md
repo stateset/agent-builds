@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.24.1
+
+- Keep source evidence, telemetry and batch results out of admission snapshots.
+  Load command display fields only for running reservations and the selected
+  blocker, rather than every queued job while holding the SQLite writer.
+- Recover jobs using process identity fields without loading execution evidence.
+  Preserve live orphan and uncertain Docker reservations, admission ordering,
+  mixed-version locks, schema and global resource budgets.
+- Add evidence-read regression guards and a counterbalanced private-queue
+  comparison with 300 jobs carrying bulky synthetic metadata.
+
 ## 0.24.0
 
 - Show a queue-wide health summary in the dashboard, CLI and MCP status. Identify
