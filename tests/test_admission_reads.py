@@ -54,14 +54,15 @@ class AdmissionReadTests(unittest.TestCase):
         )
 
     @contextlib.contextmanager
-    def without_evidence_reads(self):
+    def without_evidence_reads(self, extra=()):
         denied = []
+        forbidden = {"source", "usage", "batch", "admission"} | set(extra)
 
         def authorize(action, table, column, database, trigger):
             if (
                 action == sqlite3.SQLITE_READ
                 and table == "jobs"
-                and column in {"source", "usage", "batch", "admission"}
+                and column in forbidden
             ):
                 denied.append(column)
                 return sqlite3.SQLITE_DENY
@@ -197,6 +198,76 @@ class AdmissionReadTests(unittest.TestCase):
             (second["child_pid"], second["child_start"], second["cancel_requested"]),
             (456, "second", 1),
         )
+
+    def test_browser_projection_matches_full_inspection_without_evidence_or_wait_payloads(
+        self,
+    ):
+        first = self.job("one")
+        self.assertTrue(self.store.claim(first))
+        self.job("two", ["extra"])
+        failed = self.job("failed")
+        self.store.finish(failed, "failed", 7)
+        with mock.patch("agent_builds.store.time.time", return_value=2000000000):
+            full = self.store.rows()
+            with self.without_evidence_reads(
+                ("wait_context", "wait_history")
+            ), mock.patch.object(
+                self.store, "describe", side_effect=AssertionError("presentation read")
+            ):
+                rows = self.store.browser_rows()
+            self.assertEqual([row["id"] for row in rows], [row["id"] for row in full])
+            for row, detailed in zip(rows, full):
+                self.assertEqual(row, {key: detailed[key] for key in row})
+            self.assertEqual(rows[1]["storage_state"], "held")
+            self.assertEqual(rows[1]["state"], "queued")
+
+    def test_browser_limits_and_read_only_empty_queues_remain_bounded(self):
+        for index in range(201):
+            self.store.submit(
+                self.root,
+                ["true"],
+                "local",
+                "quick",
+                1,
+                0.25,
+                "repo-" + str(index),
+                "",
+                5,
+            )
+        reader = Store(self.store.root, read_only=True)
+        try:
+            self.assertEqual(len(reader.browser_rows()), 200)
+            self.assertEqual(len(reader.browser_rows(2)), 2)
+            for invalid in (0, -1, 201, True, "2"):
+                with self.assertRaises(ValueError):
+                    reader.browser_rows(invalid)
+            self.assertEqual(reader.db.total_changes, 0)
+        finally:
+            reader.close()
+        missing = self.root / "empty-browser"
+        reader = Store(missing, read_only=True)
+        try:
+            self.assertEqual(reader.browser_rows(), [])
+            with self.assertRaisesRegex(ValueError, "Unknown job"):
+                reader.get_wait_context("missing")
+            self.assertFalse(missing.exists())
+        finally:
+            reader.close()
+
+    def test_selected_wait_context_does_not_read_other_payloads(self):
+        job = self.job("waiting")
+        context = {"blocking_job": {"id": "blocker"}, "measured_at": 123}
+        self.store.db.execute(
+            "UPDATE jobs SET wait_context=? WHERE id=?", (json.dumps(context), job)
+        )
+        with self.without_evidence_reads(("wait_history", "command", "herdr")):
+            self.assertEqual(self.store.get_wait_context(job), context)
+        for invalid in ("[]", "null", "invalid JSON"):
+            self.store.db.execute(
+                "UPDATE jobs SET wait_context=? WHERE id=?", (invalid, job)
+            )
+            with self.assertRaises(ValueError):
+                self.store.get_wait_context(job)
 
     def test_cancellation_never_expands_evidence_and_preserves_held_storage(self):
         for state in (

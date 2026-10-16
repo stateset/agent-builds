@@ -2,6 +2,11 @@
 
 ## 0.25.0 (unreleased)
 
+- Refresh the TUI job browser using bounded lightweight rows, without decoding
+  every job's source evidence, batch results, telemetry or wait history. Read
+  full details only for the selected job while visible; cache selected reads
+  for one second and show read errors without stale details from another job.
+
 - Keep running-job cancellation polls, cancellation transactions, and live
   reservation snapshots independent of source evidence, telemetry and batch
   payload size. Execution polls still read current PID/start identity and

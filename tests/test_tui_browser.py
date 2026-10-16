@@ -3,6 +3,8 @@
 import copy
 import curses
 import os
+import json
+import sqlite3
 from pathlib import Path
 import tempfile
 import unittest
@@ -16,6 +18,7 @@ from agent_builds.tui_browser import (
     page_size,
     duration,
     job_line,
+    SelectedJobRead,
 )
 
 
@@ -182,20 +185,20 @@ class TuiBrowserTests(unittest.TestCase):
 
     def test_idle_keyboard_frames_reuse_job_and_machine_reads(self):
         reads = []
-        original = Store.rows
+        original = Store.browser_rows
 
         def observed(store, *args, **kwargs):
             reads.append(store.root)
             return original(store, *args, **kwargs)
 
-        with mock.patch.object(Store, "rows", observed):
+        with mock.patch.object(Store, "browser_rows", observed):
             frames = self.dashboard([-1] * 20 + [ord("q")])
         self.assertEqual(len(frames), 21)
         self.assertEqual(len(reads), 1)
 
     def test_job_snapshot_refreshes_after_the_interval(self):
         now, reads = [100], []
-        original = Store.rows
+        original = Store.browser_rows
 
         def observed(store, *args, **kwargs):
             reads.append(now[0])
@@ -207,7 +210,7 @@ class TuiBrowserTests(unittest.TestCase):
                 return -1
             return ord("q")
 
-        with mock.patch.object(Store, "rows", observed):
+        with mock.patch.object(Store, "browser_rows", observed):
             self.dashboard(key, clock=lambda: now[0])
         self.assertEqual(reads, [100, 102])
 
@@ -469,6 +472,98 @@ class TuiBrowserTests(unittest.TestCase):
             self.assertEqual("WAIT" in frames[2][5], size[1] - 1 >= 40)
             self.assertIn(expected, "\n".join(frames[-1].values()))
             self.assertLessEqual(len(frames[2]), size[0])
+
+    def test_ordinary_browsing_never_expands_job_evidence(self):
+        self.store.db.execute(
+            "UPDATE jobs SET source='invalid JSON',batch='invalid JSON'"
+        )
+        with mock.patch.object(
+            Store, "describe", side_effect=AssertionError("full job expanded")
+        ):
+            for size in ((46, 100), (8, 20)):
+                frames = self.dashboard(
+                    [9, ord("s"), ord("?"), ord("?"), ord("l"), ord("l"), 9, ord("q")],
+                    size,
+                )
+                self.assertTrue(frames[-1])
+        self.assertFalse(self.store.config()["paused"])
+
+    def test_details_fetch_only_selected_jobs_and_cache_keyboard_frames(self):
+        self.store.db.execute(
+            "UPDATE jobs SET source=? WHERE id=?",
+            (json.dumps({"submission": {"head": "selected-evidence"}}), self.jobs[0]),
+        )
+        original, reads = Store.get, []
+
+        def get(store, job):
+            reads.append(job)
+            return original(store, job)
+
+        with mock.patch.object(Store, "get", get):
+            frames = self.dashboard([10, -1, -1, ord("j"), ord("q")], (46, 100))
+        self.assertEqual(reads, self.jobs[:2])
+        self.assertTrue(
+            any("selected-evidence" in "\n".join(frame.values()) for frame in frames)
+        )
+
+    def test_selected_read_retries_errors_without_reusing_another_jobs_details(self):
+        load = mock.Mock(
+            side_effect=[
+                {"id": "one"},
+                sqlite3.OperationalError("writer busy"),
+                {"id": "two"},
+            ]
+        )
+        cache = SelectedJobRead(load)
+        self.assertEqual(cache.get("one", 0), {"id": "one"})
+        self.assertEqual(cache.get("one", 0.9), {"id": "one"})
+        self.assertEqual(load.call_count, 1)
+        self.assertIsNone(cache.get("two", 0.9))
+        self.assertEqual(cache.error, "writer busy")
+        self.assertIsNone(cache.get("two", 1))
+        self.assertEqual(load.call_count, 2)
+        self.assertEqual(cache.get("two", 2), {"id": "two"})
+        self.assertIsNone(cache.error)
+        self.assertIsNone(cache.get(None, 2.1))
+        self.assertIsNone(cache.value)
+        self.assertEqual(load.call_count, 3)
+
+    def test_details_read_errors_are_visible_and_rate_limited(self):
+        with mock.patch.object(
+            Store, "get", side_effect=sqlite3.OperationalError("fixture busy")
+        ) as get:
+            frames = self.dashboard([10, -1, -1, ord("q")])
+        self.assertEqual(get.call_count, 1)
+        self.assertIn(
+            "Details unavailable: fixture busy", "\n".join(frames[-1].values())
+        )
+
+    def test_inline_wait_reads_are_cached_and_released_in_log_focus(self):
+        original, reads = Store.get_wait_context, []
+
+        def context(store, job):
+            reads.append(job)
+            return original(store, job)
+
+        with mock.patch.object(Store, "get_wait_context", context):
+            self.dashboard([-1, -1, ord("l"), -1, ord("l"), ord("q")])
+        self.assertEqual(reads, [self.jobs[0], self.jobs[0]])
+
+    def test_blocker_jump_reads_selected_observation_and_preserves_navigation(self):
+        context = dict(
+            blocking_job=dict(
+                id=self.jobs[0], command_display="true", elapsed_seconds=0
+            ),
+            disk_free_gb=30,
+            required_free_gb=0,
+            measured_at=123,
+        )
+        self.store.db.execute(
+            "UPDATE jobs SET wait_context=? WHERE id=?",
+            (json.dumps(context), self.jobs[1]),
+        )
+        frames = self.dashboard([ord("j"), ord("g"), ord("l"), ord("q")])
+        self.assertIn(self.jobs[0], "\n".join(frames[-1].values()))
 
 
 if __name__ == "__main__":

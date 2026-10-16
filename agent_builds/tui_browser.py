@@ -2,9 +2,29 @@
 
 import math
 from pathlib import Path
+import sqlite3
 
 MODES = ("all", "active", "waiting", "problems")
 ORDERS = ("queue", "wait", "runtime", "repository")
+
+
+class SelectedJobRead:
+    """Cache one explicitly selected read; never retain another job on failure."""
+
+    def __init__(self, load):
+        self.load = load
+        self.job, self.value, self.error = None, None, None
+        self.updated = float("-inf")
+
+    def get(self, job, now):
+        if job != self.job or now - self.updated >= 1:
+            self.job, self.value, self.error, self.updated = job, None, None, now
+            if job is not None:
+                try:
+                    self.value = self.load(job)
+                except (ValueError, OSError, sqlite3.Error) as error:
+                    self.error = str(error)
+        return self.value
 
 
 def seconds(value):

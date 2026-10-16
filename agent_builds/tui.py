@@ -3,6 +3,7 @@ import json
 import os
 from pathlib import Path
 import shlex
+import sqlite3
 import subprocess
 import sys
 import time
@@ -13,7 +14,7 @@ from .metrics import ProcessSampler, snapshot
 from . import __version__
 from .runner import cancel_job
 from .store import Store, TERMINAL
-from .tui_browser import MODES, ORDERS, filter_rows, sort_rows, page_size, columns, job_line, label as browser_label, HELP
+from .tui_browser import MODES, ORDERS, SelectedJobRead, filter_rows, sort_rows, page_size, columns, job_line, label as browser_label, HELP
 from .tui_logs import LogView
 
 
@@ -176,6 +177,10 @@ def main(screen, cwd):
     help_active, help_offset = False,0
     loaded_rows, metrics, last_jobs = None,None,0
     log_view, log_job = LogView(),None
+    def read_details(handle):
+        with store.read_snapshot():
+            return store.get(handle)
+    detail_read,context_read=SelectedJobRead(read_details),SelectedJobRead(store.get_wait_context)
     children = []
     last_recovery = 0
     sampler = ProcessSampler()
@@ -230,7 +235,7 @@ def main(screen, cwd):
                 last_recovery = time.monotonic()
             if loaded_rows is None or time.monotonic()-last_jobs>=1:
                 with store.read_snapshot():
-                    loaded_rows=store.rows()
+                    loaded_rows=store.browser_rows()
                 metrics=snapshot(cwd)
                 last_jobs=time.monotonic()
             rows = sort_rows(filter_rows(loaded_rows,browser_mode,browser_query),browser_order)
@@ -239,6 +244,9 @@ def main(screen, cwd):
             selected = min(selected, max(0, len(rows) - 1))
             selected_id = rows[selected]['id'] if rows else None
             process_height,process_width=screen.getmaxyx()
+            full_view=process_height>=15 and process_width>=65
+            detail_row=detail_read.get(selected_id if view==3 and full_view and not help_active else None,time.monotonic())
+            inline_context=context_read.get(selected_id if view==0 and full_view and not jobs_expanded and not help_active else None,time.monotonic())
             if view == 1 and not help_active and process_height>=15 and process_width>=65 and time.monotonic() - last_sample >= 1:
                 processes = sampler.sample()
                 last_sample = time.monotonic()
@@ -383,8 +391,8 @@ def main(screen, cwd):
                     for index, delivery in enumerate(deliveries(store)[:max(1, height - log_top - 3)]):
                         paint(screen, log_top + index, 0, '{} {:10} {} | {}'.format(
                             delivery['pane'], delivery['state'], Path(delivery['repository']).name, delivery['detail']))
-                elif view == 3 and rows:
-                    row = rows[selected]
+                elif view == 3 and rows and detail_row is not None:
+                    row = detail_row
                     if details_job != row['id']:
                         details_offset = 0
                         details_job = row['id']
@@ -453,6 +461,9 @@ def main(screen, cwd):
                     details_offset = min(max(0, details_offset), max(0, len(lines) - visible))
                     for index, line in enumerate(lines[details_offset:details_offset + visible]):
                         paint(screen, log_top + index, 0, line)
+                elif view == 3:
+                    paint(screen,log_top-1,0,'JOB DETAILS | i returns to jobs',curses.A_BOLD)
+                    paint(screen,log_top,0,'Details unavailable: '+(detail_read.error or 'No job selected'))
                 elif view == 4:
                     from .telemetry import statistics
                     report = statistics(store, rows[selected]['cwd'] if rows else cwd)
@@ -553,8 +564,11 @@ def main(screen, cwd):
                     row = rows[selected]
                     paint(screen, log_top - 1, 0, '{} | {} | {}'.format(row['id'], row['cwd'], row['reason'] or 'live output'), curses.A_BOLD)
                     offset = 0
-                    context = row['wait_context']
-                    if context:
+                    context = inline_context or {}
+                    if context_read.error:
+                        paint(screen,log_top,0,'Wait details unavailable: '+context_read.error)
+                        offset=1
+                    elif context and all(key in context for key in ('disk_free_gb','required_free_gb','measured_at')):
                         paint(screen, log_top, 0, 'Wait {:.1f}s | disk {:.1f}/{:.1f} GiB free/needed | measured {}'.format(
                             row['wait_seconds'], context['disk_free_gb'], context['required_free_gb'],
                             time.strftime('%H:%M:%S', time.localtime(context['measured_at']))))
@@ -900,7 +914,11 @@ def main(screen, cwd):
             elif view == 3 and key in (curses.KEY_NPAGE, curses.KEY_PPAGE):
                 details_offset += max(1, height - 10) * (1 if key == curses.KEY_NPAGE else -1)
             elif key == ord('g') and rows:
-                blocker = rows[selected]['wait_context'].get('blocking_job')
+                try:
+                    blocker = store.get_wait_context(rows[selected]['id']).get('blocking_job')
+                except (ValueError,OSError,sqlite3.Error) as error:
+                    message='Blocker unavailable: '+str(error)
+                    continue
                 if blocker:
                     target = next((index for index, row in enumerate(rows) if row['id'] == blocker['id']), None)
                     if target is not None:
