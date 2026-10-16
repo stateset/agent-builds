@@ -23,7 +23,7 @@ jobs:
       matrix:
         python: ['3.8', '3.12']
     env:
-      AGENT_BUILDS_STATE: ${{ runner.temp }}/buildr-ci-${{ matrix.python }}
+      AGENT_BUILDS_STATE: ${{ github.workspace }}/.agent-builds-output/ci-${{ matrix.python }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
