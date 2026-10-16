@@ -1,6 +1,7 @@
 """Explicit, queued process-scale checks using only private synthetic workloads."""
 
 import argparse
+import contextlib
 import fcntl
 import hashlib
 import json
@@ -8,7 +9,6 @@ import math
 import os
 from pathlib import Path
 import shutil
-import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -83,6 +83,7 @@ def worker(args):
         recovery_sweeps=0,
         write_transactions=0,
         config_file_reads=0,
+        busy_admissions=0,
     )
     output = Path(args.metrics)
 
@@ -114,23 +115,31 @@ def worker(args):
     ):
         if hasattr(Store, method):
             setattr(Store, method, observed(getattr(Store, method), field))
-    connect, read_text = sqlite3.connect, Path.read_text
+    transaction, read_text = Store.transaction, Path.read_text
 
-    def trace(sql):
-        if sql.startswith("BEGIN IMMEDIATE"):
+    @contextlib.contextmanager
+    def observed_transaction(self, *values, **options):
+        with transaction(self, *values, **options):
             counters["write_transactions"] += 1
+            yield
 
-    def connected(*values, **options):
-        db = connect(*values, **options)
-        db.set_trace_callback(trace)
-        return db
+    if hasattr(Store, "poll_claim"):
+        poll_claim = Store.poll_claim
+
+        def observed_poll_claim(self, *values, **options):
+            result = poll_claim(self, *values, **options)
+            if result is None:
+                counters["busy_admissions"] += 1
+            return result
+
+        Store.poll_claim = observed_poll_claim
 
     def read(path, *values, **options):
         if path == Path(os.environ["AGENT_BUILDS_STATE"]) / "config.json":
             counters["config_file_reads"] += 1
         return read_text(path, *values, **options)
 
-    sqlite3.connect, Path.read_text = connected, read
+    Store.transaction, Path.read_text = observed_transaction, read
     sys.argv = ["buildr"] + args.command
     # Sample independently of SQLite calls: a blocked claim must not leave a
     # stale starting CPU snapshot that includes startup in the idle interval.
@@ -179,6 +188,7 @@ def idle_delta(before, after):
         "recovery_sweeps",
         "write_transactions",
         "config_file_reads",
+        "busy_admissions",
     )
     spans = [after[key]["at"] - before[key]["at"] for key in before]
     if not spans or min(spans) <= 0:
@@ -393,7 +403,10 @@ def measure(args, checkout, root):
                 )
             )
         peak_queued = store.counts()["queued"]
-        assert peak_queued == args.agents + args.backlog
+        assert peak_queued == args.agents + args.backlog, (
+            "Paused runner exited before measurement; inspect retained runner logs",
+            store.counts(),
+        )
         before = metrics(root, args.agents)
         probe_seconds = []
         hold_start = time.monotonic()

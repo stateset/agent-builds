@@ -1,6 +1,7 @@
 import argparse
 import json
 import os
+import sqlite3
 from pathlib import Path
 import tempfile
 import unittest
@@ -112,6 +113,33 @@ class ScaleTests(unittest.TestCase):
         self.assertIn(
             "earlier job in this repository", self.store.get(jobs[-1])["reason"]
         )
+
+    def test_busy_admission_defers_without_changing_jobs_or_connection_timeout(self):
+        job = self.job()
+        other = Store(self.store.root)
+        try:
+            original = dict(self.store.get_control(job))
+            timeout = other.db.execute("PRAGMA busy_timeout").fetchone()[0]
+            with self.store.transaction():
+                self.assertIsNone(other.poll_claim(job))
+                self.assertFalse(other.db.in_transaction)
+                self.assertEqual(dict(self.store.get_control(job)), original)
+                self.assertFalse(other.recover_if_due())
+            self.assertEqual(
+                other.db.execute("PRAGMA busy_timeout").fetchone()[0], timeout
+            )
+            with mock.patch.object(
+                other, "get", side_effect=sqlite3.OperationalError("database is locked")
+            ):
+                with self.assertRaises(sqlite3.OperationalError):
+                    other.poll_claim(job)
+            self.assertFalse(other.db.in_transaction)
+            self.assertEqual(dict(other.get_control(job)), original)
+            self.assertTrue(other.poll_claim(job))
+            self.assertEqual(other.get_control(job)["state"], "running")
+            self.assertFalse(other.poll_claim(job))
+        finally:
+            other.close()
 
     def test_scale_requires_a_real_parent_reservation_before_creating_output(self):
         with mock.patch.dict(os.environ, {"AGENT_BUILDS_JOB_ID": ""}):

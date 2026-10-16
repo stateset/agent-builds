@@ -284,7 +284,12 @@ def execute(args, prepared=None, external_probe=None):
             if not admission_poll.due():
                 time.sleep(0.3)
                 continue
-            if store.claim(job):
+            admitted = store.poll_claim(job)
+            if admitted is None:
+                admission_poll.retry_soon()
+                time.sleep(0.3)
+                continue
+            if admitted:
                 break
             row = store.get(job)
             # Cancellation can arrive between the pre-claim read and claim's

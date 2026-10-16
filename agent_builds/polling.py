@@ -17,6 +17,10 @@ class AdmissionPoll:
         self.previous: Optional[Tuple[int, Any]] = None
         self.next_refresh = 0.0
 
+    def retry_soon(self) -> None:
+        """The writer was busy before admission began; try on the next poll."""
+        self.next_refresh = 0.0
+
     def due(self) -> bool:
         now = self.clock()
         generation = self.store.db.execute(

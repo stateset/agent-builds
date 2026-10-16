@@ -30,6 +30,10 @@ response latency while those processes wait.
 CPU snapshots are sampled every 0.2 seconds by an independent thread, including
 while a runner waits inside SQLite. Reports retain each arm's minimum and maximum
 snapshot interval and aggregate CPU use normalized to those intervals.
+Writer-busy admission attempts are recorded separately from acquired write
+transactions. Current polling runners defer only a busy `BEGIN IMMEDIATE`, before
+any transaction starts, and check cancellation again on their next poll. Errors
+inside a transaction still propagate; native commands are never retried.
 
 Before resuming, it cancels one known queued job and kills one known queued
 runner. Neither has a native child. Recovery must retain the second as `lost`;

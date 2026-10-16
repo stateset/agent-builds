@@ -2,6 +2,10 @@
 
 ## 0.23.0
 
+- Defer polling admission and periodic recovery when SQLite's writer is busy,
+  keeping cancellation responsive under a large waiting population. Only a busy
+  BEGIN is deferred; transaction-body and commit errors still propagate.
+
 - Read only cancellation/control fields during unchanged waits instead of expanding
   job diagnostics twice every polling cycle. Keep the short cancellation poll,
   generation wakeups and transactional admission checks.
