@@ -13,7 +13,7 @@ def bounded_lines(lines):
         if len(line) + 1 > remaining:
             result.append(line[:remaining])
             result.append(
-                "Details clipped at 64 Ki characters; buildr show JOB_ID has full evidence."
+                "Details clipped at 64 Ki characters; buildr show JOB_ID --json has full evidence."
             )
             break
         result.append(line)

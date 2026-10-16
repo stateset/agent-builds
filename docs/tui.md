@@ -98,7 +98,7 @@ show another job's old details. Narrow panes keep shared actions disabled.
 
 Rendered details retain at most 64 Ki characters plus a clipping notice. This
 bounds wrapping work, not the underlying selected database payload. Use
-`buildr show JOB_ID` for the complete evidence when the notice appears.
+`buildr show JOB_ID --json` for the complete evidence when the notice appears.
 
 ## Focused log inspection
 
