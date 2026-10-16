@@ -198,6 +198,20 @@ class QueueHealthTests(unittest.TestCase):
         self.assertEqual(result["observations"]["unreadable_jobs"], 1)
         self.assertEqual(result["waiting_jobs"], 1)
 
+    def test_invalid_numeric_timestamps_are_unreadable_not_report_errors(self):
+        for index, stamp in enumerate(
+            (10**500, float("inf"), float("nan"), True, "yesterday")
+        ):
+            job = self.job(str(index))
+            self.store.db.execute(
+                "UPDATE jobs SET wait_context=? WHERE id=?",
+                (json.dumps(dict(measured_at=stamp)), job),
+            )
+        with self.free(20):
+            result = queue_health.report(self.store)
+        self.assertEqual(result["observations"]["unreadable_jobs"], 5)
+        self.assertEqual(result["observations"]["fresh"], [])
+
     def test_missing_queue_cli_and_mcp_are_read_only_and_nested_snapshot_is_preserved(
         self,
     ):
