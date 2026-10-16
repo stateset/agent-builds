@@ -54,7 +54,7 @@ jobs:
       - name: Format and type checks for new coordination modules
         if: matrix.python == '3.12'
         run: |
-          python -m agent_builds run --lane quick --jobs 1 --memory-gb 1 --timeout 120 -- python -m ruff format --check agent_builds/execution_policy.py agent_builds/polling.py agent_builds/launch.py agent_builds/scale.py agent_builds/queue_health.py tests/test_coordination.py tests/test_scale.py tests/test_queue_health.py tests/test_admission_reads.py tests/test_lock_scaling.py tests/test_recovery_check.py tests/test_usage_contention.py agent_builds/tui_browser.py agent_builds/tui_logs.py tests/test_tui_browser.py tests/test_tui_logs.py tools/verify_admission_reads.py tools/verify_coordination.py tools/verify_installed.py tools/verify_recovery.py
+          python -m agent_builds run --lane quick --jobs 1 --memory-gb 1 --timeout 120 -- python -m ruff format --check agent_builds/execution_policy.py agent_builds/polling.py agent_builds/launch.py agent_builds/scale.py agent_builds/queue_health.py tests/test_coordination.py tests/test_scale.py tests/test_queue_health.py tests/test_admission_reads.py tests/test_lock_scaling.py tests/test_recovery_check.py tests/test_usage_contention.py agent_builds/tui_browser.py agent_builds/tui_logs.py tests/test_tui_browser.py tests/test_tui_logs.py tools/verify_admission_reads.py tools/verify_coordination.py tools/verify_installed.py tools/verify_recovery.py tools/verify_tui_cache.py
           python -m agent_builds run --lane quick --jobs 1 --memory-gb 1 --timeout 120 -- python -m mypy --follow-imports=skip --check-untyped-defs agent_builds/execution_policy.py agent_builds/polling.py agent_builds/launch.py
       - name: Verify bounded admission reads with bulky evidence
         if: matrix.python == '3.12'
@@ -73,6 +73,39 @@ jobs:
         run: >-
           python -m agent_builds run --lane quick --jobs 2 --memory-gb 2
           --timeout 600 -- python -m unittest discover -s tests -v
+      - name: Compare dashboard cache work with the released TUI
+        if: matrix.python == '3.12'
+        run: >-
+          python -m agent_builds run --lane quick --jobs 1 --memory-gb 2 --timeout 120 --
+          python tools/verify_tui_cache.py --output '${{ runner.temp }}/tui-cache.json'
+      - name: Independently verify dashboard cache evidence
+        if: matrix.python == '3.12'
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          report = json.loads((Path(os.environ['RUNNER_TEMP'])/'tui-cache.json').read_text())
+          assert report['result']=='passed' and report['source_changed'] is False
+          assert len(report['records'])==8
+          assert {(r['pair'],r['mode'],r['changing']) for r in report['records']} == {
+              (pair,mode,changing) for pair in (0,1)
+              for mode in ('baseline','candidate') for changing in (False,True)}
+          for record in report['records']:
+              assert record['frames']==300 and record['rows']==200 and record['final_output_matches']
+              assert record['filter_calls']==record['sort_calls']==(300 if record['mode']=='baseline' else 60)
+              if record['mode']=='baseline':
+                  assert record['read_calls']==300 and record['read_bytes']==300*65536
+              else:
+                  assert record['read_calls']<=60 and record['read_bytes']<=60*65536
+          PY
+      - name: Retain dashboard cache comparison
+        if: always() && matrix.python == '3.12'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: tui-cache
+          path: ${{ runner.temp }}/tui-cache.json
+          if-no-files-found: warn
+          retention-days: 14
       - name: Install the optional MCP test client
         if: matrix.python == '3.12'
         run: python -m pip install 'mcp==1.30.0'

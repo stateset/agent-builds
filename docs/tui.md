@@ -110,3 +110,20 @@ reads have a fixed byte limit even if a log grows while being read. Visible rows
 remove ANSI decoration before painting. Expanded tables and help skip inline
 reads; help over focused logs also skips polling that hidden snapshot. Returning
 to a live view resumes normal refreshes. These caches affect only this dashboard.
+
+## Reproduce the cache comparison
+
+```sh
+buildr run --lane quick --jobs 1 --memory-gb 2 --timeout 120 -- \
+  python3 tools/verify_tui_cache.py --output /tmp/new-tui-cache.json
+```
+
+The developer tool compares the actual v0.25.0 package with the current source
+in both orders. Each arm processes 300 simulated 5 Hz frames and 200 synthetic
+display rows renewed once a second, with unchanged or once-a-second growing
+logs. It checks settled output and display order, counts reads/bytes and
+filter/sort calls, and retains CPU/wall observations plus source identity.
+No fixture command executes and the global queue configuration is unchanged.
+Reports require a new path outside the checkout. CI independently verifies the
+report and retains it as `tui-cache`. Timings are observations, not thresholds;
+this measures selected hot paths, not terminal frame rate or coding productivity.
