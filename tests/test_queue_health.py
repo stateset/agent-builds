@@ -183,6 +183,17 @@ class QueueHealthTests(unittest.TestCase):
         self.assertLess(len(json.dumps(result)), 8000)
         self.assertNotIn("secret", json.dumps(result))
 
+    def test_deeply_nested_observation_does_not_break_queue_inspection(self):
+        job = self.job()
+        self.store.db.execute(
+            "UPDATE jobs SET wait_context=? WHERE id=?",
+            ("[" * 1100 + "0" + "]" * 1100, job),
+        )
+        with self.free(20):
+            result = queue_health.report(self.store)
+        self.assertEqual(result["observations"]["unreadable_jobs"], 1)
+        self.assertEqual(result["waiting_jobs"], 1)
+
     def test_missing_queue_cli_and_mcp_are_read_only_and_nested_snapshot_is_preserved(
         self,
     ):

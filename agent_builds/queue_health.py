@@ -152,7 +152,7 @@ def report(store, repo=None, config=None, now=None):
                         continue
                     if type(stamp) not in (int, float) or not math.isfinite(stamp):
                         raise ValueError("Invalid observation timestamp")
-                except (ValueError, TypeError):
+                except (ValueError, TypeError, RecursionError):
                     observed["unreadable_jobs"] += 1
                     continue
                 if not 0 <= now - stamp <= waits.MAX_GAP_SECONDS:

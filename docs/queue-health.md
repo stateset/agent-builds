@@ -29,6 +29,8 @@ Primary runner wait reasons are grouped only when their timestamps are fresh.
 Old, missing, oversized and invalid observations are counted separately. At most
 200 small observation records are parsed; counts and disk requirement ranges
 still cover every waiting job. Reports exclude job source evidence and logs.
+The real-process scale checks include this summary in their inspection-latency
+probes while 30 or 100 runners wait; the JSON evidence identifies that coverage.
 
 These are read-only explanations. They do not recover work, retry commands,
 resize reservations, reduce disk floors or delete caches. The interactive TUI

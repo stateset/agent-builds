@@ -137,6 +137,7 @@ jobs:
               assert data['native_outcomes_verified'] and data['lock_conflicts']==0
               assert data['peak_native_commands']<=2 and data['peak_reserved_slots']<=2
               assert data['queued_cancel_exit']==130 and data['killed_runner_state']=='lost'
+              assert data['inspection_includes_queue_health']
           PY
       - name: Retain the full comparison evidence
         if: always()

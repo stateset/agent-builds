@@ -280,6 +280,7 @@ def measure(args, checkout, root):
     from agent_builds.store import Store, alive
     from agent_builds.runner import cancel_job
     from agent_builds.source import capture, changed
+    from agent_builds.queue_health import report as queue_report
 
     before_source = capture(checkout)
     root.mkdir(mode=0o700)
@@ -420,6 +421,12 @@ def measure(args, checkout, root):
             try:
                 assert reader.counts()["queued"] == peak_queued
                 assert len(reader.rows(limit=5, active=True)) == min(5, peak_queued)
+                health = queue_report(reader)
+                assert (
+                    health["waiting_jobs"] == peak_queued
+                    and health["status"] == "paused"
+                )
+                assert health["observations"]["sampled_jobs"] <= 200
             finally:
                 reader.close()
             probe_seconds.append(time.monotonic() - probe_start)
@@ -506,6 +513,7 @@ def measure(args, checkout, root):
             inspection_p95_seconds=sorted(probe_seconds)[
                 max(0, math.ceil(len(probe_seconds) * 0.95) - 1)
             ],
+            inspection_includes_queue_health=True,
             native_attempts=len(starts),
             peak_native_commands=native_peak,
             runner_versions=sorted({value["version"] for value in before.values()}),
