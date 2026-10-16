@@ -117,8 +117,10 @@ def prompt(screen, title, initial=''):
             height, width = screen.getmaxyx()
             screen.move(height - 2, 0)
             screen.clrtoeol()
-            label = title + ': '
-            paint(screen, height - 2, 0, label + value[-max(1, width - len(label) - 2):])
+            usable=max(1,width-1)
+            input_room=min(12,max(1,usable//2))
+            label=title[:max(0,usable-input_room-2)]+': ' if usable>=4 else ''
+            paint(screen, height - 2, 0, label + value[-max(1,usable-len(label)):])
             screen.refresh()
             key = screen.get_wch()
             if key in ('\n', '\r'):
@@ -289,14 +291,18 @@ def main(screen, cwd):
                 if log_job:
                     log_job=next((row for row in loaded_rows if row['id']==log_job['id']),log_job)
                 log_view.poll(time.monotonic())
+                log_page=log_view.page(max(1,width-1),max(1,height-4))
                 mode='LIVE' if log_view.follow else 'HELD (output only)'
-                paint(screen,0,0,'LOG '+mode,curses.A_BOLD | curses.color_pair(1 if log_view.follow else 3))
+                paint(screen,0,0,'LOG '+mode+' | '+log_view.position(max(1,height-4)),curses.A_BOLD | curses.color_pair(1 if log_view.follow else 3))
                 paint(screen,1,0,log_job['id']+' '+log_job['state'] if log_job else 'No job selected')
-                note=log_view.error or ('Recent 256 KiB; earlier output omitted' if log_view.clipped else 'Space hold/resume | End live')
+                note=log_view.error or (log_view.search_label() if log_view.query else 'Space hold/resume | / find | End live')
+                if log_view.clipped:
+                    note='Recent 256 KiB only | '+note
                 paint(screen,2,0,note)
-                for index,line in enumerate(log_view.page(max(1,width-1),max(1,height-4))):
-                    paint(screen,index+3,0,line)
-                paint(screen,height-1,0,'j/k scroll  End live  l jobs  ? help  q quit')
+                for index,line in enumerate(log_page):
+                    match=log_view.match_kind(index)
+                    paint(screen,index+3,0,line,curses.A_REVERSE if match==2 else curses.color_pair(3) if match else 0)
+                paint(screen,height-1,0,'/ find  n/N match  End live  l jobs  ? help  q quit')
             elif compact:
                 browser=dict(mode=browser_mode,query=browser_query,loaded=len(loaded_rows))
                 for index, line in enumerate(compact_lines(rows, selected, plan_rows, plan_index, view, config, height, width, watch_rows, watch_index, health_result, health_offset,workbench_result,workbench_offset,queue_health_result,browser)):
@@ -582,6 +588,12 @@ def main(screen, cwd):
                     view=0
                 elif key==ord(' '):
                     log_view.toggle()
+                elif key==ord('/') and height>=8 and width>=20:
+                    query=prompt(screen,'Find in loaded log (blank clears)',log_view.query)
+                    if query is not None:
+                        log_view.search(query,max(1,width-1),max(1,height-4))
+                elif key in (ord('n'),ord('N')):
+                    log_view.next_match(1 if key==ord('n') else -1,max(1,width-1),max(1,height-4))
                 elif key==curses.KEY_HOME:
                     log_view.home()
                 elif key==curses.KEY_END:

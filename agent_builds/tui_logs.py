@@ -1,5 +1,6 @@
 """Bounded, read-only log snapshots with explicit follow/hold navigation."""
 
+from bisect import bisect_left, bisect_right
 import os
 from pathlib import Path
 from stat import S_ISREG
@@ -84,6 +85,11 @@ class LogView:
         self.top = 0
         self.lines = []
         self.wrapped = []
+        self.starts = []
+        self.query = ""
+        self.matches = []
+        self.match_set = set()
+        self.match_index = None
         self.width = None
         self.signature = None
         self.last_read = float("-inf")
@@ -125,15 +131,83 @@ class LogView:
                     else "Cannot read log (" + type(error).__name__ + ")"
                 )
             )
+        self._find_matches()
         self.width = None
+
+    def _find_matches(self):
+        needle = self.query.casefold()
+        self.matches = [
+            index
+            for index, line in enumerate(self.lines)
+            if needle and needle in line.casefold()
+        ]
+        self.match_set = set(self.matches)
+        self.match_index = None
+
+    def search(self, query, width, height):
+        """Search logical lines in the current snapshot, never the full file."""
+        self.query = query[:256]
+        self._find_matches()
+        if self.query:
+            self.follow = False
+        self.page(width, height)
+        if self.matches:
+            self._jump(0, height)
+
+    def _jump(self, index, height):
+        self.follow = False
+        self.match_index = index % len(self.matches)
+        self.top = min(
+            self.starts[self.matches[self.match_index]],
+            max(0, len(self.wrapped) - max(1, height)),
+        )
+
+    def next_match(self, direction, width, height):
+        self.page(width, height)
+        if not self.matches:
+            return
+        if self.match_index is not None:
+            index = self.match_index + direction
+        else:
+            positions = [self.starts[line] for line in self.matches]
+            index = (
+                bisect_right(positions, self.top)
+                if direction > 0
+                else bisect_left(positions, self.top) - 1
+            )
+        self._jump(index, height)
+
+    def match_kind(self, visible_row):
+        """Return 2 for the selected match, 1 for another match, else 0."""
+        line = bisect_right(self.starts, self.top + visible_row) - 1
+        if line not in self.match_set:
+            return 0
+        return (
+            2
+            if self.match_index is not None and line == self.matches[self.match_index]
+            else 1
+        )
+
+    def position(self, height):
+        total = len(self.wrapped)
+        return "rows {}-{}/{}".format(
+            self.top + 1 if total else 0, min(total, self.top + max(1, height)), total
+        )
+
+    def search_label(self):
+        current = self.match_index + 1 if self.match_index is not None else 0
+        return "Find {}/{}: {}".format(current, len(self.matches), self.query)
 
     def page(self, width, height):
         width, height = max(1, width), max(1, height)
         if self.width != width:
-            self.wrapped = [
-                part for line in self.lines for part in wrap_line(line, width)
-            ]
+            self.wrapped, self.starts = [], []
+            for line in self.lines:
+                self.starts.append(len(self.wrapped))
+                self.wrapped.extend(wrap_line(line, width))
             self.width = width
+            if self.match_index is not None:
+                self.top = self.starts[self.matches[self.match_index]]
         bottom = max(0, len(self.wrapped) - height)
         self.top = bottom if self.follow else min(max(0, self.top), bottom)
         return self.wrapped[self.top : self.top + height]
@@ -141,15 +215,18 @@ class LogView:
     def scroll(self, delta, width, height):
         self.page(width, height)
         self.follow = False
+        self.match_index = None
         self.top = min(
             max(0, len(self.wrapped) - max(1, height)), max(0, self.top + delta)
         )
 
     def home(self):
         self.follow, self.top = False, 0
+        self.match_index = None
 
     def end(self):
         self.follow, self.last_read = True, float("-inf")
+        self.match_index = None
 
     def toggle(self):
         if self.follow:

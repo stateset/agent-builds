@@ -265,6 +265,46 @@ class TuiBrowserTests(unittest.TestCase):
         self.assertTrue(any("line-59" in "\n".join(frame.values()) for frame in frames))
         self.assertIn("JOBS all", "\n".join(frames[-1].values()))
 
+    def test_log_search_navigation_stays_local_in_full_and_narrow_panes(self):
+        self.store.log_path(self.jobs[0]).write_text(
+            "first NEEDLE\n" + "padding\n" * 40 + "last needle\n"
+        )
+        for size in ((20, 100), (8, 20)):
+            frames = self.dashboard(
+                [ord("l"), ord("/"), ord("n"), ord("N"), ord("q")],
+                size,
+                query="needle",
+            )
+            text = "\n".join(frames[-1].values())
+            self.assertIn("LOG HELD", text)
+            self.assertIn("Find 1/2: needle", text)
+            self.assertIn("first NEEDLE", text)
+        self.assertFalse(self.store.config()["paused"])
+
+    def test_cancelled_log_search_preserves_live_mode_and_browser_query(self):
+        self.store.log_path(self.jobs[0]).write_text("separate log text\n")
+        frames = self.dashboard(
+            [ord("/"), ord("l"), ord("/"), ord("l"), ord("q")],
+            query=None,
+        )
+        self.assertTrue(
+            any("LOG LIVE" in "\n".join(frame.values()) for frame in frames)
+        )
+        self.assertIn("JOBS all", "\n".join(frames[-1].values()))
+
+    def test_prompt_keeps_typed_text_visible_in_a_narrow_pane(self):
+        screen = mock.Mock()
+        screen.getmaxyx.return_value = (8, 20)
+        screen.get_wch.side_effect = ["n", "e", "e", "d", "l", "e", "\n"]
+        with mock.patch("agent_builds.tui.curses.curs_set"):
+            self.assertEqual(
+                tui.prompt(screen, "Find in loaded log (blank clears)"), "needle"
+            )
+        drawn = [call.args[2] for call in screen.addnstr.call_args_list]
+        self.assertTrue(any(line.endswith("needle") for line in drawn))
+        self.assertTrue(all(len(line) <= 19 for line in drawn))
+        screen.timeout.assert_called_with(200)
+
 
 if __name__ == "__main__":
     unittest.main()

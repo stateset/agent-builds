@@ -48,6 +48,8 @@ HELP = (
     "READ-ONLY VIEWS",
     "l: focused logs; j/k or PgUp/PgDn scroll, Home shows oldest loaded output",
     "In logs: Space holds/resumes output; End returns live; l returns to jobs",
+    "In logs: / finds literal text (blank clears); n/N jump matching lines with wraparound",
+    "Search holds the loaded snapshot, highlights matching lines, and ignores case.",
     "Holding logs never pauses the queue. Logs load only the recent 256 KiB.",
     "u: queue health; r: selected-job workbench; h: advisor",
     "d: cache inventory (no deletion); v: cycle views",
