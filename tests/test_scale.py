@@ -129,6 +129,9 @@ class ScaleTests(unittest.TestCase):
     def test_idle_measurement_refuses_incomplete_process_coverage(self):
         with self.assertRaises(AssertionError):
             scale.idle_delta({0: {}}, {})
+        snapshot = dict(at=1)
+        with self.assertRaisesRegex(AssertionError, "stale"):
+            scale.idle_delta({0: snapshot}, {0: snapshot})
 
     def test_native_ledger_rejects_duplicate_attempts_and_overlapping_locks(self):
         def event(index, kind, at):

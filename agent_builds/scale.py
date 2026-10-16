@@ -12,6 +12,7 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 
 
@@ -84,29 +85,24 @@ def worker(args):
         config_file_reads=0,
     )
     output = Path(args.metrics)
-    last = [0.0]
 
-    def snapshot(force=False, exit_code=None):
+    def snapshot(exit_code=None):
         now = time.monotonic()
-        if force or now - last[0] >= 0.5:
-            write_json(
-                output,
-                dict(
-                    counters,
-                    cpu_seconds=time.process_time(),
-                    at=now,
-                    version=__version__,
-                    exit_code=exit_code,
-                ),
-            )
-            last[0] = now
+        write_json(
+            output,
+            dict(
+                counters,
+                cpu_seconds=time.process_time(),
+                at=now,
+                version=__version__,
+                exit_code=exit_code,
+            ),
+        )
 
     def observed(method, field):
         def call(self, *values, **options):
             counters[field] += 1
-            result = method(self, *values, **options)
-            snapshot()
-            return result
+            return method(self, *values, **options)
 
         return call
 
@@ -136,12 +132,31 @@ def worker(args):
 
     sqlite3.connect, Path.read_text = connected, read
     sys.argv = ["buildr"] + args.command
+    # Sample independently of SQLite calls: a blocked claim must not leave a
+    # stale starting CPU snapshot that includes startup in the idle interval.
+    stop = threading.Event()
+    errors = []
+
+    def sample():
+        try:
+            while not stop.wait(0.2):
+                snapshot()
+        except BaseException as error:
+            errors.append(error)
+
+    snapshot()
+    sampler = threading.Thread(target=sample, daemon=True)
+    sampler.start()
     code = 1
     try:
         code = main()
         return code
     finally:
-        snapshot(force=True, exit_code=code)
+        stop.set()
+        sampler.join()
+        snapshot(exit_code=code)
+        if errors:
+            raise RuntimeError("Runner metrics sampling failed") from errors[0]
 
 
 def metrics(root, agents):
@@ -165,13 +180,17 @@ def idle_delta(before, after):
         "write_transactions",
         "config_file_reads",
     )
+    spans = [after[key]["at"] - before[key]["at"] for key in before]
+    if not spans or min(spans) <= 0:
+        raise AssertionError("Idle measurement has stale runner snapshots")
     return dict(
         coverage=len(before),
-        sample_span_min_seconds=min(
-            after[key]["at"] - before[key]["at"] for key in before
-        ),
-        sample_span_max_seconds=max(
-            after[key]["at"] - before[key]["at"] for key in before
+        sample_span_min_seconds=min(spans),
+        sample_span_max_seconds=max(spans),
+        cpu_cores_observed=sum(
+            (after[key]["cpu_seconds"] - before[key]["cpu_seconds"])
+            / (after[key]["at"] - before[key]["at"])
+            for key in before
         ),
         **{
             field: sum(after[key][field] - before[key][field] for key in before)

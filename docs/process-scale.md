@@ -27,6 +27,9 @@ giving 300 queued jobs. Historical records and backlog are metadata fixtures;
 they do not represent executed commands. Idle measurements cover all 100 workers
 and include instrumentation overhead. Bounded read-only inspection probes record
 response latency while those processes wait.
+CPU snapshots are sampled every 0.2 seconds by an independent thread, including
+while a runner waits inside SQLite. Reports retain each arm's minimum and maximum
+snapshot interval and aggregate CPU use normalized to those intervals.
 
 Before resuming, it cancels one known queued job and kills one known queued
 runner. Neither has a native child. Recovery must retain the second as `lost`;
