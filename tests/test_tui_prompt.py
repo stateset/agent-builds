@@ -88,6 +88,14 @@ class PromptTests(unittest.TestCase):
         result, _ = self.edit(["\x1b"], dimensions=(1, 1), initial="yes")
         self.assertIsNone(result)
 
+    def test_enter_during_resize_cannot_accept_a_previously_visible_question(self):
+        result, frames = self.edit(
+            [((1, 1), "\n"), ((10, 60), curses.KEY_RESIZE), "\x15", "n", "\n"],
+            initial="yes",
+        )
+        self.assertEqual(result, "n")
+        self.assertTrue(any(not frame for frame in frames))
+
     def test_entire_question_must_fit_before_accepting_a_confirmation(self):
         result, frames = self.edit(
             ["y", "e", "s", "\n", "\x1b"],

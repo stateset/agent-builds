@@ -161,7 +161,7 @@ def prompt(screen, title, initial=''):
                 raise
             if key == '\x1b':
                 return None
-            if not editable or key == curses.KEY_RESIZE:
+            if screen.getmaxyx() != (height,width) or not editable or key == curses.KEY_RESIZE:
                 continue
             if key in ('\n', '\r', curses.KEY_ENTER):
                 return value
