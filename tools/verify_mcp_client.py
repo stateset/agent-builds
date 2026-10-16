@@ -184,15 +184,14 @@ async def verify(output):
             weighted_job=await call(session,'buildr_job',dict(job_id=weighted['result']['job_id']))
             assert weighted_job['batch']['slots_per_check'] is None
             assert [check['cpu_slots'] for check in weighted_job['batch']['checks']]==[2,1,1]
-            # Two outstanding waits on this exact stdio session must not block
-            # protocol ping, inspection or an explicit cancellation. This row is
-            # private fixture state and has no command runner or host reservation.
-            fixture = Store(state)
-            try:
-                pending = fixture.submit(root, ['true'], 'local', 'quick', 1, .25,
-                    'sdk-concurrent-polls', '', 10)
-            finally:
-                fixture.close()
+            # A real isolated queued command exercises asynchronous cancellation:
+            # acknowledgement need not be terminal; bounded waits must see the
+            # native cancellation result without blocking other session requests.
+            sleeping = await call(session, 'buildr_submit', dict(request_key=key+'-concurrent-cancel',
+                cwd=str(root), lane='quick', jobs=1, memory_gb=.25, track_source=False,
+                resource_key='sdk-concurrent-polls',
+                command=[sys.executable, '-c', 'import time; time.sleep(10)']))
+            pending = sleeping['result']['job_id']
             polls = [asyncio.create_task(call(session, 'buildr_wait',
                 dict(job_ids=[pending], timeout=5))) for _ in range(2)]
             try:
@@ -203,7 +202,7 @@ async def verify(output):
                 control_seconds = time.monotonic()-started
                 assert all(not poll.done() for poll in polls), 'Fixture polls completed before controls'
                 cancelled = await asyncio.wait_for(call(session, 'buildr_cancel', dict(job_id=pending)), timeout=3)
-                assert cancelled['state'] == 'cancelled'
+                assert cancelled['state'] in ('queued','running','cancelling','cancelled')
                 polled = await asyncio.gather(*polls)
                 assert all(item['complete'] and item['exit_code'] == 130 for item in polled)
                 assert concurrent_status['initialized']
@@ -218,7 +217,7 @@ async def verify(output):
             assert diagnostics['jobs'][0]['state']=='failed' and not diagnostics['changes_applied']
     reader = Store(state, read_only=True)
     try:
-        assert len(reader.rows()) == 11  # prior fixtures plus cancelled concurrency row
+        assert len(reader.rows()) == 11  # prior fixtures plus native cancelled concurrency job
         other=reader.get(full_budget['result']['job_id'])
         first=reader.get(watch['probes'][0]['job_id'])
         second=reader.get(watch['probes'][1]['job_id'])
