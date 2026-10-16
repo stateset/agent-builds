@@ -326,8 +326,8 @@ def parser():
     experiment_run.add_argument('--pairs',type=int,default=3)
     experiment_run.add_argument('--agents',type=int,default=4)
     experiment_run.add_argument('--cpus',type=int,default=2)
-    experiment_run.add_argument('--scenario',action='append',choices=['shared_output','resource_contention','python_verification'])
-    experiment_run.add_argument('--include-batches',action='store_true',help='Compare serial/parallel batches of the independent Python checks under the same outer reservation')
+    experiment_run.add_argument('--scenario',action='append',choices=['shared_output','resource_contention','python_verification','buildr_verification'])
+    experiment_run.add_argument('--include-batches',action='store_true',help='Compare serial/parallel batches of fixed verification workloads under the same outer reservation')
     from .scale import add_parser as add_benchmark_parser
     add_benchmark_parser(sub)
     optimize = sub.add_parser('optimize', help='Optional local AI ranking of evidence-backed trials; never applies changes')
@@ -505,7 +505,7 @@ def main():
             from .experiments import run as experiment_run
             result=experiment_run(args.output,args.pairs,args.agents,args.cpus,args.scenario,args.include_batches)
             print(json.dumps(dict(output=args.output,comparisons=result['comparisons'],note=result['note']),indent=2))
-            return 0
+            return 0 if result.get('verification_workload_valid',True) else 2
         if args.action == 'benchmark':
             from .scale import run as benchmark_run
             benchmark_run(args)

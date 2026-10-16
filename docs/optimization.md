@@ -147,3 +147,46 @@ Ghostty responsiveness, accepted code changes or autonomous coding productivity.
 Report costs and all verified outcomes alongside any speedup. Source-before/after
 observations and machine pressure remain part of the report. Existing two-arm
 experiments retain their default behavior.
+
+## Buildr's own package and TUI verification workloads
+
+The opt-in `buildr_verification` scenario runs actual Buildr package builds and
+the browser/prompt regression suites, rather than synthetic allocation work.
+Use a clean, committed developer checkout and a Python environment with the
+optional `build` tool and its packaging backend already installed. Package
+builds use `--no-isolation`; the experiment never installs dependencies or
+downloads packages.
+
+```sh
+buildr run --lane quick --jobs 2 --memory-gb 2 --timeout 1800 -- \
+  python -m agent_builds experiment run --scenario buildr_verification \
+  --include-batches --pairs 4 --agents 4 --cpus 2 \
+  --output /tmp/new-buildr-verification.json
+```
+
+Each logical agent gets an independent copy of the same frozen Git archive.
+It builds wheel/source distributions, runs `test_tui_browser.py` and runs
+`test_tui_prompt.py`. These fixed test suites use private state and mocked
+actions; they do not launch repository builds, cancel live jobs or send Herdr
+announcements. No command is chosen from history or supplied by a model.
+
+The driver independently rechecks all three native stage exits, artifact hashes,
+package versions and required modules. Separate queued jobs hold one CPU slot;
+serial/parallel batches share one aggregate reservation. All arms inherit the
+same CPU affinity. Four pairs rotate each of the four strategies into every
+execution position once. Source-copy setup time is reported separately from
+execution wall time, which includes admission, worker startup, build/test work
+and evidence checking. End-to-end time includes setup as well.
+
+Reports retain failures, native/wrapper exits, artifacts, measured CPU/RSS,
+source identity and host pressure. Buildr-workload performance ratios require
+unchanged complete source and fully verified results in both arms. Otherwise
+they remain null and the command returns nonzero. A failed arm also retains
+completed-arm evidence and its active-arm identity. A `.progress.json` receipt
+records the private fixture directory before any arm starts. An existing report
+or receipt is never reused: inspect it rather than automatically repeating work
+whose outcome is uncertain.
+
+This measures Buildr's own Python package/test workflow on the observed machine.
+It does not establish Rust/Node throughput, long-duration reliability, statistical
+significance, terminal input latency or accepted autonomous coding outcomes.
