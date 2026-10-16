@@ -61,7 +61,10 @@ class UsageContentionTests(unittest.TestCase):
         trace = []
         self.store.db.set_trace_callback(trace.append)
         self.store.finish(self.job, "failed", 7, usage={"samples": 4, "complete": True})
-        updates = [sql for sql in trace if sql.startswith("UPDATE jobs SET")]
+        # SQLite may repeat the parent's SQL in trace callbacks for each
+        # trigger. Distinct statements distinguish a separate telemetry write
+        # without depending on the interpreter's linked SQLite version.
+        updates = {sql for sql in trace if sql.startswith("UPDATE jobs SET")}
         self.assertEqual(len(updates), 1)
         row = self.store.get(self.job)
         self.assertEqual(row["exit_code"], 7)
