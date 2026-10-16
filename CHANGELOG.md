@@ -2,6 +2,11 @@
 
 ## 0.25.0 (unreleased)
 
+- Keep running-job cancellation polls, cancellation transactions, and live
+  reservation snapshots independent of source evidence, telemetry and batch
+  payload size. Execution polls still read current PID/start identity and
+  cancellation state; no scheduling, timeout or recovery policy changes.
+
 - Expand the job browser into a table with Tab, using the pane height for more
   jobs and showing reservation and wait/run columns where space permits. Add
   local wait/runtime/repository sorting while retaining selected job identity;

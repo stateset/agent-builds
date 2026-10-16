@@ -321,7 +321,7 @@ def execute(args, prepared=None, external_probe=None):
                 store.finish(job, 'failed', 2, reason)
                 event('failed', 'failed {}: {}'.format(job, reason), exit_code=2)
                 return 2
-        if cancelled[0] or store.get(job)['cancel_requested']:
+        if cancelled[0] or store.get_control(job)['cancel_requested']:
             store.finish(job, 'cancelled', 130, 'cancelled before command launch')
             event('cancelled', 'cancelled '+job, exit_code=130)
             return 130
@@ -341,7 +341,7 @@ def execute(args, prepared=None, external_probe=None):
             deadline_guard.start()
         store.db.execute('UPDATE jobs SET child_pid=?,child_start=? WHERE id=?',
                          (child.pid, identity(child.pid), job))
-        released = not cancelled[0] and not store.get(job)['cancel_requested'] and (deadline_guard is None or not deadline_guard.expired.is_set())
+        released = not cancelled[0] and not store.get_control(job)['cancel_requested'] and (deadline_guard is None or not deadline_guard.expired.is_set())
         if released:
             try:
                 os.write(release_fd, b'1')
@@ -371,7 +371,7 @@ def execute(args, prepared=None, external_probe=None):
                     if last_sample - last_persist >= 2:
                         store.record_usage(job, usage)
                         last_persist = last_sample
-                row = store.get(job)
+                row = store.get_execution_control(job)
                 timed_out = time.monotonic() >= deadline
                 if stopped_at is None and (cancelled[0] or row['cancel_requested'] or timed_out):
                     reason = 'timeout' if timed_out else 'cancelled'
