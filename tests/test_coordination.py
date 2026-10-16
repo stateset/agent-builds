@@ -13,7 +13,7 @@ import unittest
 from unittest import mock
 
 from agent_builds import execution_policy, remote
-from agent_builds.polling import AdmissionPoll
+from agent_builds.polling import AdmissionPoll, ExecutionPoll
 from agent_builds.runner import spawn_gated
 from agent_builds.store import SCHEMA_VERSION, Store, identity
 
@@ -72,6 +72,169 @@ class CoordinationTests(unittest.TestCase):
             trace,
         )
         self.assertNotIn("PRAGMA journal_mode=WAL", trace)
+
+    def test_output_bursts_do_not_increase_control_read_frequency(self):
+        job, now = self.job(), [0.0]
+        poll = ExecutionPoll(self.store, job, clock=lambda: now[0])
+        original = self.store.get_execution_control
+        with mock.patch.object(
+            self.store, "get_execution_control", wraps=original
+        ) as read:
+            first = poll.read()
+            for _ in range(10000):
+                self.assertIs(poll.read(), first)
+            self.assertEqual(read.call_count, 1)
+            self.store.cancel(job)
+            now[0] = 0.19
+            self.assertFalse(poll.read()["cancel_requested"])
+            self.assertAlmostEqual(poll.wait_timeout(), 0.01)
+            now[0] = 0.2
+            self.assertTrue(poll.read()["cancel_requested"])
+            self.assertEqual(read.call_count, 2)
+
+    def test_control_wait_budget_tracks_the_refresh_deadline(self):
+        now = [10.0]
+        poll = ExecutionPoll(self.store, self.job(), clock=lambda: now[0])
+        self.assertEqual(poll.wait_timeout(), 0)
+        poll.read()
+        self.assertAlmostEqual(poll.wait_timeout(), 0.2)
+        now[0] = 10.15
+        self.assertAlmostEqual(poll.wait_timeout(), 0.05)
+        now[0] = 10.3
+        self.assertEqual(poll.wait_timeout(), 0)
+        poll.read()
+        self.assertAlmostEqual(poll.wait_timeout(), 0.2)
+
+    def test_stop_boundary_refreshes_identity_and_read_failures_propagate(self):
+        job = self.job()
+        poll = ExecutionPoll(self.store, job, clock=lambda: 0)
+        self.store.db.execute(
+            "UPDATE jobs SET child_pid=123,child_start='old' WHERE id=?", (job,)
+        )
+        self.assertEqual(poll.read()["child_start"], "old")
+        self.store.db.execute(
+            "UPDATE jobs SET child_pid=456,child_start='fresh' WHERE id=?", (job,)
+        )
+        self.assertEqual(poll.read()["child_pid"], 123)
+        self.assertEqual(poll.read(force=True)["child_start"], "fresh")
+        with mock.patch.object(
+            self.store,
+            "get_execution_control",
+            side_effect=sqlite3.OperationalError("fixture failure"),
+        ) as read:
+            with self.assertRaisesRegex(sqlite3.OperationalError, "fixture failure"):
+                poll.read(force=True)
+            self.assertEqual(read.call_count, 1)
+
+    def test_real_burst_output_is_complete_without_per_chunk_control_reads(self):
+        self.verify_output_polling(False)
+
+    def test_real_chatty_job_cancellation_retains_exit_130_and_fresh_stop_identity(
+        self,
+    ):
+        self.verify_output_polling(True)
+
+    def test_stop_control_read_cannot_hide_native_deadline_expiry(self):
+        self.verify_output_polling(True, wait_for_deadline=True)
+
+    def verify_output_polling(self, cancel, wait_for_deadline=False):
+        from agent_builds import runner
+        from agent_builds.__main__ import parser
+
+        reads, stopped, guards, blocked = [], [], [], []
+        requested, ready, case = [False], self.root / "output-started", self
+
+        class Deadline(runner.LocalDeadline):
+            def __init__(instance, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                guards.append(instance)
+
+        class ObservedStore(Store):
+            def get_execution_control(instance, job):
+                reads.append((job, time.monotonic()))
+                previous_request = requested[0]
+                if cancel and not requested[0] and len(reads) >= 2 and ready.exists():
+                    requested[0] = True
+                    instance.cancel(job)
+                if previous_request and wait_for_deadline and not blocked:
+                    blocked.append(True)
+                    case.assertTrue(guards[0].expired.wait(timeout=5))
+                return super().get_execution_control(job)
+
+        source = (
+            "import os,time; from pathlib import Path; block=b'X'*4096; os.write(1,block); Path({!r}).touch(); [(os.write(1,block),time.sleep(.001)) for _ in range(10000)]".format(
+                str(ready)
+            )
+            if cancel
+            else "import os; block=b'X'*4096; [os.write(1,block) for _ in range(1024)]; os.write(2,b'END-ERR\\n'); raise SystemExit(7)"
+        )
+        args = parser().parse_args(
+            [
+                "run",
+                "--cwd",
+                str(self.root),
+                "--lane",
+                "quick",
+                "--jobs",
+                "1",
+                "--memory-gb",
+                ".25",
+                "--timeout",
+                "2" if wait_for_deadline else "10",
+                "--",
+                sys.executable,
+                "-c",
+                source,
+            ]
+        )
+        args.quiet_output = True
+        env = dict(os.environ, AGENT_BUILDS_STATE=str(self.store.root))
+        env.pop("AGENT_BUILDS_JOB_ID", None)  # explicitly isolated native fixture only
+        terminate = runner.terminate
+
+        def stop(row):
+            stopped.append(dict(row))
+            return terminate(row)
+
+        with mock.patch.dict(os.environ, env, clear=True), mock.patch(
+            "agent_builds.runner.Store", ObservedStore
+        ), mock.patch("sys.stdout", io.StringIO()), mock.patch(
+            "agent_builds.runner.terminate", side_effect=stop
+        ), mock.patch("agent_builds.runner.LocalDeadline", Deadline):
+            expected = 124 if wait_for_deadline else 130 if cancel else 7
+            self.assertEqual(runner.execute(args), expected)
+        self.assertTrue(reads)
+        row = self.store.get(reads[0][0])
+        self.assertEqual(row["exit_code"], expected)
+        data = self.store.log_path(row["id"]).read_bytes().partition(b"\n")[2]
+        if cancel:
+            self.assertTrue(data)
+            self.assertEqual(row["state"], "cancelled")
+            self.assertEqual(len(stopped), 1)
+            self.assertTrue(requested[0])
+            if wait_for_deadline:
+                self.assertTrue(blocked)
+                self.assertTrue(guards[0].expired.is_set())
+                self.assertEqual(row["reason"], "timeout")
+            self.assertGreaterEqual(
+                len(reads), 3
+            )  # periodic read then forced stop read
+            self.assertEqual(
+                (stopped[0]["child_pid"], stopped[0]["child_start"]),
+                (row["child_pid"], row["child_start"]),
+            )
+            self.assertGreaterEqual(reads[1][1] - reads[0][1], 0.19)
+        else:
+            self.assertEqual(row["state"], "failed")
+            self.assertEqual(data, b"X" * (4096 * 1024) + b"END-ERR\n")
+            self.assertFalse(stopped)
+            self.assertTrue(
+                all(
+                    later[1] - earlier[1] >= 0.19
+                    for earlier, later in zip(reads, reads[1:])
+                ),
+                reads,
+            )
 
     def test_wal_activation_holds_the_bootstrap_lock(self):
         state = self.root / "wal-bootstrap"

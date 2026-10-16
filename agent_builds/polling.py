@@ -32,3 +32,29 @@ class AdmissionPoll:
             self.next_refresh = now + self.interval
             return True
         return False
+
+
+class ExecutionPoll:
+    """Output readiness must not determine the database control-read rate."""
+
+    def __init__(
+        self,
+        store: Any,
+        job: str,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self.store, self.job, self.clock = store, job, clock
+        self.interval = 0.2
+        self.next_refresh = 0.0
+        self.row: Any = None
+
+    def read(self, force: bool = False) -> Any:
+        if force or self.row is None or self.clock() >= self.next_refresh:
+            row = self.store.get_execution_control(self.job)
+            self.row = row
+            self.next_refresh = self.clock() + self.interval
+        return self.row
+
+    def wait_timeout(self) -> float:
+        """Quiet output must wake by the next scheduled control check."""
+        return min(self.interval, max(0.0, self.next_refresh - self.clock()))

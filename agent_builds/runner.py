@@ -272,7 +272,7 @@ def execute(args, prepared=None, external_probe=None):
     try:
         from .waits import WaitUpdates
         wait_updates = WaitUpdates()
-        from .polling import AdmissionPoll
+        from .polling import AdmissionPoll, ExecutionPoll
         admission_poll = AdmissionPoll(store)
         while True:
             store.recover_if_due()
@@ -359,6 +359,7 @@ def execute(args, prepared=None, external_probe=None):
         last_persist = 0
         selector = selectors.DefaultSelector()
         selector.register(child.stdout, selectors.EVENT_READ)
+        execution_poll = ExecutionPoll(store, job)
         stopped_at = None
         reason = ''
         with store.log_path(job).open('ab', buffering=0) as log:
@@ -371,9 +372,13 @@ def execute(args, prepared=None, external_probe=None):
                     if last_sample - last_persist >= 2:
                         store.record_usage(job, usage)
                         last_persist = last_sample
-                row = store.get_execution_control(job)
+                row = execution_poll.read()
                 timed_out = time.monotonic() >= deadline
                 if stopped_at is None and (cancelled[0] or row['cancel_requested'] or timed_out):
+                    # Re-read the signalling identity at the stop boundary;
+                    # an output-rate cache must never authorize termination.
+                    row = execution_poll.read(force=True)
+                    timed_out = time.monotonic() >= deadline
                     reason = 'timeout' if timed_out else 'cancelled'
                     store.cancel(job)
                     terminate(row)
@@ -386,7 +391,7 @@ def execute(args, prepared=None, external_probe=None):
                     # A descendant could retain the output pipe after its leader exits.
                     if exited(child):
                         break
-                for key, _ in selector.select(0.2):
+                for key, _ in selector.select(execution_poll.wait_timeout()):
                     chunk = os.read(key.fileobj.fileno(), 65536)
                     if not chunk:
                         selector.unregister(key.fileobj)
