@@ -2,6 +2,11 @@
 
 ## 0.26.1 (unreleased)
 
+- Reduce process-telemetry path overhead and expand descendant membership with
+  an indexed traversal. Preserve PID/start identity and process-group rules,
+  bound stat-file reads, and tolerate non-UTF-8 Linux process names. Add a paired
+  comparison against the released sampler with matching counter evidence.
+
 - Add opt-in paired Buildr package/TUI-test workloads using identical frozen
   private checkouts, verified wheel/source metadata and native stage outcomes.
   Compare direct launches, queued jobs and serial/parallel batches. Retain

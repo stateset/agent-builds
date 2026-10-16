@@ -54,7 +54,7 @@ jobs:
       - name: Format and type checks for new coordination modules
         if: matrix.python == '3.12'
         run: |
-          python -m agent_builds run --lane quick --jobs 1 --memory-gb 1 --timeout 120 -- python -m ruff format --check agent_builds/execution_policy.py agent_builds/polling.py agent_builds/launch.py agent_builds/scale.py agent_builds/queue_health.py tests/test_coordination.py tests/test_scale.py tests/test_queue_health.py tests/test_admission_reads.py tests/test_lock_scaling.py tests/test_recovery_check.py tests/test_usage_contention.py agent_builds/tui_browser.py agent_builds/tui_logs.py agent_builds/tui_details.py agent_builds/output.py agent_builds/tui_prompt.py agent_builds/verification.py agent_builds/experiments.py tests/test_verification_workload.py tests/test_output.py tests/test_tui_prompt.py tests/test_tui_browser.py tests/test_tui_logs.py tests/test_tui_details.py tools/verify_admission_reads.py tools/verify_coordination.py tools/verify_installed.py tools/verify_recovery.py tools/verify_tui_cache.py
+          python -m agent_builds run --lane quick --jobs 1 --memory-gb 1 --timeout 120 -- python -m ruff format --check agent_builds/execution_policy.py agent_builds/polling.py agent_builds/launch.py agent_builds/scale.py agent_builds/queue_health.py tests/test_coordination.py tests/test_scale.py tests/test_queue_health.py tests/test_admission_reads.py tests/test_lock_scaling.py tests/test_recovery_check.py tests/test_usage_contention.py agent_builds/tui_browser.py agent_builds/tui_logs.py agent_builds/tui_details.py agent_builds/output.py agent_builds/tui_prompt.py agent_builds/process_tree.py tests/test_process_tree.py tools/verify_telemetry_scan.py agent_builds/verification.py agent_builds/experiments.py tests/test_verification_workload.py tests/test_output.py tests/test_tui_prompt.py tests/test_tui_browser.py tests/test_tui_logs.py tests/test_tui_details.py tools/verify_admission_reads.py tools/verify_coordination.py tools/verify_installed.py tools/verify_recovery.py tools/verify_tui_cache.py
           python -m agent_builds run --lane quick --jobs 1 --memory-gb 1 --timeout 120 -- python -m mypy --follow-imports=skip --check-untyped-defs agent_builds/execution_policy.py agent_builds/polling.py agent_builds/launch.py
       - name: Verify bounded admission reads with bulky evidence
         if: matrix.python == '3.12'
@@ -67,6 +67,33 @@ jobs:
         with:
           name: admission-reads
           path: ${{ runner.temp }}/admission-reads.json
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Compare telemetry measurements with the released sampler
+        if: matrix.python == '3.12'
+        run: >-
+          python -m agent_builds run --lane quick --jobs 1 --memory-gb 2 --timeout 120 --
+          python tools/verify_telemetry_scan.py --output '${{ runner.temp }}/telemetry-scan.json'
+      - name: Independently verify telemetry evidence
+        if: matrix.python == '3.12'
+        run: |
+          python - <<'PYTHON'
+          import json, os
+          from pathlib import Path
+          report=json.loads((Path(os.environ['RUNNER_TEMP'])/'telemetry-scan.json').read_text())
+          assert report['result']=='passed' and report['source_changed'] is False
+          assert len(report['records'])==8
+          assert {(r['pair'],r['mode']) for r in report['records']}=={(p,m) for p in range(4) for m in ('baseline','candidate')}
+          for record in report['records']:
+              assert record['measurements_match'] and record['samples']==20
+              assert record['processes']==1000 and record['selected_identities']==34
+          PYTHON
+      - name: Retain telemetry comparison evidence
+        if: always() && matrix.python == '3.12'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: telemetry-scan
+          path: ${{ runner.temp }}/telemetry-scan.json*
           if-no-files-found: warn
           retention-days: 14
       - name: Regression tests through Buildr

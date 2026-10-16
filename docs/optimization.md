@@ -190,3 +190,28 @@ whose outcome is uncertain.
 This measures Buildr's own Python package/test workflow on the observed machine.
 It does not establish Rust/Node throughput, long-duration reliability, statistical
 significance, terminal input latency or accepted autonomous coding outcomes.
+
+### Process telemetry cost
+
+Job telemetry still samples the current user's visible processes at the existing
+rate. The scanner uses directory entries and bounded binary stat reads, and
+indexes parents once to expand each selected process tree. It keeps the original
+PID/start-time membership rules, including observed reparented descendants;
+process-group discovery requires the original leader. Telemetry never authorizes
+process signalling. It remains a sampled estimate that may miss short peaks or
+count shared pages more than once.
+
+To compare scanner cost and measurement parity with v0.26.0:
+
+```sh
+buildr run --lane quick --jobs 1 --memory-gb 2 --timeout 120 -- \
+  python3 tools/verify_telemetry_scan.py --output /tmp/new-telemetry-study.json
+```
+
+This runs four rotating baseline/candidate pairs against fixed metadata for
+1,000 processes, including a deep process tree and unrelated processes. Every
+arm must produce the same identities, CPU counters and peak RSS. Fixture process
+metadata never executes commands. The report preserves source identity and
+failures; timings measure this scanner workload rather than compiler throughput,
+terminal responsiveness or agent productivity. CI checks measurement parity
+without imposing a timing threshold on shared runners.

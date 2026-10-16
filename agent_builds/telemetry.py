@@ -1,9 +1,10 @@
 """Best-effort Linux job measurements. RSS sums can include shared pages."""
 import os
 import math
-from pathlib import Path
 import resource
 import time
+
+from .process_tree import read_processes, select_tree
 
 
 class JobSampler:
@@ -20,33 +21,8 @@ class JobSampler:
         self.baseline = usage.ru_utime + usage.ru_stime
 
     def sample(self):
-        processes = []
-        try:
-            directories = Path('/proc').iterdir()
-            for path in directories:
-                if not path.name.isdigit():
-                    continue
-                try:
-                    if path.stat().st_uid != os.getuid():
-                        continue
-                    text = (path / 'stat').read_text()
-                    fields = text[text.rfind(')') + 2:].split()
-                    processes.append((int(path.name), fields[19], int(fields[1]), int(fields[2]),
-                                      int(fields[11]) + int(fields[12]), max(0, int(fields[21]))))
-                except (OSError, ValueError, IndexError):
-                    continue
-        except OSError:
-            pass
-        # Only trust the group ID while the original leader still exists.
-        leader_present = any(pid == self.pid and start == self.start for pid, start, *_ in processes)
-        selected = {(pid, start) for pid, start, _, group, _, _ in processes
-                    if (pid, start) in self.known or (leader_present and group == self.pid)}
-        while True:
-            parents = {pid for pid, _ in selected}
-            expanded = selected | {(pid, start) for pid, start, parent, *_ in processes if parent in parents}
-            if expanded == selected:
-                break
-            selected = expanded
+        processes = read_processes()
+        selected = select_tree(processes, self.pid, self.start, self.known)
         self.known.update(selected)
         rss = 0
         for pid, start, _, _, ticks, pages in processes:
