@@ -184,13 +184,41 @@ async def verify(output):
             weighted_job=await call(session,'buildr_job',dict(job_id=weighted['result']['job_id']))
             assert weighted_job['batch']['slots_per_check'] is None
             assert [check['cpu_slots'] for check in weighted_job['batch']['checks']]==[2,1,1]
+            # Two outstanding waits on this exact stdio session must not block
+            # protocol ping, inspection or an explicit cancellation. This row is
+            # private fixture state and has no command runner or host reservation.
+            fixture = Store(state)
+            try:
+                pending = fixture.submit(root, ['true'], 'local', 'quick', 1, .25,
+                    'sdk-concurrent-polls', '', 10)
+            finally:
+                fixture.close()
+            polls = [asyncio.create_task(call(session, 'buildr_wait',
+                dict(job_ids=[pending], timeout=5))) for _ in range(2)]
+            try:
+                await asyncio.sleep(.1)
+                started = time.monotonic()
+                await asyncio.wait_for(session.send_ping(), timeout=3)
+                concurrent_status = await asyncio.wait_for(call(session, 'buildr_status', {}), timeout=3)
+                control_seconds = time.monotonic()-started
+                assert all(not poll.done() for poll in polls), 'Fixture polls completed before controls'
+                cancelled = await asyncio.wait_for(call(session, 'buildr_cancel', dict(job_id=pending)), timeout=3)
+                assert cancelled['state'] == 'cancelled'
+                polled = await asyncio.gather(*polls)
+                assert all(item['complete'] and item['exit_code'] == 130 for item in polled)
+                assert concurrent_status['initialized']
+            finally:
+                for poll in polls:
+                    if not poll.done():
+                        poll.cancel()
+                await asyncio.gather(*polls, return_exceptions=True)
             latency=await call(session,'buildr_latency',dict(target_seconds=30))
             assert latency['changes_applied'] is False and latency['cohorts']
             diagnostics=await call(session,'buildr_diagnose',dict(job_id=batched['result']['job_id']))
             assert diagnostics['jobs'][0]['state']=='failed' and not diagnostics['changes_applied']
     reader = Store(state, read_only=True)
     try:
-        assert len(reader.rows()) == 10  # prior fixtures plus explicit CPU packing
+        assert len(reader.rows()) == 11  # prior fixtures plus cancelled concurrency row
         other=reader.get(full_budget['result']['job_id'])
         first=reader.get(watch['probes'][0]['job_id'])
         second=reader.get(watch['probes'][1]['job_id'])
@@ -217,7 +245,10 @@ async def verify(output):
                 'parallel batch overlap and divided CPU hints', 'parallel batch duplicate prevention',
                 'CPU/RAM preflight comparisons without state creation or command execution', 'batch preflight minimum CPU guard',
                 'read-only workbench', 'explicit per-check CPU budgets and durable duplicate prevention',
-                'read-only latency report'], production_jobs_submitted=0,
+                'read-only latency report', 'same-session concurrent waits leave ping and status responsive',
+                'explicit cancellation settles both in-flight waits'], production_jobs_submitted=0,
+        concurrent_transport=dict(polls=2, ping_and_status_seconds=control_seconds,
+            polls_pending_when_controls_completed=True, native_cancel_exit=130),
         shared_output_locks=dict(first_job_id=lock_a['id'],second_job_id=lock_b['id'],
             competing_submission=True,overlap=False,second_wait_seconds=lock_b['wait_seconds']),
         external_watch=dict(wall_seconds=watch['elapsed_seconds'],idle_without_reservation_seconds=watch['external_idle_seconds'],

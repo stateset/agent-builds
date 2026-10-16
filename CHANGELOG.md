@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.22.0
+
+- Service concurrent MCP requests on one stdio connection, separating bounded
+  waits, inspection and mutations so polling does not block status or cancellation.
+- Bound admitted calls to two waits, four inspections and one mutation, without
+  a waiting request backlog. Explicit capacity errors mean no execution or key
+  reservation; retain the same submission key and arguments when trying later.
+- Serialize complete JSON replies, reject duplicate in-flight IDs, retain protocol
+  lifecycle ordering and drain accepted calls on disconnect without retries or
+  implicit job cancellation. Keep build budgets and scheduling policy unchanged.
+
 ## 0.21.0
 
 - Connect measured advisor findings to explicit profile proposals, strict queued

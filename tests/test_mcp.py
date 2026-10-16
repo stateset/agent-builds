@@ -56,7 +56,7 @@ class MCPTests(unittest.TestCase):
         if read_only:
             command.append('--read-only')
         client = subprocess.Popen(command, env=env or self.env, stdin=subprocess.PIPE,
-                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0)
         self.clients.append(client)
         self.request(client, INIT)
         self.send(client, READY)
@@ -276,3 +276,54 @@ class MCPTests(unittest.TestCase):
             self.assertFalse(result['isError'])
         self.assertTrue(self.store.get(first)['cancel_requested'])
         self.assertFalse(self.store.get(second)['cancel_requested'])
+
+
+    def test_same_connection_waits_do_not_block_status_ping_or_explicit_cancel(self):
+        client = self.client()
+        handles = [self.store.submit(self.root, ['true'], 'local', 'quick', 1, .25,
+            'mcp-concurrency-'+str(i), '', 10) for i in range(2)]
+        started = time.monotonic()
+        for i, handle in enumerate(handles):
+            self.send(client, dict(jsonrpc='2.0', id=10+i, method='tools/call',
+                params=dict(name='buildr_wait', arguments=dict(job_ids=[handle], timeout=5))))
+        # Saturation rejects the excess poll before doing any tool work.
+        self.send(client, dict(jsonrpc='2.0', id=12, method='tools/call',
+            params=dict(name='buildr_wait', arguments=dict(job_ids=[handles[1]], timeout=5))))
+        self.send(client, dict(jsonrpc='2.0', id=10, method='ping'))  # duplicate in-flight ID
+        self.send(client, dict(jsonrpc='2.0', id=13, method='ping'))
+        self.send(client, dict(jsonrpc='2.0', id=14, method='tools/call',
+            params=dict(name='buildr_status', arguments={})))
+        self.send(client, dict(jsonrpc='2.0', id=15, method='tools/call',
+            params=dict(name='buildr_cancel', arguments=dict(job_id=handles[0]))))
+        replies = {}
+        while not {12, 13, 14, 15}.issubset(replies):
+            row = self.receive(client)
+            replies[row['id']] = row
+        self.assertLess(time.monotonic()-started, 4, 'Controls waited for a five-second poll')
+        self.assertEqual(replies[12]['error']['code'], -32000)
+        self.assertEqual(replies[12]['error']['data'], dict(request_executed=False, lane='wait', limit=2))
+        self.assertEqual(replies[None]['error']['data'], dict(request_executed=False))
+        self.assertEqual(replies[13]['result'], {})
+        self.assertFalse(replies[14]['result']['isError'])
+        self.assertFalse(replies[15]['result']['isError'])
+        self.assertTrue(self.store.get(handles[0])['cancel_requested'])
+        self.assertFalse(self.store.get(handles[1])['cancel_requested'])
+        # Settle accepted polling calls, without cancelling the other fixture.
+        while not {10, 11}.issubset(replies):
+            row = self.receive(client)
+            replies[row['id']] = row
+        self.assertEqual(replies[11]['result']['structuredContent']['exit_code'], 124)
+
+    def test_eof_drains_accepted_submission_and_reconnect_keeps_one_attempt(self):
+        first = self.client()
+        args = self.arguments(key='fixture-close-immediately')
+        self.send(first, dict(jsonrpc='2.0', id=20, method='tools/call',
+            params=dict(name='buildr_submit', arguments=args)))
+        first.stdin.close()
+        self.assertEqual(first.wait(timeout=8), 0)
+        reply = self.receive(first)
+        handle = reply['result']['structuredContent']['result']['job_id']
+        second = self.client()
+        repeated = self.invoke(second, 'buildr_submit', args)['result']['structuredContent']
+        self.assertEqual(repeated['result']['job_id'], handle)
+        self.assertEqual(len(self.store.rows()), 1)

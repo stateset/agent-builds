@@ -137,9 +137,35 @@ request executes. One small private receipt file is retained per MCP job request
 
 Closing stdin, losing an MCP request or cancelling a request does not cancel a
 durable build. Request cancellation does not substitute for `buildr_cancel` or
-`buildr_plan_cancel`. Calls are processed sequentially per stdio connection;
-polls are bounded and detached jobs continue independently. There are no long
-streaming requests or MCP task/subscription capabilities in this version.
+`buildr_plan_cancel`. Accepted calls finish even after stdin closes or a response
+is lost. There are no long streaming requests or MCP task/subscription capabilities.
+
+### Concurrent requests (v0.22)
+
+One stdio connection can service two bounded waits, four other inspection calls
+and one mutation at a time. Polls do not hold up status, logs, submissions or
+explicit cancellation. Protocol ping, discovery and initialization run on the
+input thread. Responses may arrive out of order; match them by their JSON-RPC
+request ID. Each call uses its own database connection and read-only inspection
+still cannot initialize or migrate state.
+
+There is no waiting transport backlog. Excess calls receive JSON-RPC error
+`-32000` with `error.data.request_executed: false`, the saturated `lane` and its
+`limit`. This rejection happens before invoking the tool or reserving a submission
+key. Try later with the same submission key and exact arguments; do not create a
+fresh attempt. Only one mutation is admitted per connection, so overlapping
+submissions or cancellations may receive this explicit capacity error. The
+existing queue still coordinates all clients and retains the same build budgets.
+These limits describe lightweight transport workers, not additional build slots.
+A failed worker startup disables that transport lane until reconnect, rejecting
+further calls without execution instead of accumulating work or retrying it.
+
+Use unique IDs for simultaneous requests. Reusing an in-flight ID is rejected
+with a null response ID and `-32600`, leaving the original call intact. Numeric
+and string IDs remain distinct. Notifications do not execute tools or cancel
+builds. EOF, malformed/oversized input and broken output never automatically
+retry or cancel accepted mutations. Shutdown drains accepted tool calls; a lost
+response still requires inspection of the original durable key/handle.
 
 ## Protocol and limits
 
@@ -155,7 +181,8 @@ An optional interoperability check uses the official Python client SDK v1 in a
 separate Python 3.10+ environment (`mcp<2`): queue
 `/path/to/sdk-python tools/verify_mcp_client.py --output /tmp/new-mcp-check.json`.
 It verifies discovery, reconnects, duplicate prevention, native failures and a
-complete plan without submitting production fixture jobs. The SDK is a test-only
+complete plan, concurrent polling, responsive controls and explicit cancellation
+without submitting production fixture jobs. The SDK is a test-only
 dependency; the server continues to run on Python 3.8+ with the standard library.
 
 Input messages are limited to 256 KiB; oversize input closes the connection after
