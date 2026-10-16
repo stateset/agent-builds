@@ -27,7 +27,7 @@ affect admission. Missing disk measurements remain unknown.
 
 Primary runner wait reasons are grouped only when their timestamps are fresh.
 Old, missing, oversized and invalid observations are counted separately. At most
-2,000 small observation records are parsed; counts and disk requirement ranges
+200 small observation records are parsed; counts and disk requirement ranges
 still cover every waiting job. Reports exclude job source evidence and logs.
 
 These are read-only explanations. They do not recover work, retry commands,

@@ -9,7 +9,7 @@ import time
 
 from . import waits
 
-MAX_WAIT_SAMPLE = 2000
+MAX_WAIT_SAMPLE = 200
 MAX_CONTEXT = 8192
 LABELS = {
     "repository_lock": "repository locks",
