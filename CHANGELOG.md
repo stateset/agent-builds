@@ -2,6 +2,10 @@
 
 ## 0.25.1 (unreleased)
 
+- Keep scrollable job/recipient context visible inside cancellation and
+  announcement prompts. Bound and cache context wrapping, preserve input while
+  paging, and label the context as a snapshot rather than live observations.
+
 - Show complete questions and input controls in TUI prompts, preserve entered
   text through resizes, and require enough space before accepting an answer.
   Keep Esc cancellation available in tiny panes and handle unsupported cursors.

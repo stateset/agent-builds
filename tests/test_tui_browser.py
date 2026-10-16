@@ -46,7 +46,7 @@ class TuiBrowserTests(unittest.TestCase):
         self.store.close()
         self.temp.cleanup()
 
-    def dashboard(self, keys, dimensions=(20, 100), query="", clock=None):
+    def dashboard(self, keys, dimensions=(20, 100), query="", clock=None, answers=None):
         screen = mock.Mock()
         screen.getmaxyx.return_value = dimensions
         screen.getch.side_effect = keys
@@ -82,11 +82,50 @@ class TuiBrowserTests(unittest.TestCase):
             "agent_builds.tui.cancel_job", side_effect=AssertionError("job cancelled")
         ), mock.patch(
             "agent_builds.tui.spawn", side_effect=AssertionError("job launched")
-        ), mock.patch("agent_builds.tui.prompt", return_value=query):
+        ), mock.patch(
+            "agent_builds.tui.prompt", return_value=query, side_effect=answers
+        ) as prompt:
             sampler.return_value.sample.return_value = []
             tui.main(screen, self.root)
             self.process_samples = sampler.return_value.sample.call_count
+            self.prompt_calls = prompt.call_args_list
         return frames
+
+    def test_cancel_prompt_retains_selected_checkout_and_command_without_mutation(self):
+        self.dashboard([ord("c"), ord("q")], query=None)
+        call = self.prompt_calls[0]
+        self.assertIn(self.jobs[0], call.args[1])
+        self.assertIn("Checkout: " + str(self.root), call.kwargs["context"])
+        self.assertIn("Command: true", call.kwargs["context"])
+        self.assertFalse(self.store.get(self.jobs[0])["cancel_requested"])
+
+    def test_announcement_selection_and_confirmation_keep_recipient_context(self):
+        recipients = [
+            dict(
+                pane_id="w1:p" + str(i),
+                agent_status="idle",
+                cwd="/repo/" + str(i),
+                agent="fixture",
+                agent_session={"id": i},
+            )
+            for i in range(30)
+        ]
+        with mock.patch(
+            "agent_builds.announce.preview", return_value=recipients
+        ), mock.patch(
+            "agent_builds.announce.create",
+            side_effect=AssertionError("announcement created"),
+        ), mock.patch(
+            "agent_builds.announce.spawn_worker",
+            side_effect=AssertionError("announcement sent"),
+        ):
+            self.dashboard([ord("a"), ord("q")], answers=["w1:p0 w1:p29", None])
+        self.assertEqual(len(self.prompt_calls), 2)
+        preview, confirmation = self.prompt_calls
+        self.assertIn("w1:p29 | idle | fixture | /repo/29", preview.kwargs["context"])
+        self.assertIn("2 selected idle agents", confirmation.args[1])
+        self.assertIn("Pane IDs: w1:p0, w1:p29", confirmation.kwargs["context"])
+        self.assertNotIn("/repo/1\n", confirmation.kwargs["context"])
 
     def test_filters_and_literal_search_cover_commands_paths_and_agent_origin(self):
         rows = [

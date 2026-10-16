@@ -106,6 +106,19 @@ Esc still cancels, even in a tiny pane. This prevents accepting a confirmation
 whose question is hidden. The prompt itself never changes shared queue state;
 the existing action runs only after its answer is accepted and validated.
 
+Cancellation prompts retain the selected job's checkout, command, state and
+resource request. Announcement selection and confirmation keep their recipient
+preview visible, including pane IDs and checkouts. PgUp/PgDn pages this context
+without changing the input; the `Snapshot` label shows the visible range.
+Context is captured when the prompt opens, so job and recipient states may
+change while you read it. Existing action validation still applies.
+
+Context wraps to the pane width and retains at most 16 Ki characters, with an
+explicit clipping notice. Use `buildr show JOB_ID --json` for full job evidence
+or `buildr announce` for a fresh recipient preview. Context prompts require
+enough room for the complete question, input controls and at least one context
+row. Resizing preserves the entered value and clamps the context position.
+
 ## Job details
 
 Enter or `i` opens the selected job's evidence in full or narrow panes. Long
