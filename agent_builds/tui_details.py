@@ -27,7 +27,7 @@ def detail_lines(row):
     workers = row["worker_budget"]
     lines = [
         "{} | {}".format(row["id"], row["state"]),
-        "Native exit: {} | {}".format(
+        "Job exit: {} | {}".format(
             row.get("exit_code")
             if row.get("exit_code") is not None
             else "not recorded",
