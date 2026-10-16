@@ -571,8 +571,9 @@ def main(screen, cwd):
                     follow_head=not follow_head
                     message='Following first matching row; other input pins selection.' if follow_head else 'Selection pinned; F follows the first matching row.'
                     continue
-                if key not in (-1,curses.KEY_RESIZE,9):
+                if follow_head and key not in (-1,curses.KEY_RESIZE,9):
                     follow_head=False
+                    message='Selection pinned; F follows the first matching row.'
             if view==13:
                 if key in (ord('l'),ord('v')):
                     view=0

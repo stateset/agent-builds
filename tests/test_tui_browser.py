@@ -903,6 +903,7 @@ class TuiBrowserTests(unittest.TestCase):
                 line for line in frames[2].values() if "| live output" in line
             ).split()[0]
             self.assertNotIn("JOBS FOLLOW", "\n".join(frames[2].values()))
+            self.assertIn("Selection pinned", "\n".join(frames[2].values()))
             self.assertIn(before, "\n".join(frames[-1].values()))
 
     def test_tab_resize_and_idle_input_preserve_follow_and_cached_browser_work(self):
