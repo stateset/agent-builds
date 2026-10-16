@@ -979,7 +979,8 @@ class TuiBrowserTests(unittest.TestCase):
             repository="/repo/long-checkout-name",
             follow=True,
         )
-        self.assertEqual(label[:14], "FOLLOW 100/200 ")
+        self.assertTrue(label.startswith("FOLLOW 100/200 "))
+        self.assertIn("100/200", label[:19])
 
 
 if __name__ == "__main__":
