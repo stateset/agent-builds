@@ -6,7 +6,15 @@ import tempfile
 import unittest
 from unittest import mock
 
-from agent_builds.tui_logs import MAX_BYTES, LogView, clean_lines, wrap_line
+from agent_builds.tui_logs import (
+    MAX_BYTES,
+    TAIL_BYTES,
+    LogView,
+    TailCache,
+    clean_lines,
+    wrap_line,
+    read_recent,
+)
 
 
 class TuiLogTests(unittest.TestCase):
@@ -301,6 +309,130 @@ class TuiLogTests(unittest.TestCase):
                     os.close(slave)
         finally:
             store.close()
+
+
+class InlineTailTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name)
+        self.path = self.root / "job.log"
+        self.cache = TailCache()
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def test_idle_frames_throttle_metadata_and_never_reread_unchanged_content(self):
+        self.path.write_text("first\nlast\n")
+        stat, stats = Path.stat, []
+
+        def observed(path, *args, **kwargs):
+            stats.append(path)
+            return stat(path, *args, **kwargs)
+
+        with mock.patch.object(Path, "stat", observed):
+            with mock.patch("agent_builds.tui_logs.os.open", wraps=os.open) as opened:
+                for _ in range(200):
+                    self.assertEqual(self.cache.read(self.path, 1, 0.1), ["last"])
+                self.assertEqual(len(stats), 1)
+                self.assertEqual(opened.call_count, 1)
+                self.assertEqual(self.cache.read(self.path, 2, 0.6), ["first", "last"])
+                self.assertEqual(len(stats), 2)
+                self.assertEqual(opened.call_count, 1)
+
+    def test_changed_tail_refreshes_at_the_deadline_and_height_needs_no_io(self):
+        self.path.write_text("old\n")
+        self.assertEqual(self.cache.read(self.path, 1, 0), ["old"])
+        self.path.write_text("new\nlast\n")
+        self.assertEqual(self.cache.read(self.path, 1, 0.49), ["old"])
+        self.assertEqual(self.cache.read(self.path, 1, 0.5), ["last"])
+        with mock.patch.object(Path, "stat", side_effect=AssertionError("extra poll")):
+            self.assertEqual(self.cache.read(self.path, 2, 0.6), ["new", "last"])
+
+    def test_selection_change_and_missing_path_never_reuse_another_jobs_output(self):
+        self.path.write_text("old\n")
+        self.cache.read(self.path, 1, 0)
+        other = self.root / "other.log"
+        self.assertEqual(self.cache.read(other, 1, 0.1), [])
+        other.write_text("different\n")
+        self.assertEqual(self.cache.read(other, 1, 0.6), ["different"])
+        self.assertEqual(self.cache.read(self.path, 1, 0.61), ["old"])
+
+    def test_truncation_replacement_and_preserved_mtime_refresh(self):
+        self.path.write_text("first\n")
+        self.cache.read(self.path, 1, 0)
+        before = self.path.stat()
+        self.path.write_text("other\n")
+        os.utime(str(self.path), ns=(before.st_atime_ns, before.st_mtime_ns))
+        # A filesystem can coalesce ctime within one tick too. Even identical
+        # metadata must not hold the old contents indefinitely.
+        with mock.patch.object(Path, "stat", return_value=before):
+            self.assertEqual(self.cache.read(self.path, 1, 4.9), ["first"])
+            self.assertEqual(self.cache.read(self.path, 1, 5), ["other"])
+        self.path.rename(self.root / "old.log")
+        self.path.write_text("replacement\n")
+        self.assertEqual(self.cache.read(self.path, 1, 6), ["replacement"])
+        self.path.write_bytes(b"")
+        self.assertEqual(self.cache.read(self.path, 1, 7), [])
+
+    def test_large_and_growing_files_use_a_hard_read_bound(self):
+        self.path.write_bytes(b"line\n" * TAIL_BYTES + b"end\n")
+        from agent_builds import tui_logs
+
+        original = tui_logs.os.fdopen
+        limits = []
+
+        def opened(*args, **kwargs):
+            handle = original(*args, **kwargs)
+            wrapper = mock.MagicMock(wraps=handle)
+            wrapper.__enter__.return_value = wrapper
+            wrapper.__exit__.side_effect = lambda *unused: handle.close()
+
+            def read(limit):
+                limits.append(limit)
+                with self.path.open("ab") as writer:
+                    writer.write(b"appended\n" * 10000)
+                return handle.read(limit)
+
+            wrapper.read.side_effect = read
+            return wrapper
+
+        with mock.patch.object(tui_logs.os, "fdopen", opened):
+            self.assertEqual(self.cache.read(self.path, 1, 0), ["end"])
+        self.assertEqual(limits, [TAIL_BYTES])
+        self.assertLessEqual(sum(len(line) for line in self.cache.lines), TAIL_BYTES)
+
+    def test_fifo_and_directory_return_without_waiting_for_a_writer(self):
+        os.mkfifo(str(self.path))
+        self.assertEqual(self.cache.read(self.path, 1, 0), [])
+        self.assertEqual(self.cache.read(self.root, 1, 0.1), [])
+
+    def test_zero_or_negative_height_does_not_read_a_file(self):
+        with mock.patch.object(Path, "stat", side_effect=AssertionError("no rows")):
+            self.assertEqual(self.cache.read(self.path, 0, 0), [])
+            self.assertEqual(self.cache.read(self.path, -2, 0), [])
+
+    def test_snapshot_error_closes_descriptor(self):
+        opened, closed = [], []
+        original = os.fdopen
+
+        def observed(descriptor, *args, **kwargs):
+            opened.append(descriptor)
+            handle = original(descriptor, *args, **kwargs)
+            proxy = mock.MagicMock(wraps=handle)
+            proxy.__enter__.return_value = proxy
+
+            def close(*unused):
+                handle.close()
+                closed.append(descriptor)
+
+            proxy.__exit__.side_effect = close
+            return proxy
+
+        os.mkfifo(str(self.path))
+        with mock.patch("agent_builds.tui_logs.os.fdopen", observed):
+            self.cache.read(self.path, 1, 0)
+        self.assertEqual(opened, closed)
+        self.assertEqual(len(closed), 1)
 
 
 if __name__ == "__main__":

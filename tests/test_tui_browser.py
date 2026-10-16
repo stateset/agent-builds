@@ -10,7 +10,7 @@ import tempfile
 import unittest
 from unittest import mock
 
-from agent_builds import tui
+from agent_builds import tui, tui_browser
 from agent_builds.store import Store
 from agent_builds.tui_browser import (
     filter_rows,
@@ -19,6 +19,7 @@ from agent_builds.tui_browser import (
     duration,
     job_line,
     SelectedJobRead,
+    BrowserCache,
 )
 
 
@@ -408,14 +409,14 @@ class TuiBrowserTests(unittest.TestCase):
 
     def test_expanded_table_does_not_read_inline_logs_and_is_safe_when_empty(self):
         keys = iter([9, -1, ord("q")])
-        original_tail = tui.tail
+        original_tail = tui.TailCache.read
         reads = []
 
         def tail(*args):
             reads.append(len(reads))
             return original_tail(*args)
 
-        with mock.patch("agent_builds.tui.tail", side_effect=tail):
+        with mock.patch.object(tui.TailCache, "read", tail):
             self.dashboard(keys)
         self.assertEqual(len(reads), 1)
         for size in ((20, 100), (8, 20)):
@@ -564,6 +565,57 @@ class TuiBrowserTests(unittest.TestCase):
         )
         frames = self.dashboard([ord("j"), ord("g"), ord("l"), ord("q")])
         self.assertIn(self.jobs[0], "\n".join(frames[-1].values()))
+
+    def test_idle_frames_reuse_filter_and_sort_results(self):
+        with mock.patch.object(
+            tui_browser, "filter_rows", wraps=filter_rows
+        ) as filtered:
+            with mock.patch.object(
+                tui_browser, "sort_rows", wraps=sort_rows
+            ) as ordered:
+                self.dashboard([-1] * 200 + [ord("q")])
+        self.assertEqual(filtered.call_count, 1)
+        self.assertEqual(ordered.call_count, 1)
+
+    def test_browser_cache_invalidates_on_every_control_and_new_snapshot(self):
+        rows = self.store.browser_rows()
+        before, cache = copy.deepcopy(rows), BrowserCache()
+        initial = cache.get(rows)
+        for _ in range(200):
+            self.assertIs(cache.get(rows), initial)
+        waiting = cache.get(rows, mode="waiting")
+        self.assertEqual([r["id"] for r in waiting], [self.jobs[1]])
+        self.assertEqual(cache.get(rows, query=self.jobs[2])[0]["state"], "failed")
+        runtime = cache.get(rows, order="runtime")
+        self.assertEqual(runtime[0]["id"], self.jobs[0])
+        self.store.finish(self.jobs[0], "succeeded", 0)
+        updated = self.store.browser_rows()
+        self.assertEqual(len(cache.get(updated, mode="active")), 1)
+        self.assertEqual(rows, before)
+
+    def test_help_skips_inline_rendering_without_changing_selection(self):
+        with mock.patch.object(tui.TailCache, "read", return_value=[]) as tail:
+            frames = self.dashboard([ord("?"), -1, ord("q"), ord("q")])
+        self.assertEqual(tail.call_count, 2)  # before and after help only
+        self.assertIn("HELP", frames[1][0])
+        self.assertIn(self.jobs[0], "\n".join(frames[-1].values()))
+
+    def test_help_over_focused_logs_does_not_poll_the_hidden_snapshot(self):
+        polls, original = [], tui.LogView.poll
+
+        def poll(view, now):
+            polls.append(now)
+            return original(view, now)
+
+        with mock.patch.object(tui.LogView, "poll", poll):
+            self.dashboard([ord("l"), ord("?"), -1, ord("?"), ord("q")])
+        self.assertEqual(len(polls), 2)
+
+    def test_paint_removes_ansi_decoration_without_printing_control_fragments(self):
+        screen = mock.Mock()
+        screen.getmaxyx.return_value = (20, 100)
+        tui.paint(screen, 1, 0, "\x1b[31merror\x1b[0m \x1b]0;title\x07plain")
+        self.assertEqual(screen.addnstr.call_args.args[2], "error plain")
 
 
 if __name__ == "__main__":
