@@ -1,9 +1,12 @@
 """Admission stays independent of bulky execution evidence and presentation."""
 
 import contextlib
+import io
 import json
+import os
 from pathlib import Path
 import sqlite3
+import sys
 import tempfile
 import unittest
 from unittest import mock
@@ -163,6 +166,225 @@ class AdmissionReadTests(unittest.TestCase):
         self.assertIn("child still running", self.store.get(child)["reason"])
         self.assertEqual(self.store.get(docker)["state"], "running")
         self.assertIn("reconcile Docker", self.store.get(docker)["reason"])
+
+    def test_execution_control_refreshes_cancel_and_pid_identity_without_evidence(self):
+        job = self.job("live")
+        self.assertTrue(self.store.claim(job))
+        self.store.db.execute(
+            "UPDATE jobs SET child_pid=123,child_start='first' WHERE id=?", (job,)
+        )
+        with self.without_evidence_reads(), mock.patch.object(
+            self.store, "describe", side_effect=AssertionError("presentation read")
+        ):
+            first = dict(self.store.get_execution_control(job))
+            self.store.db.execute(
+                "UPDATE jobs SET child_pid=456,child_start='second',cancel_requested=1 WHERE id=?",
+                (job,),
+            )
+            second = dict(self.store.get_execution_control(job))
+        self.assertEqual(
+            first,
+            dict(
+                id=job,
+                state="running",
+                cancel_requested=0,
+                backend="local",
+                child_pid=123,
+                child_start="first",
+            ),
+        )
+        self.assertEqual(
+            (second["child_pid"], second["child_start"], second["cancel_requested"]),
+            (456, "second", 1),
+        )
+
+    def test_cancellation_never_expands_evidence_and_preserves_held_storage(self):
+        for state in (
+            "queued",
+            "held",
+            "running",
+            "cancelling",
+            "succeeded",
+            "failed",
+            "cancelled",
+            "lost",
+        ):
+            with self.subTest(state=state):
+                job = self.job(state)
+                self.store.db.execute(
+                    "UPDATE jobs SET state=? WHERE id=?", (state, job)
+                )
+                terminal = state in ("succeeded", "failed", "cancelled", "lost")
+                with self.without_evidence_reads(), mock.patch.object(
+                    self.store,
+                    "describe",
+                    side_effect=AssertionError("presentation read"),
+                ):
+                    self.assertEqual(self.store.cancel(job), not terminal)
+                    control = dict(self.store.get_control(job))
+                expected = (
+                    state if terminal or state in ("queued", "held") else "cancelling"
+                )
+                self.assertEqual(
+                    control, dict(state=expected, cancel_requested=int(not terminal))
+                )
+                self.assertFalse(self.store.db.in_transaction)
+        with self.assertRaisesRegex(ValueError, "Unknown job"):
+            self.store.cancel("missing")
+        self.assertFalse(self.store.db.in_transaction)
+
+    def test_live_reservation_snapshot_omits_execution_evidence(self):
+        first, second = self.job("one"), self.job("two")
+        self.assertTrue(self.store.claim(first))
+        self.assertTrue(self.store.claim(second))
+        with mock.patch("agent_builds.store.time.time", return_value=2000000000):
+            expected = [
+                self.store.reservation(row)
+                for row in self.store.db.execute(
+                    "SELECT * FROM jobs WHERE state='running' ORDER BY started"
+                )
+            ]
+            with self.without_evidence_reads(), mock.patch.object(
+                self.store, "describe", side_effect=AssertionError("presentation read")
+            ):
+                result = self.store.reservation_snapshot()
+            self.assertEqual(result["jobs"], expected)
+            self.assertEqual(result["observed_at"], 2000000000)
+        self.store.finish(first, "succeeded", 0)
+        with self.without_evidence_reads():
+            self.assertEqual(
+                [row["id"] for row in self.store.reservation_snapshot()["jobs"]],
+                [second],
+            )
+
+    def test_execution_control_is_read_only_and_missing_state_is_not_initialized(self):
+        job = self.job("one")
+        reader = Store(self.store.root, read_only=True)
+        try:
+            self.assertEqual(
+                dict(reader.get_execution_control(job)),
+                dict(self.store.get_execution_control(job)),
+            )
+            with self.assertRaisesRegex(ValueError, "Unknown job"):
+                reader.get_execution_control("missing")
+        finally:
+            reader.close()
+        missing = self.root / "absent-state"
+        reader = Store(missing, read_only=True)
+        try:
+            with self.assertRaisesRegex(ValueError, "Unknown job"):
+                reader.get_execution_control("missing")
+            self.assertFalse(missing.exists())
+        finally:
+            reader.close()
+
+    def test_real_running_jobs_keep_polling_separate_from_diagnostics(self):
+        from agent_builds import runner
+        from agent_builds.__main__ import parser
+
+        command_for = runner.command_for
+        for mode, expected in (
+            ("exit", 7),
+            ("cancel", 130),
+            ("timeout", 124),
+            ("docker_unknown", 1),
+        ):
+            with self.subTest(mode=mode):
+                deep_reads, controls = [], []
+                evidence = json.dumps({"opaque_evidence": "x" * (1024 * 1024)})
+
+                class ObservedStore(Store):
+                    def submit(instance, *args, **kwargs):
+                        job = super().submit(*args, **kwargs)
+                        instance.db.execute(
+                            "UPDATE jobs SET source=? WHERE id=?", (evidence, job)
+                        )
+                        return job
+
+                    def get(instance, job):
+                        row = instance.db.execute(
+                            "SELECT state,child_pid FROM jobs WHERE id=?", (job,)
+                        ).fetchone()
+                        if (
+                            row["state"] in ("running", "cancelling")
+                            and row["child_pid"]
+                        ):
+                            deep_reads.append(job)
+                        return super().get(job)
+
+                    def get_execution_control(instance, job):
+                        controls.append(job)
+                        if mode == "cancel" and len(controls) == 2:
+                            instance.cancel(job)
+                        return super().get_execution_control(job)
+
+                command = "import time; print('native-output',flush=True); time.sleep({}); raise SystemExit(7)".format(
+                    0.6 if mode in ("exit", "docker_unknown") else 30
+                )
+                args = parser().parse_args(
+                    [
+                        "run",
+                        "--cwd",
+                        str(self.root),
+                        "--jobs",
+                        "1",
+                        "--memory-gb",
+                        ".25",
+                        "--lane",
+                        "quick",
+                        "--backend",
+                        "docker" if mode == "docker_unknown" else "local",
+                        "--image",
+                        "fixture-only",
+                        "--timeout",
+                        ".4" if mode == "timeout" else "5",
+                        "--",
+                        sys.executable,
+                        "-c",
+                        command,
+                    ]
+                )
+                args.quiet_output = True
+                env = dict(os.environ, AGENT_BUILDS_STATE=str(self.store.root))
+                env.pop(
+                    "AGENT_BUILDS_JOB_ID", None
+                )  # explicitly isolated native fixture only
+                with mock.patch.dict(os.environ, env, clear=True), mock.patch(
+                    "agent_builds.runner.Store", ObservedStore
+                ), mock.patch("sys.stdout", io.StringIO()), mock.patch(
+                    "agent_builds.runner.command_for",
+                    side_effect=lambda row, config: (
+                        json.loads(row["command"])
+                        if mode == "docker_unknown"
+                        else command_for(row, config)
+                    ),
+                ), mock.patch("agent_builds.runner.docker_stopped", return_value=False):
+                    self.assertEqual(runner.execute(args), expected)
+                self.assertTrue(controls)
+                self.assertEqual(deep_reads, [])
+                job = self.store.get(controls[0])
+                if mode == "docker_unknown":
+                    # No daemon is contacted: the native wrapper is a fixture,
+                    # and a mocked unknown daemon outcome must retain capacity.
+                    self.assertEqual(job["state"], "cancelling")
+                    self.assertIsNone(job["exit_code"])
+                    self.assertIn("outcome unknown", job["reason"])
+                    self.assertIn(
+                        job["id"],
+                        [
+                            row["id"]
+                            for row in self.store.reservation_snapshot()["jobs"]
+                        ],
+                    )
+                else:
+                    self.assertEqual(job["exit_code"], expected)
+                    self.assertEqual(
+                        job["state"], "failed" if mode == "exit" else "cancelled"
+                    )
+                if mode != "timeout":
+                    self.assertIn(
+                        "native-output", self.store.log_path(job["id"]).read_text()
+                    )
 
 
 if __name__ == "__main__":

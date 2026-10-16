@@ -29,6 +29,16 @@ polling and migration behavior is unchanged. Reconnect MCP clients and start
 future jobs with the updated executable to receive the reduction in polling.
 Running commands are not restarted or resized on upgrade.
 
+Updated live runners poll only the job's cancellation state, backend, PID and
+Linux start identity while collecting output. They do not repeatedly decode
+source evidence, batch results, telemetry or presentation fields. The launch
+gate's cancellation checks and cancellation write transactions also use small
+control reads. Raw held state is preserved for older workers. Live reservation
+snapshots read only reservation and display fields for running jobs. Detailed
+inspection and final reports still include the full evidence. These changes
+reduce control-path data work; they do not change poll cadence, reservations,
+timeout codes, PID checks, or admission ordering.
+
 ## Controlled coordination measurement
 
 `tools/verify_coordination.py` compares actual Store polling methods with a

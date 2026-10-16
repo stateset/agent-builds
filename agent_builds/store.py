@@ -430,8 +430,15 @@ class Store:
         return self.describe(dict(row))
 
     def get_control(self, job):
-        """Small cancellation read for idle runners; no diagnostic expansion."""
+        """Small cancellation read; no diagnostic expansion or state normalization."""
         row = self.db.execute('SELECT state,cancel_requested FROM jobs WHERE id=?', (job,)).fetchone() if self.db else None
+        if row is None:
+            raise ValueError('Unknown job: ' + job)
+        return row
+
+    def get_execution_control(self, job):
+        """Fresh process identity and cancellation state, without bulky evidence."""
+        row = self.db.execute('SELECT id,state,cancel_requested,backend,child_pid,child_start FROM jobs WHERE id=?', (job,)).fetchone() if self.db else None
         if row is None:
             raise ValueError('Unknown job: ' + job)
         return row
@@ -708,17 +715,17 @@ class Store:
         cached = self._reservation_cache
         if cached is None or time.monotonic() - cached[0] > .2:
             jobs = [] if self.db is None else [self.reservation(row) for row in self.db.execute(
-                "SELECT * FROM jobs WHERE state IN ('running','cancelling') ORDER BY started")]
+                "SELECT "+RESERVATION_COLUMNS+" FROM jobs WHERE state IN ('running','cancelling') ORDER BY started")]
             cached = (time.monotonic(), dict(observed_at=time.time(), jobs=jobs))
             self._reservation_cache = cached
         return cached[1]
 
     def cancel(self, job):
         with self.transaction():
-            row = self.get(job)
+            row = self.get_control(job)
             if row['state'] in TERMINAL:
                 return False
-            state = row['storage_state'] if row['state'] == 'queued' else 'cancelling'
+            state = row['state'] if row['state'] in ('queued', 'held') else 'cancelling'
             self.db.execute('UPDATE jobs SET cancel_requested=1,state=? WHERE id=?', (state, job))
             self._reservation_cache = None
             return True
