@@ -13,6 +13,7 @@ from .metrics import ProcessSampler, snapshot
 from . import __version__
 from .runner import cancel_job
 from .store import Store, TERMINAL
+from .tui_browser import MODES, filter_rows, label as browser_label, HELP
 
 
 def tail(path, lines):
@@ -37,7 +38,7 @@ def paint(screen, y, x, text, attr=0):
         pass
 
 
-def compact_lines(rows, selected, plans, plan_index, view, config, height, width, watches=None, watch_index=0, health=None, health_offset=0, workbench=None, workbench_offset=0, queue_health=None):
+def compact_lines(rows, selected, plans, plan_index, view, config, height, width, watches=None, watch_index=0, health=None, health_offset=0, workbench=None, workbench_offset=0, queue_health=None, browser=None):
     """A monitor for narrow split panes; editing actions need the full view."""
     lines = ['BUILDR ' + __version__ + (' PAUSED' if config['paused'] else '')]
     if height < 8 or width < 20:
@@ -88,17 +89,22 @@ def compact_lines(rows, selected, plans, plan_index, view, config, height, width
         else:
             lines += ['No plans yet']
     else:
-        lines += ['JOBS | {} shown'.format(len(rows))]
+        lines += [browser_label(browser['mode'],browser['query'],len(rows),browser['loaded']) if browser else 'JOBS | {} shown'.format(len(rows))]
         if rows:
             selected_row = rows[selected]
-            lines += [selected_row['id'], selected_row['state'], Path(selected_row['cwd']).name,
-                      'Wait {:.1f}s run {:.1f}s'.format(selected_row['wait_seconds'], selected_row['elapsed_seconds'])]
+            if height < 12:
+                lines += [selected_row['state']+' '+selected_row['id']]
+            else:
+                lines += [selected_row['id'],selected_row['state']]
             if selected_row['reason']:
                 lines += textwrap.wrap(selected_row['reason'], width-1)
+            lines += [Path(selected_row['cwd']).name,
+                      'Wait {:.1f}s run {:.1f}s'.format(selected_row['wait_seconds'], selected_row['elapsed_seconds'])]
             lines += tail(Path(selected_row['log_path']), max(1, height-len(lines)-2))
         else:
-            lines += ['No jobs yet']
-    return lines[:height-1] + ['j/k scroll r back q' if view==12 else 'j/k scroll u back q' if view==11 else 'j/k move v views q']
+            lines += ['No matching jobs' if browser and (browser['query'] or browser['mode']!='all') else 'No jobs yet']
+    footer = 'j/k scroll r back q' if view==12 else 'j/k scroll u back q' if view==11 else 'j/k f / ? q' if browser and view in (0,3) else 'j/k move v views q'
+    return lines[:height-1] + [footer]
 
 
 def prompt(screen, title, initial=''):
@@ -154,7 +160,10 @@ def main(screen, cwd):
     screen.timeout(200)
     store = Store()
     selected = 0
-    message = 'n new job | v views | a announce queue policy | q quit (jobs continue)'
+    message = '? help | / search | f filter | n new job | q quit (jobs continue)'
+    browser_mode, browser_query = 'all',''
+    help_active, help_offset = False,0
+    loaded_rows, metrics, last_jobs = None,None,0
     children = []
     last_recovery = 0
     sampler = ProcessSampler()
@@ -207,11 +216,16 @@ def main(screen, cwd):
             if time.monotonic() - last_recovery > 5:
                 store.recover_if_due()
                 last_recovery = time.monotonic()
-            rows = store.rows()
+            if loaded_rows is None or time.monotonic()-last_jobs>=1:
+                with store.read_snapshot():
+                    loaded_rows=store.rows()
+                metrics=snapshot(cwd)
+                last_jobs=time.monotonic()
+            rows = filter_rows(loaded_rows,browser_mode,browser_query)
             if selected_id:
                 selected = next((index for index, row in enumerate(rows) if row['id'] == selected_id), selected)
             selected = min(selected, max(0, len(rows) - 1))
-            metrics = snapshot(cwd)
+            selected_id = rows[selected]['id'] if rows else None
             if time.monotonic() - last_sample >= 1:
                 processes = sampler.sample()
                 last_sample = time.monotonic()
@@ -269,7 +283,8 @@ def main(screen, cwd):
             height, width = screen.getmaxyx()
             compact = height < 15 or width < 65
             if compact:
-                for index, line in enumerate(compact_lines(rows, selected, plan_rows, plan_index, view, config, height, width, watch_rows, watch_index, health_result, health_offset,workbench_result,workbench_offset,queue_health_result)):
+                browser=dict(mode=browser_mode,query=browser_query,loaded=len(loaded_rows))
+                for index, line in enumerate(compact_lines(rows, selected, plan_rows, plan_index, view, config, height, width, watch_rows, watch_index, health_result, health_offset,workbench_result,workbench_offset,queue_health_result,browser)):
                     paint(screen, index, 0, line)
             else:
                 context = ' | Herdr ' + os.environ.get('HERDR_PANE_ID', '') if os.environ.get('HERDR_ENV') == '1' else ''
@@ -288,7 +303,7 @@ def main(screen, cwd):
                     from .queue_health import banner
                     color = 4 if queue_health_result['status']=='disk_blocked' else 3 if queue_health_result['waiting_jobs'] else 2
                     paint(screen, 4, 0, banner(queue_health_result), curses.A_BOLD | curses.color_pair(color))
-                heading = 'DETAILS / TOOLS | arrows select jobs | v changes view' if view >= 3 else 'JOB           STATE       CPU RAM  BACKEND  REPOSITORY / COMMAND'
+                heading = 'DETAILS / TOOLS | arrows select jobs | ? help' if view >= 3 else browser_label(browser_mode,browser_query,len(rows),len(loaded_rows))+' | / search f filter ? help'
                 paint(screen, 5, 0, heading, curses.A_BOLD)
                 count = 0 if view >= 3 else min(8, max(3, (height - 12) // 2))
                 start = max(0, selected - count + 1)
@@ -300,7 +315,7 @@ def main(screen, cwd):
                     attr = curses.A_REVERSE if index == selected else curses.color_pair(color)
                     paint(screen, 6 + index - start, 0, text, attr)
                 if not rows:
-                    paint(screen, 6, 0, 'No jobs yet. Press n, or run: agent-builds run -- cargo check')
+                    paint(screen, 6, 0, 'No matching jobs; / clears search, f changes filter.' if browser_query or browser_mode!='all' else 'No jobs yet. Press n, or run: agent-builds run -- cargo check')
                 log_top = 7 + count
                 if view == 12:
                     from .workbench import lines as workbench_lines
@@ -516,17 +531,61 @@ def main(screen, cwd):
                     for index, line in enumerate(tail(store.log_path(row['id']), max(1, height - log_top - offset - 3))):
                         paint(screen, log_top + offset + index, 0, line)
                 paint(screen, height - 2, 0, message)
-                paint(screen, height - 1, 0, 'o plan  t task  i details  r workbench  h advisor  u health  v views  q quit' if view != 7 else 'o plan  c cancel plan  r resume  e export  PgUp/PgDn scroll  v views  q quit')
+                paint(screen, height - 1, 0, '? help  / search  f filter  i details  r workbench  u health  v views  q quit' if view != 7 else 'o plan  c cancel plan  r resume  e export  PgUp/PgDn scroll  v views  q quit')
                 if view==10:
                     paint(screen,height-1,0,'c stop observation  r resume controller  e export  Enter probe log  v views  q quit')
                 elif view==11:
                     paint(screen,height-1,0,'j/k scroll  PgUp/PgDn page  u jobs  v views  q quit | read only')
                 elif view==12:
                     paint(screen,height-1,0,'j/k scroll  f next trial  e draft profile  t trial reviewed file  r jobs  q quit')
+            if help_active:
+                screen.erase()
+                content=[part for line in HELP for part in textwrap.wrap(line,max(1,width-2))]
+                room=max(1,height-3)
+                help_offset=min(max(0,help_offset),max(0,len(content)-room))
+                paint(screen,0,0,'BUILDR HELP | shared queue',curses.A_BOLD)
+                for index,line in enumerate(content[help_offset:help_offset+room]):
+                    paint(screen,index+1,0,line)
+                paint(screen,height-1,0,'Esc/?/q back | j/k scroll')
             screen.refresh()
             key = screen.getch()
+            if help_active:
+                if key in (ord('?'),ord('q'),27):
+                    help_active=False
+                elif key in (ord('j'),curses.KEY_DOWN,curses.KEY_NPAGE):
+                    help_offset+=max(1,height-3) if key==curses.KEY_NPAGE else 1
+                elif key in (ord('k'),curses.KEY_UP,curses.KEY_PPAGE):
+                    help_offset=max(0,help_offset-(max(1,height-3) if key==curses.KEY_PPAGE else 1))
+                continue
+            if key==ord('?'):
+                help_active,help_offset=True,0
+                continue
             if key in (ord('q'), 27):
                 break
+            if view in (0,3) and key==ord('f'):
+                browser_mode=MODES[(MODES.index(browser_mode)+1)%len(MODES)]
+                selected,selected_id=0,None
+                continue
+            if view in (0,3) and key==ord('/') and height>=8 and width>=20:
+                query=prompt(screen,'Search (blank clears)',browser_query)
+                if query is not None:
+                    browser_query=query[:256]
+                    selected,selected_id=0,None
+                continue
+            if view==0 and key in (curses.KEY_HOME,curses.KEY_END,curses.KEY_NPAGE,curses.KEY_PPAGE):
+                page=max(1,min(8,(height-12)//2)) if not compact else 1
+                if key==curses.KEY_HOME:
+                    selected=0
+                elif key==curses.KEY_END:
+                    selected=max(0,len(rows)-1)
+                else:
+                    delta=page if key==curses.KEY_NPAGE else -page
+                    selected=min(max(0,len(rows)-1),max(0,selected+delta))
+                selected_id=rows[selected]['id'] if rows else None
+                continue
+            if not compact and view==0 and key in (10,13,curses.KEY_ENTER):
+                view,details_offset=3,0
+                continue
             if compact and key not in (ord('j'), ord('k'), curses.KEY_DOWN, curses.KEY_UP, ord('v'), ord('u'),ord('r')):
                 continue
             if key==ord('r') and view in (0,3,12):

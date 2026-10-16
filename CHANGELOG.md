@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.24.1
+
+- Refresh job snapshots and host metrics once a second while retaining the
+  200 ms keyboard loop; reuse a consistent read snapshot between refreshes.
+- Add local TUI search by job, repository, command, wait reason or Herdr pane,
+  with all/active/waiting/problems filters and explicit loaded-row counts.
+- Add scrollable keyboard help, first/last/page selection, Enter for full job
+  details, and earlier selected wait reasons in narrow panes. Keep shared
+  reservation totals independent of display filters.
+- Wait for recorded telemetry in the profile-review fixture instead of assuming
+  a fixed sleep always provides enough RAM samples on a busy host.
+
+- Keep source evidence, telemetry and batch results out of admission snapshots.
+  Load command display fields only for running reservations and the selected
+  blocker, rather than every queued job while holding the SQLite writer.
+- Recover jobs using process identity fields without loading execution evidence.
+  Preserve live orphan and uncertain Docker reservations, admission ordering,
+  mixed-version locks, schema and global resource budgets.
+- Add evidence-read regression guards and a counterbalanced private-queue
+  comparison with 300 jobs carrying bulky synthetic metadata.
+
 ## 0.24.0
 
 - Show a queue-wide health summary in the dashboard, CLI and MCP status. Identify

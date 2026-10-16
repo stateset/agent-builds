@@ -25,6 +25,12 @@ SCHEMA_VERSION = 2
 TERMINAL = ('succeeded', 'failed', 'cancelled', 'lost')
 STATES = ('queued', 'running', 'cancelling', 'succeeded', 'failed', 'cancelled', 'lost')
 
+# Scheduling must not copy every job's source evidence, telemetry or batch
+# results while holding SQLite's sole writer. Keep presentation reads separate.
+ADMISSION_COLUMNS = ('id,state,created,cwd,lane,slots,memory_gb,resource_key,'
+                     'resource_keys,lock_protocol,cancel_requested,min_free_gb,scratch_gb')
+RESERVATION_COLUMNS = ADMISSION_COLUMNS + ',command,herdr,started'
+
 
 class AdmissionBusy(sqlite3.OperationalError):
     """BEGIN IMMEDIATE could not acquire the writer lock; nothing ran."""
@@ -563,7 +569,8 @@ class Store:
     def recover(self):
         """Never rerun work whose outcome became unknown."""
         with self.transaction():
-            rows = self.db.execute("SELECT * FROM jobs WHERE state IN ('queued','held','running','cancelling')").fetchall()
+            rows = self.db.execute("SELECT id,state,owner_pid,owner_start,child_pid,child_start,backend,cancel_requested "
+                                   "FROM jobs WHERE state IN ('queued','held','running','cancelling')").fetchall()
             for row in rows:
                 if alive(row['owner_pid'], row['owner_start']):
                     continue
@@ -577,19 +584,42 @@ class Store:
                 state = 'cancelled' if row['cancel_requested'] else 'lost'
                 self.finish(row['id'], state, None, 'owner exited; inspect logs before retrying')
 
+    def _claim_row(self, job):
+        row = self.db.execute('SELECT '+ADMISSION_COLUMNS+',reason,wait_context,wait_history FROM jobs WHERE id=?', (job,)).fetchone()
+        if row is None:
+            raise ValueError('Unknown job: ' + job)
+        row = dict(row)
+        if row['state'] == 'held':
+            row['state'] = 'queued'
+        row['resource_keys'] = locks.keys(row)
+        row['wait_context'] = json.loads(row['wait_context'] or '{}')
+        row['wait_history'] = json.loads(row['wait_history'] or '{}')
+        return row
+
+    def _blocking_job(self, job):
+        """Read display fields for the one selected blocker, not the backlog."""
+        row = dict(self.db.execute('SELECT id,state,created,started,finished,cwd,command FROM jobs WHERE id=?', (job,)).fetchone())
+        now = time.time()
+        return dict(id=row['id'],state='queued' if row['state']=='held' else row['state'],
+                    cwd=row['cwd'],command_display=shlex.join(json.loads(row['command'])),
+                    elapsed_seconds=max(0,(row['finished'] or now)-row['started']) if row['started'] else 0,
+                    wait_seconds=max(0,(row['started'] or row['finished'] or now)-row['created']),
+                    age_seconds=max(0,(row['finished'] or now)-row['created']),
+                    log_path=str(self.log_path(job)))
+
     def claim(self, job):
         with self.transaction():
             from .protection import activate
             activate(self)
             config = self.config()
-            row = self.get(job)
+            row = self._claim_row(job)
             if row['cancel_requested']:
                 return False
             if row['state'] != 'queued':
                 return False
             running = [dict(r) for r in self.db.execute(
-                "SELECT * FROM jobs WHERE state IN ('running','cancelling')")]
-            queued = [dict(r) for r in self.db.execute("SELECT * FROM jobs WHERE state IN ('queued','held') AND cancel_requested=0 ORDER BY created,id")]
+                "SELECT "+RESERVATION_COLUMNS+" FROM jobs WHERE state IN ('running','cancelling')")]
+            queued = [dict(r) for r in self.db.execute("SELECT "+ADMISSION_COLUMNS+" FROM jobs WHERE state IN ('queued','held') AND cancel_requested=0 ORDER BY created,id")]
             # Scheduler/lock comparisons reuse each row many times. Decode once
             # in this transaction; never cache across claims or change storage.
             for item in running+queued:
@@ -646,8 +676,7 @@ class Store:
                     reason = 'waiting for scheduling capacity'
             if blocker:
                 context['conflicting_resource_keys'] = sorted(set(row['resource_keys']).intersection(locks.keys(blocker)))
-                context['blocking_job'] = {key: value for key, value in self.describe(blocker).items()
-                    if key in ('id', 'command_display', 'cwd', 'elapsed_seconds', 'wait_seconds', 'age_seconds', 'log_path', 'state')}
+                context['blocking_job'] = self._blocking_job(blocker['id'])
                 reason += ' [' + blocker['id'] + ']'
             if reason:
                 previous = row['wait_context']

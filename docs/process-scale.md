@@ -59,3 +59,28 @@ One ordered synthetic comparison does not establish coding productivity, real
 compiler throughput, safe RAM reductions or the behavior of 100 model clients.
 Use the results to identify coordination bottlenecks, then validate representative
 repository workflows with [workflow studies](workflow-studies.md).
+
+
+## Admission reads with bulky evidence
+
+Source observations, resource telemetry and batch results can grow independently
+of the fields a scheduler needs. Admission reads only scheduling fields for the
+waiting backlog; command details are read for global running reservations and
+one selected blocker. Recovery reads process identities and cancellation state.
+No scheduling policy, queue schema or reservation budget changes.
+
+```sh
+buildr run --lane quick --jobs 1 --memory-gb 2 --timeout 180 -- \
+  python tools/verify_admission_reads.py \
+  --baseline-checkout /absolute/frozen-v0.24.0 \
+  --output /tmp/new-admission-reads.json
+```
+
+This developer tool compares the same 300-job private database with 192 KiB of
+synthetic evidence per job. It exercises paused, priority, lock and already-running
+claims in both checkout orders. It never launches a fixture command. Reports
+retain all timing samples, peak Python allocations and source identity. Python
+allocation tracing excludes SQLite native memory and is not host RSS. These are
+Store-level measurements, separate from the 100-process contention checks and
+real repository workflow studies. CI retains the JSON comparison as an artifact;
+performance ratios are observations, not acceptance thresholds or build speedups.

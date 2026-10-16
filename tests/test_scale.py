@@ -129,7 +129,9 @@ class ScaleTests(unittest.TestCase):
                 other.db.execute("PRAGMA busy_timeout").fetchone()[0], timeout
             )
             with mock.patch.object(
-                other, "get", side_effect=sqlite3.OperationalError("database is locked")
+                other,
+                "_claim_row",
+                side_effect=sqlite3.OperationalError("database is locked"),
             ):
                 with self.assertRaises(sqlite3.OperationalError):
                     other.poll_claim(job)
