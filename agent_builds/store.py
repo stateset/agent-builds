@@ -75,7 +75,6 @@ class Store:
         self.db = sqlite3.connect(str(self.path), timeout=15, isolation_level=None)
         self.db.row_factory = sqlite3.Row
         os.chmod(str(self.path), 0o600)
-        self.db.execute('PRAGMA journal_mode=WAL')
         self.db.execute('PRAGMA busy_timeout=15000')
         try:
             self._ensure_schema()
@@ -84,19 +83,18 @@ class Store:
             raise
 
     def _ensure_schema(self):
-        version = self.db.execute('PRAGMA user_version').fetchone()[0]
-        if version > SCHEMA_VERSION:
-            raise ValueError('Queue schema is newer than this Buildr; use a current runner')
-        if version == SCHEMA_VERSION:
-            return
-        # Serialize the complete legacy bootstrap, retaining all historical
-        # protocol guards. Current opens perform no migration transaction.
+        # WAL activation needs the same bootstrap lock as migrations. Concurrent
+        # journal-mode changes can return SQLITE_BUSY without waiting for the
+        # connection timeout. Current opens only read mode/version under this
+        # short file lock; they do not change mode or start a write transaction.
         descriptor = os.open(str(self.root/'schema.lock'), os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
         with os.fdopen(descriptor, 'a+b') as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
             version = self.db.execute('PRAGMA user_version').fetchone()[0]
             if version > SCHEMA_VERSION:
                 raise ValueError('Queue schema is newer than this Buildr; use a current runner')
+            if self.db.execute('PRAGMA journal_mode').fetchone()[0].lower() != 'wal':
+                self.db.execute('PRAGMA journal_mode=WAL')
             if version < 1:
                 self._migrate_1()
                 with self.transaction():

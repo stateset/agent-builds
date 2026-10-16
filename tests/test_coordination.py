@@ -1,4 +1,5 @@
 import io
+import fcntl
 import json
 import os
 from pathlib import Path
@@ -70,6 +71,35 @@ class CoordinationTests(unittest.TestCase):
             ),
             trace,
         )
+        self.assertNotIn("PRAGMA journal_mode=WAL", trace)
+
+    def test_wal_activation_holds_the_bootstrap_lock(self):
+        state = self.root / "wal-bootstrap"
+        observed = []
+        case = self
+        connect = sqlite3.connect
+
+        class Connection(sqlite3.Connection):
+            def execute(self, sql, *args, **kwargs):
+                if sql == "PRAGMA journal_mode=WAL":
+                    with (state / "schema.lock").open("a+b") as descriptor:
+                        with case.assertRaises(BlockingIOError):
+                            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    observed.append(sql)
+                return super().execute(sql, *args, **kwargs)
+
+        def instrumented(*args, **kwargs):
+            return connect(*args, factory=Connection, **kwargs)
+
+        with mock.patch("agent_builds.store.sqlite3.connect", side_effect=instrumented):
+            store = Store(state)
+            try:
+                self.assertEqual(
+                    store.db.execute("PRAGMA journal_mode").fetchone()[0], "wal"
+                )
+            finally:
+                store.close()
+        self.assertEqual(observed, ["PRAGMA journal_mode=WAL"])
 
     def test_concurrent_first_opens_serialize_complete_migrations(self):
         state = self.root / "concurrent-state"
