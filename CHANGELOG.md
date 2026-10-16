@@ -1,6 +1,11 @@
 # Changelog
 
-## 0.25.0 (unreleased)
+## 0.25.0 — 2026-10-16
+
+- Avoid growing-set copies while scanning queued resource heads, and replace
+  pairwise legacy-lock eligibility comparisons with a per-scan legacy-key set.
+  Preserve FIFO, mixed-version lock draining, protected reserves and backfill
+  policy; compare decisions with the released v0.24.2 scheduler.
 
 - Decouple live execution control polling from output volume: refresh control
   rows approximately every 200 ms while continuing to drain ready output. Wake

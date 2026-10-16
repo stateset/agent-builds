@@ -51,7 +51,7 @@ def choose(queued, running, config, available_gb, disk_free, allow_backfill=True
         if row['cancel_requested']:
             continue
         resources = set(keys(row))
-        if not resources.intersection(busy | seen):
+        if resources.isdisjoint(busy) and resources.isdisjoint(seen):
             heads.append(row)
         # Even a busy or externally blocked earlier job retains FIFO on all
         # declared keys; no partial acquisition and no lock-order deadlock.
