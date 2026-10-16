@@ -106,10 +106,16 @@ class CoordinationTests(unittest.TestCase):
     def test_actual_previous_release_runs_against_versioned_queue_and_wakes_new_waiters(
         self,
     ):
+        self.verify_previous_release("0.22.1")
+
+    def test_actual_v0222_runner_shares_current_queue_without_schema_upgrade(self):
+        self.verify_previous_release("0.22.2")
+
+    def verify_previous_release(self, version):
         old = self.root / "previous-release"
         old.mkdir()
         archive = subprocess.check_output(
-            ["git", "archive", "v0.22.1", "agent_builds"],
+            ["git", "archive", "v" + version, "agent_builds"],
             cwd=str(Path(__file__).resolve().parent.parent),
         )
         with tarfile.open(fileobj=io.BytesIO(archive)) as bundle:
@@ -151,7 +157,7 @@ class CoordinationTests(unittest.TestCase):
         row = self.store.rows()[0]
         self.assertEqual(
             (row["state"], row["exit_code"], row["runner_version"]),
-            ("failed", 7, "0.22.1"),
+            ("failed", 7, version),
         )
         current = Store(self.store.root)
         try:

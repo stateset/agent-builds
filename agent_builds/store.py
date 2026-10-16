@@ -26,6 +26,10 @@ TERMINAL = ('succeeded', 'failed', 'cancelled', 'lost')
 STATES = ('queued', 'running', 'cancelling', 'succeeded', 'failed', 'cancelled', 'lost')
 
 
+class AdmissionBusy(sqlite3.OperationalError):
+    """BEGIN IMMEDIATE could not acquire the writer lock; nothing ran."""
+
+
 def identity(pid):
     """Linux start ticks prevent stale records from signalling a reused PID."""
     try:
@@ -289,7 +293,9 @@ class Store:
             now = time.monotonic()
             if 0 <= now-previous < interval:
                 return False
-            self.recover()
+            acquired, _ = self._try_write(self.recover)
+            if not acquired:
+                return False
             lease.seek(0)
             lease.write(str(time.monotonic()).encode())
             lease.truncate()
@@ -378,13 +384,37 @@ class Store:
 
     @contextlib.contextmanager
     def transaction(self):
-        self.db.execute('BEGIN IMMEDIATE')
+        try:
+            self.db.execute('BEGIN IMMEDIATE')
+        except sqlite3.OperationalError as error:
+            # Python 3.8 does not expose sqlite_errorcode. Convert only the
+            # canonical SQLITE_BUSY result from BEGIN, never body/commit errors.
+            if str(error) == 'database is locked':
+                raise AdmissionBusy(str(error)) from error
+            raise
         try:
             yield
             self.db.execute('COMMIT')
         except BaseException:
             self.db.execute('ROLLBACK')
             raise
+
+    def _try_write(self, operation, *args):
+        """Defer a busy BEGIN only. Errors after BEGIN always propagate."""
+        timeout = self.db.execute('PRAGMA busy_timeout').fetchone()[0]
+        self.db.execute('PRAGMA busy_timeout=0')
+        try:
+            try:
+                return True, operation(*args)
+            except AdmissionBusy:
+                return False, None
+        finally:
+            self.db.execute('PRAGMA busy_timeout=' + str(timeout))
+
+    def poll_claim(self, job):
+        """None means writer busy, False means denied, True means admitted."""
+        acquired, admitted = self._try_write(self.claim, job)
+        return admitted if acquired else None
 
     def log_path(self, job):
         return self.root / 'logs' / (job + '.log')
@@ -394,6 +424,13 @@ class Store:
         if row is None:
             raise ValueError('Unknown job: ' + job)
         return self.describe(dict(row))
+
+    def get_control(self, job):
+        """Small cancellation read for idle runners; no diagnostic expansion."""
+        row = self.db.execute('SELECT state,cancel_requested FROM jobs WHERE id=?', (job,)).fetchone() if self.db else None
+        if row is None:
+            raise ValueError('Unknown job: ' + job)
+        return row
 
     def describe(self, row):
         row['storage_state'] = row['state']
@@ -553,6 +590,10 @@ class Store:
             running = [dict(r) for r in self.db.execute(
                 "SELECT * FROM jobs WHERE state IN ('running','cancelling')")]
             queued = [dict(r) for r in self.db.execute("SELECT * FROM jobs WHERE state IN ('queued','held') AND cancel_requested=0 ORDER BY created,id")]
+            # Scheduler/lock comparisons reuse each row many times. Decode once
+            # in this transaction; never cache across claims or change storage.
+            for item in running+queued:
+                item['resource_keys'] = locks.keys(item)
             candidates = locks.eligible(queued)
             legacy = next((r for r in queued if not r['lock_protocol'] and locks.overlaps(row, r)), None) if len(row['resource_keys'])>1 else None
             older = next((r for r in candidates if (r['created'], r['id']) < (row['created'], job) and locks.overlaps(row, r)), None)

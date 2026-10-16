@@ -54,7 +54,7 @@ jobs:
       - name: Format and type checks for new coordination modules
         if: matrix.python == '3.12'
         run: |
-          python -m agent_builds run --lane quick --jobs 1 --memory-gb 1 --timeout 120 -- python -m ruff format --check agent_builds/execution_policy.py agent_builds/polling.py agent_builds/launch.py tests/test_coordination.py tools/verify_coordination.py tools/verify_installed.py
+          python -m agent_builds run --lane quick --jobs 1 --memory-gb 1 --timeout 120 -- python -m ruff format --check agent_builds/execution_policy.py agent_builds/polling.py agent_builds/launch.py agent_builds/scale.py tests/test_coordination.py tests/test_scale.py tools/verify_coordination.py tools/verify_installed.py
           python -m agent_builds run --lane quick --jobs 1 --memory-gb 1 --timeout 120 -- python -m mypy --follow-imports=skip --check-untyped-defs agent_builds/execution_policy.py agent_builds/polling.py agent_builds/launch.py
       - name: Regression tests through Buildr
         run: >-
@@ -87,3 +87,62 @@ jobs:
           python -m venv "$RUNNER_TEMP/buildr-wheel"
           "$RUNNER_TEMP/buildr-wheel/bin/python" -m pip install --no-deps dist/*.whl
           python -m agent_builds run --lane quick --jobs 2 --memory-gb 1 --timeout 120 -- python tools/verify_installed.py --python "$RUNNER_TEMP/buildr-wheel/bin/python"
+
+  process-scale:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        agents: [30, 100]
+    env:
+      AGENT_BUILDS_STATE: ${{ github.workspace }}/.agent-builds-output/scale-${{ matrix.agents }}
+      BUILDR_SCALE_AGENTS: ${{ matrix.agents }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: '3.12'
+      - name: Configure this isolated CI reservation
+        run: >-
+          python -m agent_builds config --set cpu_slots=2 --set memory_gb=4
+          --set max_running=1 --set max_heavy=1 --set quick_jobs=2 --set heavy_jobs=2
+          --set quick_reserve_slots=0 --set quick_reserve_jobs=0
+          --set quick_reserve_memory_gb=0 --set min_free_gb=1
+          --set min_available_gb=0 --set nice=0
+      - name: Prepare the frozen baseline
+        run: git worktree add --detach "$RUNNER_TEMP/buildr-baseline" v0.22.2
+      - name: Real-process comparison through Buildr
+        run: >-
+          python -m agent_builds run --lane quick --jobs 2 --memory-gb 4 --timeout 900 --
+          python -m agent_builds benchmark scale --agents "$BUILDR_SCALE_AGENTS"
+          --backlog "$((BUILDR_SCALE_AGENTS * 2))" --history 1000 --hold 4
+          --baseline-checkout "$RUNNER_TEMP/buildr-baseline"
+          --output "$RUNNER_TEMP/process-scale.json"
+      - name: Verify the retained outcome independently
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          result = json.loads((Path(os.environ['RUNNER_TEMP'])/'process-scale.json').read_text())
+          agents = int(os.environ['BUILDR_SCALE_AGENTS'])
+          assert result['result']=='passed'
+          for arm in ('baseline','candidate'):
+              data = result[arm]
+              assert data['actual_runner_processes']==data['idle']['coverage']==agents
+              assert data['peak_queued']==agents*3 and data['native_attempts']==agents-2
+              assert data['native_outcomes_verified'] and data['lock_conflicts']==0
+              assert data['peak_native_commands']<=2 and data['peak_reserved_slots']<=2
+              assert data['queued_cancel_exit']==130 and data['killed_runner_state']=='lost'
+          PY
+      - name: Retain the full comparison evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: process-scale-${{ matrix.agents }}
+          path: ${{ runner.temp }}/process-scale.json
+          if-no-files-found: warn
+          retention-days: 14
