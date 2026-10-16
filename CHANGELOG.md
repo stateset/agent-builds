@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.26.1 (unreleased)
+
+- Add opt-in paired Buildr package/TUI-test workloads using identical frozen
+  private checkouts, verified wheel/source metadata and native stage outcomes.
+  Compare direct launches, queued jobs and serial/parallel batches. Retain
+  interrupted experiment evidence and refuse uncertain report reuse.
+
+- Extract prompt editing from the dashboard event loop, preserving its resize,
+  input, context and confirmation behavior.
+
 ## 0.26.0 — 2026-10-16
 
 - Keep scrollable job/recipient context visible inside cancellation and

@@ -1,5 +1,9 @@
 """Bounded, read-only context captured when a dashboard prompt opens."""
 
+import curses
+import textwrap
+import time
+
 from .tui_logs import clean_lines, wrap_line
 
 MAX_CONTEXT_CHARS = 16 * 1024
@@ -77,3 +81,93 @@ def recipient_context(recipients):
         ]
         + ([] if recipients else ["No idle recipients in this preview."])
     )
+
+
+def edit(screen, title, initial, context, paint):
+    value = initial
+    context = PromptContext(context)
+    # Periodic reads let ncurses process resizes even without another key.
+    screen.timeout(200)
+    try:
+        while True:
+            height, width = screen.getmaxyx()
+            question = textwrap.wrap(
+                "".join(ch if ch.isprintable() else " " for ch in title),
+                max(1, width - 1),
+            ) or ["Input"]
+            editable = width >= 20 and height >= max(
+                8, len(question) + (8 if context else 6)
+            )
+            try:
+                curses.curs_set(1 if editable else 0)
+            except curses.error:
+                pass  # Some terminals do not support cursor visibility.
+            try:
+                screen.erase()
+                if editable:
+                    paint(screen, 0, 0, "BUILDR INPUT", curses.A_BOLD)
+                    for index, line in enumerate(question, 2):
+                        paint(screen, index, 0, line)
+                    if context:
+                        page = context.page(width - 1, height - len(question) - 7)
+                        paint(
+                            screen,
+                            len(question) + 3,
+                            0,
+                            "Snapshot " + context.position(),
+                        )
+                        for index, line in enumerate(page, len(question) + 4):
+                            paint(screen, index, 0, line)
+                        paint(screen, height - 2, 0, "PgUp/PgDn context")
+                    visible = value[-max(1, width - 3) :]
+                    paint(screen, height - 3, 0, "> " + visible)
+                    paint(
+                        screen,
+                        height - 1,
+                        0,
+                        "Enter accept | Esc cancel | Ctrl+U clear"
+                        if width >= 40
+                        else "Enter OK Esc cancel",
+                    )
+                    screen.move(height - 3, min(width - 2, 2 + len(visible)))
+                else:
+                    paint(screen, 0, 0, "Resize to edit")
+                    paint(screen, height - 1, 0, "Esc cancels")
+                screen.refresh()
+                key = screen.get_wch()
+            except curses.error as error:
+                # Retry an interrupted resize, not a disconnected terminal
+                # that would otherwise spin on a permanently failing read.
+                if screen.getmaxyx() != (height, width):
+                    continue
+                if str(error) == "no input":
+                    time.sleep(
+                        0.05
+                    )  # Also bound retries on an immediately failing tty.
+                    continue
+                raise
+            if key == "\x1b":
+                return None
+            if (
+                screen.getmaxyx() != (height, width)
+                or not editable
+                or key == curses.KEY_RESIZE
+            ):
+                continue
+            if key in ("\n", "\r", curses.KEY_ENTER):
+                return value
+            if context and key in (curses.KEY_PPAGE, curses.KEY_NPAGE):
+                context.scroll(1 if key == curses.KEY_NPAGE else -1)
+                continue
+            if key in ("\b", "\x7f", curses.KEY_BACKSPACE):
+                value = value[:-1]
+            elif key == "\x15":
+                value = ""
+            elif isinstance(key, str) and key.isprintable():
+                value += key
+    finally:
+        try:
+            curses.curs_set(0)
+        except curses.error:
+            pass
+        screen.timeout(200)

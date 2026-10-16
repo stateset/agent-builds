@@ -54,7 +54,7 @@ jobs:
       - name: Format and type checks for new coordination modules
         if: matrix.python == '3.12'
         run: |
-          python -m agent_builds run --lane quick --jobs 1 --memory-gb 1 --timeout 120 -- python -m ruff format --check agent_builds/execution_policy.py agent_builds/polling.py agent_builds/launch.py agent_builds/scale.py agent_builds/queue_health.py tests/test_coordination.py tests/test_scale.py tests/test_queue_health.py tests/test_admission_reads.py tests/test_lock_scaling.py tests/test_recovery_check.py tests/test_usage_contention.py agent_builds/tui_browser.py agent_builds/tui_logs.py agent_builds/tui_details.py agent_builds/output.py agent_builds/tui_prompt.py tests/test_output.py tests/test_tui_prompt.py tests/test_tui_browser.py tests/test_tui_logs.py tests/test_tui_details.py tools/verify_admission_reads.py tools/verify_coordination.py tools/verify_installed.py tools/verify_recovery.py tools/verify_tui_cache.py
+          python -m agent_builds run --lane quick --jobs 1 --memory-gb 1 --timeout 120 -- python -m ruff format --check agent_builds/execution_policy.py agent_builds/polling.py agent_builds/launch.py agent_builds/scale.py agent_builds/queue_health.py tests/test_coordination.py tests/test_scale.py tests/test_queue_health.py tests/test_admission_reads.py tests/test_lock_scaling.py tests/test_recovery_check.py tests/test_usage_contention.py agent_builds/tui_browser.py agent_builds/tui_logs.py agent_builds/tui_details.py agent_builds/output.py agent_builds/tui_prompt.py agent_builds/verification.py agent_builds/experiments.py tests/test_verification_workload.py tests/test_output.py tests/test_tui_prompt.py tests/test_tui_browser.py tests/test_tui_logs.py tests/test_tui_details.py tools/verify_admission_reads.py tools/verify_coordination.py tools/verify_installed.py tools/verify_recovery.py tools/verify_tui_cache.py
           python -m agent_builds run --lane quick --jobs 1 --memory-gb 1 --timeout 120 -- python -m mypy --follow-imports=skip --check-untyped-defs agent_builds/execution_policy.py agent_builds/polling.py agent_builds/launch.py
       - name: Verify bounded admission reads with bulky evidence
         if: matrix.python == '3.12'
@@ -117,7 +117,7 @@ jobs:
           --output '${{ runner.temp }}/official-mcp.json'
       - name: Install distribution test tools
         if: matrix.python == '3.12'
-        run: python -m pip install build twine
+        run: python -m pip install build twine 'setuptools>=61' wheel
       - name: Build distributions through Buildr
         if: matrix.python == '3.12'
         run: >-
@@ -133,6 +133,40 @@ jobs:
           python -m venv "$RUNNER_TEMP/buildr-wheel"
           "$RUNNER_TEMP/buildr-wheel/bin/python" -m pip install --no-deps dist/*.whl
           python -m agent_builds run --lane quick --jobs 2 --memory-gb 1 --timeout 120 -- python tools/verify_installed.py --python "$RUNNER_TEMP/buildr-wheel/bin/python"
+      - name: Buildr package and test workload acceptance
+        if: matrix.python == '3.12'
+        run: >-
+          python -m agent_builds run --lane quick --jobs 2 --memory-gb 2 --timeout 600 --
+          python -m agent_builds experiment run --scenario buildr_verification
+          --include-batches --pairs 1 --agents 2 --cpus 2
+          --output '${{ runner.temp }}/verification-workload.json'
+      - name: Independently check real workload evidence
+        if: matrix.python == '3.12'
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          report=json.loads((Path(os.environ['RUNNER_TEMP'])/'verification-workload.json').read_text())
+          assert report['verification_workload_valid'] and report['source_changed'] is False
+          assert len(report['records'])==4
+          assert {arm['mode'] for arm in report['records']}=={'independent','queued','serial_batch','parallel_batch'}
+          for arm in report['records']:
+              assert arm['verified_jobs']==arm['jobs']==2
+              for job in arm['results']:
+                  assert job['exit_code']==0 and job.get('wrapper_exit_code',0)==0
+                  proof=job['verification']
+                  assert [stage['name'] for stage in proof['stages']]==['package','browser_tests','prompt_tests']
+                  assert all(stage['exit_code']==0 for stage in proof['stages'])
+                  assert len(proof['artifacts'])==2
+          PY
+      - name: Retain real workload evidence
+        if: always() && matrix.python == '3.12'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: verification-workload
+          path: ${{ runner.temp }}/verification-workload.json*
+          if-no-files-found: warn
+          retention-days: 14
       - name: Retain verified release distributions
         if: matrix.python == '3.12'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
