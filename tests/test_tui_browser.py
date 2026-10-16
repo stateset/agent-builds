@@ -5,6 +5,7 @@ import curses
 import os
 import json
 import sqlite3
+import re
 from pathlib import Path
 import tempfile
 import unittest
@@ -769,6 +770,81 @@ class TuiBrowserTests(unittest.TestCase):
             frames = self.dashboard(list(map(ord, "RCq")))
         self.assertIn("No job selected", "\n".join(frames[1].values()))
         self.assertIn("JOBS all | 0/0 loaded", "\n".join(frames[-1].values()))
+
+    def test_details_open_and_return_in_full_and_minimum_panes_without_log_reads(self):
+        original = Store.get
+        for size in ((20, 100), (8, 20)):
+            with mock.patch.object(
+                Store, "get", autospec=True, side_effect=original
+            ) as get:
+                with mock.patch.object(tui.TailCache, "read", return_value=[]) as tail:
+                    frames = self.dashboard([10, -1, ord("i"), ord("q")], size)
+            self.assertEqual(get.call_count, 1)
+            self.assertEqual(tail.call_count, 2)  # jobs before and after details
+            self.assertIn("DETAILS", "\n".join(frames[1].values()))
+            self.assertIn(self.jobs[0], "\n".join(frames[1].values()))
+            self.assertIn("JOBS", "\n".join(frames[-1].values()))
+            self.assertLessEqual(len(frames[1]), size[0])
+
+    def test_details_page_home_end_use_wrapped_rows_and_keep_the_selected_job(self):
+        for size in ((20, 100), (8, 20)):
+            frames = self.dashboard(
+                [
+                    ord("i"),
+                    curses.KEY_NPAGE,
+                    curses.KEY_END,
+                    curses.KEY_HOME,
+                    ord("l"),
+                    ord("q"),
+                ],
+                size,
+            )
+            heading = lambda frame: next(
+                line
+                for line in frame.values()
+                if re.match(r"(?:JOB )?DETAILS (?:\| )?\d+-\d+/\d+", line)
+            )
+            self.assertNotEqual(heading(frames[1]), heading(frames[2]))
+            self.assertEqual(heading(frames[1]), heading(frames[4]))
+            self.assertIn(self.jobs[0], "\n".join(frames[-1].values()))
+            self.assertIn("LOG LIVE", "\n".join(frames[-1].values()))
+
+    def test_details_help_releases_evidence_and_reloads_only_when_visible(self):
+        original, reads = Store.get, []
+
+        def get(store, job):
+            reads.append(job)
+            return original(store, job)
+
+        with mock.patch.object(Store, "get", get):
+            frames = self.dashboard(
+                [ord("i"), ord("?"), -1, ord("?"), ord("i"), ord("q")], (8, 20)
+            )
+        self.assertEqual(reads, [self.jobs[0], self.jobs[0]])
+        self.assertIn("BUILDR HELP", frames[2][0])
+        self.assertIn("DETAILS", "\n".join(frames[4].values()))
+
+    def test_narrow_details_read_failure_cannot_display_the_previous_job(self):
+        original = self.store.get(self.jobs[0])
+        with mock.patch.object(
+            Store,
+            "get",
+            side_effect=[original, sqlite3.OperationalError("fixture busy")],
+        ) as get:
+            frames = self.dashboard([ord("i"), ord("j"), -1, ord("q")], (8, 20))
+        self.assertEqual(get.call_count, 2)
+        text = "\n".join(frames[-1].values())
+        self.assertIn("DETAILS unavailable", text)
+        self.assertIn("fixture busy", text)
+        self.assertNotIn(self.jobs[0], text)
+
+    def test_narrow_details_keep_repository_focus_and_ignore_shared_actions(self):
+        self.focus_repository()
+        frames = self.dashboard(list(map(ord, "jRipcbnaRiq")), (8, 40))
+        text = "\n".join(frames[-1].values())
+        self.assertIn("JOBS queue all 3/3", text)
+        self.assertIn(self.jobs[1], text)
+        self.assertFalse(self.store.config()["paused"])
 
 
 if __name__ == "__main__":

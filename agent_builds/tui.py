@@ -16,6 +16,7 @@ from .runner import cancel_job
 from .store import Store, TERMINAL
 from .tui_browser import MODES, ORDERS, BrowserCache, SelectedJobRead, filter_rows, sort_rows, page_size, columns, job_line, label as browser_label, HELP
 from .tui_logs import LogView, TailCache, strip_escapes
+from .tui_details import DetailsView
 
 
 def tail(path, lines):
@@ -37,7 +38,7 @@ def paint(screen, y, x, text, attr=0):
         pass
 
 
-def compact_lines(rows, selected, plans, plan_index, view, config, height, width, watches=None, watch_index=0, health=None, health_offset=0, workbench=None, workbench_offset=0, queue_health=None, browser=None, tail_reader=None):
+def compact_lines(rows, selected, plans, plan_index, view, config, height, width, watches=None, watch_index=0, health=None, health_offset=0, workbench=None, workbench_offset=0, queue_health=None, browser=None, tail_reader=None, details_view=None, detail_row=None, detail_error=None):
     """A monitor for narrow split panes; editing actions need the full view."""
     lines = ['BUILDR ' + __version__ + (' PAUSED' if config['paused'] else '')]
     if height < 8 or width < 20:
@@ -50,7 +51,15 @@ def compact_lines(rows, selected, plans, plan_index, view, config, height, width
         from .queue_health import banner
         lines += [banner(queue_health, compact=True)]
     selected_row = None
-    if view == 12:
+    if view == 3:
+        room=max(1,height-len(lines)-2)
+        if details_view is not None and detail_row is not None:
+            page=details_view.page(detail_row,max(1,width-1),room)
+            lines+=['DETAILS '+details_view.position()]+page
+        else:
+            lines+=['DETAILS unavailable']
+            lines+=textwrap.wrap(detail_error or 'No job selected',max(1,width-1))[:room]
+    elif view == 12:
         from .workbench import lines as workbench_lines
         content=list(workbench_lines(workbench)) if workbench and 'error' not in workbench else [workbench.get('error','Loading workbench') if workbench else 'Loading workbench']
         wrapped=[part for line in content for part in textwrap.wrap(line,max(1,width-1))]
@@ -109,7 +118,7 @@ def compact_lines(rows, selected, plans, plan_index, view, config, height, width
             lines += (tail_reader or tail)(Path(selected_row['log_path']), max(1, height-len(lines)-2))
         else:
             lines += ['No matching jobs' if browser and (browser['query'] or browser['mode']!='all' or browser.get('repository') is not None) else 'No jobs yet']
-    footer = 'j/k scroll r back q' if view==12 else 'j/k scroll u back q' if view==11 else 'R C Tab / f l ? q' if browser and view in (0,3) else 'j/k move v views q'
+    footer = 'PgUp/Dn i/l ? q' if view==3 else 'j/k scroll r back q' if view==12 else 'j/k scroll u back q' if view==11 else 'R C Tab / f l ? q' if browser and view==0 else 'j/k move v views q'
     return lines[:height-1] + [footer]
 
 
@@ -188,8 +197,7 @@ def main(screen, cwd):
     processes = []
     view = 0
     selected_id = None
-    details_offset = 0
-    details_job = None
+    details_view = DetailsView()
     last_sample = 0
     disk_pool = ThreadPoolExecutor(max_workers=1)
     disk_future = None
@@ -246,7 +254,9 @@ def main(screen, cwd):
             selected_id = rows[selected]['id'] if rows else None
             process_height,process_width=screen.getmaxyx()
             full_view=process_height>=15 and process_width>=65
-            detail_row=detail_read.get(selected_id if view==3 and full_view and not help_active else None,time.monotonic())
+            detail_row=detail_read.get(selected_id if view==3 and process_height>=8 and process_width>=20 and not help_active else None,time.monotonic())
+            if view!=3 or help_active or detail_row is None:
+                details_view.clear()
             inline_context=context_read.get(selected_id if view==0 and full_view and not jobs_expanded and not help_active else None,time.monotonic())
             if view == 1 and not help_active and process_height>=15 and process_width>=65 and time.monotonic() - last_sample >= 1:
                 processes = sampler.sample()
@@ -324,7 +334,7 @@ def main(screen, cwd):
                 paint(screen,height-1,0,'/ find  n/N match  End live  l jobs  ? help  q quit')
             elif compact:
                 browser=dict(mode=browser_mode,query=browser_query,loaded=len(loaded_rows),order=browser_order,expanded=jobs_expanded,repository=browser_repository)
-                for index, line in enumerate(compact_lines(rows, selected, plan_rows, plan_index, view, config, height, width, watch_rows, watch_index, health_result, health_offset,workbench_result,workbench_offset,queue_health_result,browser,read_tail)):
+                for index, line in enumerate(compact_lines(rows, selected, plan_rows, plan_index, view, config, height, width, watch_rows, watch_index, health_result, health_offset,workbench_result,workbench_offset,queue_health_result,browser,read_tail,details_view,detail_row,detail_read.error)):
                     paint(screen, index, 0, line)
             else:
                 context = ' | Herdr ' + os.environ.get('HERDR_PANE_ID', '') if os.environ.get('HERDR_ENV') == '1' else ''
@@ -398,74 +408,10 @@ def main(screen, cwd):
                             delivery['pane'], delivery['state'], Path(delivery['repository']).name, delivery['detail']))
                 elif view == 3 and rows and detail_row is not None:
                     row = detail_row
-                    if details_job != row['id']:
-                        details_offset = 0
-                        details_job = row['id']
-                    origin = row['origin']
-                    context = row['wait_context']
-                    workers = row['worker_budget']
-                    lines = [
-                        '{} | {} | {}'.format(row['id'], row['state'], row['command_display']),
-                        'Submitted from pane {} | tab {} | workspace {}'.format(
-                            origin.get('pane_id', 'not captured'), origin.get('tab_id', '?'), origin.get('workspace_id', '?')),
-                        'Reserved: {} CPU slots, {} GiB RAM'.format(row['slots'], row['memory_gb']),
-                        'Resource locks: ' + (', '.join(row.get('resource_keys', [])) or 'unrecorded'),
-                        'Queue worker defaults: CARGO_BUILD_JOBS={}, RUST_TEST_THREADS={}'.format(row['slots'], row['slots']),
-                        'Cargo build setting: {} ({})'.format(workers['cargo_build']['configured_value'], workers['cargo_build']['source']),
-                        'Rust test setting: {} ({})'.format(workers['rust_tests']['configured_value'], workers['rust_tests']['source']),
-                        'Worker settings describe configuration; runtime concurrency is not measured.']
-                    batch=row.get('batch',{})
-                    if 'max_parallel' in batch:
-                        lines += ['Batch: up to {} checks | CPU hints {} | one aggregate RAM reservation'.format(
-                            batch['max_parallel'],'individual' if batch['slots_per_check'] is None else batch['slots_per_check'])]
-                    for check in batch.get('checks',[]):
-                        lines += ['Check {}: {} | CPU {} | native exit {}'.format(check['name'],check['state'],
-                            check.get('cpu_slots',batch.get('slots_per_check','unrecorded')),check['exit_code'])]
-                    usage = row['usage']
-                    if usage:
-                        lines += ['Measured CPU {:.2f}s | sampled peak RSS {:.3f} GiB | {} samples'.format(
-                            usage.get('cpu_seconds', 0), usage.get('sampled_peak_rss_gb', 0), usage.get('samples', 0)),
-                            'RSS is sampled, may include shared pages, and may miss short peaks.']
-                    else:
-                        lines += ['Job resource usage has not been measured.']
-                    from .waits import summary
-                    lines += ['Wait breakdown: ' + summary(row['wait_breakdown']),
-                              'Observed {:.0%}; gaps and legacy waits are unobserved.'.format(row['wait_breakdown']['coverage'])]
-                    if row['source']:
-                        source = row['source']
-                        lines += ['Source: submitted {} | started {}'.format(
-                            source.get('submission', {}).get('head', 'unavailable'), source.get('start', {}).get('head', 'not captured')),
-                            'Source drift: before start {} | during command {}'.format(
-                                source.get('changed_since_submission', 'unknown'), source.get('changed_during_run', 'unknown'))]
-                        observed = source.get('finish', source.get('start', source.get('submission', {})))
-                        inputs = observed.get('inputs', {})
-                        if inputs:
-                            lines += ['Declared inputs: {} | {} files (latest observation)'.format(
-                                inputs.get('status', 'unavailable'), len(inputs.get('files', [])))]
-                            for item in inputs.get('files', [])[:16]:
-                                lines += ['  {} | {} | {}'.format(item['path'], item['status'],
-                                    (item.get('sha256') or 'no hash')[:12])]
-                    if row.get('scheduling'):
-                        policy = row['scheduling']
-                        lines += ['Runner policy: {}'.format(policy['policy_version']),
-                            'Age priority: {} | threshold {}s | current quick reserve {} CPU / {} jobs / {} GiB'.format(
-                            policy['age_priority'], policy['aging_seconds'], policy['quick_reserve_slots'],
-                            policy['quick_reserve_jobs'], policy['quick_reserve_memory_gb']), policy['note']]
-                    if context:
-                        lines += [
-                            'RAM admission: {} GiB job + {} GiB headroom = {} GiB minimum available'.format(
-                                context.get('job_memory_gb', row['memory_gb']), context.get('memory_headroom_gb', '?'), context.get('required_memory_gb', '?')),
-                            'CPU: {} used + {} requested / {} slots'.format(
-                                context.get('current_used_cpu_slots', context.get('used_cpu_slots', '?')),
-                                row['slots'], context.get('total_cpu_slots', '?')),
-                            'Contributing running reservations (live observation):']
-                        lines += ['{}: {} CPU / {} GiB | {}'.format(job['id'], job['slots'], job['memory_gb'], job['command_display'])
-                                  for job in context.get('contributing_jobs', [])]
-                    paint(screen, log_top - 1, 0, 'JOB DETAILS | i returns to logs', curses.A_BOLD)
-                    visible = max(1, height - log_top - 3)
-                    details_offset = min(max(0, details_offset), max(0, len(lines) - visible))
-                    for index, line in enumerate(lines[details_offset:details_offset + visible]):
-                        paint(screen, log_top + index, 0, line)
+                    page=details_view.page(row,max(1,width-1),max(1,height-log_top-3))
+                    paint(screen,log_top-1,0,'JOB DETAILS | '+details_view.position()+' | i jobs',curses.A_BOLD)
+                    for index,line in enumerate(page):
+                        paint(screen,log_top+index,0,line)
                 elif view == 3:
                     paint(screen,log_top-1,0,'JOB DETAILS | i returns to jobs',curses.A_BOLD)
                     paint(screen,log_top,0,'Details unavailable: '+(detail_read.error or 'No job selected'))
@@ -586,7 +532,7 @@ def main(screen, cwd):
                     for index, line in enumerate(read_tail(store.log_path(row['id']), max(1, height - log_top - offset - 3))):
                         paint(screen, log_top + offset + index, 0, line)
                 paint(screen, height - 2, 0, message)
-                paint(screen, height - 1, 0, 'R repo  C clear  Tab table  s sort  / search  f filter  l logs  ? help  q quit' if view==0 else '? help  R repo  C clear  / search  f filter  l logs  i jobs  q quit' if view==3 else '? help  / search  f filter  s sort  l logs  i details  v views  q quit' if view!=7 else 'o plan  c cancel plan  r resume  e export  PgUp/PgDn scroll  v views  q quit')
+                paint(screen, height - 1, 0, 'R repo  C clear  Tab table  s sort  / search  f filter  l logs  ? help  q quit' if view==0 else 'PgUp/Dn Home/End  j/k job  i jobs  l logs  ? help  q quit' if view==3 else '? help  / search  f filter  s sort  l logs  i details  v views  q quit' if view!=7 else 'o plan  c cancel plan  r resume  e export  PgUp/PgDn scroll  v views  q quit')
                 if view==10:
                     paint(screen,height-1,0,'c stop observation  r resume controller  e export  Enter probe log  v views  q quit')
                 elif view==11:
@@ -683,8 +629,18 @@ def main(screen, cwd):
                     selected=min(max(0,len(rows)-1),max(0,selected+delta))
                 selected_id=rows[selected]['id'] if rows else None
                 continue
-            if not compact and view==0 and key in (10,13,curses.KEY_ENTER):
-                view,details_offset=3,0
+            if view in (0,3) and key in (ord('i'),10,13,curses.KEY_ENTER) and height>=8 and width>=20:
+                view=0 if view==3 else 3
+                if view==3:
+                    details_view.home()
+                continue
+            if view==3 and key in (curses.KEY_HOME,curses.KEY_END,curses.KEY_NPAGE,curses.KEY_PPAGE):
+                if key==curses.KEY_HOME:
+                    details_view.home()
+                elif key==curses.KEY_END:
+                    details_view.end()
+                else:
+                    details_view.scroll(1 if key==curses.KEY_NPAGE else -1)
                 continue
             if compact and key not in (ord('j'), ord('k'), curses.KEY_DOWN, curses.KEY_UP, ord('v'), ord('u'),ord('r')):
                 continue
@@ -929,9 +885,7 @@ def main(screen, cwd):
                     message = 'Task failed: ' + str(error)
             elif key == ord('i'):
                 view = 0 if view == 3 else 3
-                details_offset = 0
-            elif view == 3 and key in (curses.KEY_NPAGE, curses.KEY_PPAGE):
-                details_offset += max(1, height - 10) * (1 if key == curses.KEY_NPAGE else -1)
+                details_view.home()
             elif key == ord('g') and rows:
                 try:
                     blocker = store.get_wait_context(rows[selected]['id']).get('blocking_job')
