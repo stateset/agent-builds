@@ -9,6 +9,8 @@
   an attachment-time runner crash cannot leave an unrecorded command executing.
 - Stop a batch child created during a concurrent group shutdown, including when
   slow outer telemetry delays the main cancellation loop.
+- Record pending batch checks before launch so an early bootstrap timeout keeps
+  the planned check list without inventing per-check native results.
 - Require explicitly selected idle Herdr recipients and recheck before sending.
   Add optional MCP working-directory roots and prominent host-execution guidance.
 - Validate remote submissions before consuming request tokens and return database

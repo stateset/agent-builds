@@ -322,6 +322,10 @@ def execute(args, prepared=None, external_probe=None):
         # Command arguments remain arguments: no implicit shell evaluation.
         from .execution_policy import check_cwd
         check_cwd(cwd)
+        from .batch import pending_report
+        batch = pending_report(json.loads(row['command']),slots)
+        if batch is not None:
+            store.db.execute('UPDATE jobs SET batch=? WHERE id=?',(json.dumps(batch),job))
         child, release_fd = spawn_gated(command_for(row, config), cwd, env)
         deadline = time.monotonic() + timeout
         if row['backend'] == 'local':

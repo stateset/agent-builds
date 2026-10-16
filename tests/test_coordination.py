@@ -338,6 +338,48 @@ class CoordinationTests(unittest.TestCase):
             self.store.get(job)["batch"]["checks"][0]["state"], "succeeded"
         )
 
+    def test_timeout_before_batch_bootstrap_preserves_pending_checks_without_native_results(
+        self,
+    ):
+        from agent_builds import batch, runner
+        from agent_builds.__main__ import parser
+
+        definition = dict(checks=[dict(name="never-started", command=["true"])])
+        command = batch.command(definition)
+        args = parser().parse_args(
+            [
+                "run",
+                "--cwd",
+                str(self.root),
+                "--jobs",
+                "1",
+                "--memory-gb",
+                ".25",
+                "--timeout",
+                ".05",
+                "--",
+            ]
+            + command
+        )
+        spawn = runner.spawn_gated
+
+        def stalled_bootstrap(argv, cwd, env):
+            return spawn([sys.executable, "-c", "import time; time.sleep(5)"], cwd, env)
+
+        env = dict(os.environ, AGENT_BUILDS_STATE=str(self.store.root))
+        env.pop("AGENT_BUILDS_JOB_ID", None)  # isolated early-launch fixture only
+        with mock.patch.dict(os.environ, env, clear=True), mock.patch(
+            "agent_builds.runner.spawn_gated", side_effect=stalled_bootstrap
+        ):
+            self.assertEqual(runner.execute(args), 124)
+        row = self.store.rows()[0]
+        self.assertEqual(row["batch"]["checks"][0]["state"], "pending")
+        self.assertIsNone(row["batch"]["checks"][0]["exit_code"])
+        summary = batch.summary(row)
+        self.assertFalse(summary["complete"])
+        self.assertEqual(summary["checks"][0]["state"], "skipped")
+        self.assertIsNone(summary["worker_exit_code"])
+
     def test_invalid_remote_request_does_not_consume_its_token(self):
         for edit in (
             dict(command=[]),
