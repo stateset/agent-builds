@@ -88,7 +88,7 @@ class DetailsTests(unittest.TestCase):
         refreshed = copy.deepcopy(self.row)
         refreshed.update(state="failed", exit_code=7)
         view.page(refreshed, 40, 3)
-        self.assertIn("Native exit: 7 | failed", "\n".join(view.wrapped))
+        self.assertIn("Job exit: 7 | failed", "\n".join(view.wrapped))
         self.assertGreater(view.offset, 0)
         different = dict(refreshed, id="different", command_display="other job")
         view.page(different, 40, 3)
@@ -122,7 +122,7 @@ class DetailsTests(unittest.TestCase):
     def test_unknown_native_exit_is_explicit_and_not_inferred_from_state(self):
         self.row.update(state="lost", exit_code=None)
         lines = detail_lines(self.row)
-        self.assertIn("Native exit: not recorded | lost", lines)
+        self.assertIn("Job exit: not recorded | lost", lines)
         self.assertIn("Checkout: " + self.temp.name, lines)
 
     def test_oversized_rendering_is_capped_and_labels_the_missing_evidence(self):

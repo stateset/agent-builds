@@ -112,3 +112,18 @@ comparisons of identical workloads.
 Repeated successful tiny quick checks (median <=10s, at least three matching
 executions) can receive an optional one-slot trial without an unproven memory
 cut. Explicit tool worker flags still need review; the queue preserves argv.
+
+## Disconnected output readers
+
+Closing a runner's stdout reader or JSON-event stderr reader does not cancel the
+accepted job. The runner stops forwarding to the closed stream, continues
+logging native output, and retains its execution result and telemetry. Reattach
+with the stable job handle using `buildr show JOB_ID --json`, `buildr wait JOB_ID`
+or `buildr logs JOB_ID`. A missing handle does not justify retrying an uncertain
+submission. Closing a pipe does not detach the runner from signals or protect
+it against a killed process/session.
+
+An unexpected error after durable completion can still fail the runner process;
+it does not rewrite the stored job outcome. Job exit codes include queue control
+results such as timeout/cancellation (124/130), so a job exit is not necessarily
+the native process's return code.

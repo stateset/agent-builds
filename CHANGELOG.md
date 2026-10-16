@@ -2,6 +2,11 @@
 
 ## 0.25.1 (unreleased)
 
+- Keep accepted jobs running when lifecycle/native-output readers close, without
+  repeated broken writes or interpreter exit-code replacement. Preserve durable
+  completion if later notification/reporting fails. Label TUI job exit codes
+  accurately, including queue-generated timeout/cancellation results.
+
 - Add opt-in `F` following of the first matching displayed job across refreshes.
   Pin selection on navigation or inspection, preserve following through table
   toggles/resize, and suspend it during help without changing queue state.

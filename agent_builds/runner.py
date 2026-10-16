@@ -254,12 +254,14 @@ def execute(args, prepared=None, external_probe=None):
         temporary.write_text(json.dumps(dict(job_id=job, log_path=str(store.log_path(job)), cwd=str(cwd))))
         os.chmod(str(temporary), 0o600)
         temporary.replace(receipt)
+    from .output import OutputRelay
+    output = OutputRelay()
     def event(state, text, **extra):
         if args.events_json:
-            print(json.dumps(dict(job_id=job, state=state, timestamp=time.time(),
-                                  log_path=str(store.log_path(job)), **extra)), file=sys.stderr, flush=True)
+            output.write(sys.stderr, json.dumps(dict(job_id=job, state=state, timestamp=time.time(),
+                                  log_path=str(store.log_path(job)), **extra))+'\n')
         else:
-            print(text, flush=True)
+            output.write(sys.stdout, text+'\n')
     event('queued', 'queued {} ({}, {} CPU slots, {} GiB reserved)'.format(job, args.backend, slots, memory),
           argv=command, cwd=str(cwd))
     cancelled = [False]
@@ -398,11 +400,7 @@ def execute(args, prepared=None, external_probe=None):
                     else:
                         log.write(chunk)
                         if not getattr(args, 'quiet_output', False):
-                            try:
-                                sys.stdout.buffer.write(chunk)
-                                sys.stdout.buffer.flush()
-                            except BrokenPipeError:
-                                pass
+                            output.write(sys.stdout, chunk, binary=True)
             # The leader is deliberately unreaped, so its process-group ID
             # cannot be reused. A crashed wrapper may leave descendants with
             # redirected output; stop those before releasing its reservation.
@@ -461,6 +459,10 @@ def execute(args, prepared=None, external_probe=None):
                     except ProcessLookupError:
                         pass
                 child.wait()
+        if row['state'] in TERMINAL:
+            # Completion is already durable. A later observer/notification
+            # failure must not rewrite its state, exit, telemetry or evidence.
+            raise
         if row['backend'] == 'docker' and not docker_stopped(row):
             store.db.execute("UPDATE jobs SET state='cancelling',reason=? WHERE id=?",
                              ('Docker outcome unknown; cancel to reconcile', job))

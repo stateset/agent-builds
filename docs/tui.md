@@ -103,7 +103,9 @@ or last wrapped row. `j`/`k` still select jobs and reset the details position.
 Enter or `i` returns to jobs; `l` opens the selected log. Repository focus,
 search and sort settings stay in effect.
 
-Details include the recorded native exit, checkout and reason. A missing exit
+Details include the recorded job exit, checkout and reason. Queue timeout and
+cancellation use 124/130; these are job results, not necessarily native process
+exit codes. A missing exit
 remains "not recorded" even for a terminal state. Selected reads refresh at most
 once a second. Formatting is reused until that snapshot changes; wrapping is
 reused until its content or pane width changes. Resize clamps the scroll
