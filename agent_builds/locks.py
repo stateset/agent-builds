@@ -34,6 +34,10 @@ def eligible(queued):
     Old workers cannot see held work, so must not be blocked behind it. New
     claims and legacy inserts are serialized by the same SQLite transaction.
     """
-    legacy = [row for row in queued if not row.get('lock_protocol')]
-    return [row for row in queued if len(keys(row)) == 1 or
-            not any(overlaps(row, old) for old in legacy)]
+    legacy_keys = {key for row in queued if not row.get('lock_protocol') for key in keys(row)}
+    result = []
+    for row in queued:
+        resources = keys(row)
+        if len(resources) == 1 or not legacy_keys or legacy_keys.isdisjoint(resources):
+            result.append(row)
+    return result

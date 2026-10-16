@@ -60,3 +60,13 @@ reservation. Live orphan children and uncertain Docker jobs retain all their
 declared locks and reservations until confirmed stopped. No uncertain command
 is retried automatically. Older dashboards may display the internal `held`
 state; reopen the dashboard after upgrading for current counts and details.
+
+## Lock-scan cost
+
+Admission builds a set of legacy workers' primary resource keys once per scan,
+then checks each multi-lock job against that set. The scheduler checks running
+and earlier queued keys separately instead of copying their growing union for
+every job. These are transaction-local lookups, not cached admission decisions.
+Legacy workers still declare only their primary key, and overlapping legacy work
+must drain before held multi-lock work. FIFO on every resource, atomic acquisition,
+protected reservations and backfill policy remain unchanged.
