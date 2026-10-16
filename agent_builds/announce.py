@@ -54,11 +54,23 @@ def session(agent):
 
 def preview(exclude=None):
     exclude = exclude or os.environ.get('HERDR_PANE_ID')
-    return [agent for agent in agents() if agent['pane_id'] != exclude and session(agent)]
+    return [agent for agent in agents() if agent['pane_id'] != exclude and session(agent) and agent.get('agent_status') in ('idle','done')]
+
+
+def select(recipients, panes):
+    selected = list(dict.fromkeys(panes))
+    if not selected:
+        raise ValueError('Select each idle recipient explicitly with --recipient PANE; nothing was sent')
+    available = {agent['pane_id']: agent for agent in recipients}
+    if any(pane not in available for pane in selected):
+        raise ValueError('Every recipient must be in the current idle preview; nothing was sent')
+    return [available[pane] for pane in selected]
 
 
 def create(store, recipients, message=POLICY, ttl=900):
     require_herdr()
+    if not recipients or any(agent.get('agent_status') not in ('idle','done') or not session(agent) for agent in recipients):
+        raise ValueError('Only explicitly selected idle recipients with stable sessions may receive announcements')
     announcement = uuid.uuid4().hex[:12]
     with store.transaction():
         store.db.execute('INSERT INTO announcements(id,created,expires,message) VALUES(?,?,?,?)',
@@ -112,9 +124,9 @@ def dispatch_once(store, announcement):
             mark(store, announcement, row['pane'], 'skipped', 'agent session changed')
             continue
         status = current.get('agent_status')
-        ready = status in ('idle', 'done') or (status == 'working' and current.get('agent') == 'codex')
+        ready = status in ('idle', 'done')
         if not ready:
-            mark(store, announcement, row['pane'], 'pending', 'agent is ' + str(status))
+            mark(store, announcement, row['pane'], 'skipped', 'recipient became '+str(status)+'; select it again when idle')
             continue
         # Claim BEFORE the side effect. An uncertain result is never auto-retried.
         with store.transaction():
@@ -127,7 +139,7 @@ def dispatch_once(store, announcement):
             if result.returncode == 0:
                 mark(store, announcement, row['pane'], 'submitted', 'submitted through native agent input; adoption not confirmed')
             elif 'agent_blocked' in result.stderr:
-                mark(store, announcement, row['pane'], 'pending', 'agent blocked; no input sent')
+                mark(store, announcement, row['pane'], 'skipped', 'agent blocked; no input sent; select it again when idle')
             else:
                 mark(store, announcement, row['pane'], 'unknown', 'submission failed; inspect before retrying: ' + result.stderr[:150])
         except (OSError, subprocess.TimeoutExpired):

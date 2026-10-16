@@ -27,6 +27,8 @@ def validate(definition, cwd, config):
     root = Path(cwd).expanduser().resolve()
     if not root.is_dir():
         raise ValueError('Plan checkout must already exist')
+    from .execution_policy import check_cwd
+    check_cwd(root)
     parallel = definition.get('max_parallel', 1)
     if type(parallel) is not int or not 1 <= parallel <= 16:
         raise ValueError('max_parallel must be between 1 and 16')

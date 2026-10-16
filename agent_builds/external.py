@@ -33,6 +33,8 @@ def validate(value, config):
     cwd = value.get('cwd')
     if not isinstance(cwd, str) or not Path(cwd).is_absolute() or not Path(cwd).is_dir():
         raise ValueError('Probe cwd must be an existing absolute directory')
+    from .execution_policy import check_cwd
+    check_cwd(cwd)
     result = dict(cwd=str(Path(cwd).resolve()), command=command, read_only_probe=True)
     for key, default, maximum in (('name', 'external completion', 100), ('external_ref', None, 1000)):
         text = value.get(key, default)
@@ -334,7 +336,7 @@ def control(handle):
         for sig in (signal.SIGTERM, signal.SIGINT):
             previous[sig] = signal.signal(sig, stop_controller)
         while not stop[0]:
-            store.recover()
+            store.recover_if_due()
             for job, child in list(children.items()):
                 if child.poll() is not None:
                     attached = store.db.execute('SELECT attached FROM external_probes WHERE job_id=?', (job,)).fetchone()[0]
@@ -347,7 +349,13 @@ def control(handle):
                 children[current['job_id']] = child
             if raw(store, handle)['state'] in FINISHED:
                 return
-            time.sleep(.1)
+            current = raw(store, handle)
+            delay = .1
+            if current['state'] == 'waiting' and current['next_probe_at'] is not None:
+                definition = json.loads(current['definition'])
+                remaining = min(current['next_probe_at'], current['created']+definition['timeout'])-time.time()
+                delay = max(.01, min(.5, remaining))
+            time.sleep(delay)
     except BaseException as error:
         store.db.execute('UPDATE external_watches SET reason=? WHERE id=? AND owner_pid=? AND owner_start=?',
             ('Controller stopped: '+type(error).__name__+'; inspect handles and use watch resume', handle, os.getpid(), token))

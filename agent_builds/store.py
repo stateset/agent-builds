@@ -1,4 +1,5 @@
 import contextlib
+import fcntl
 import json
 import math
 import os
@@ -19,6 +20,8 @@ DEFAULTS = dict(cpu_slots=6, max_running=3, max_heavy=2, memory_gb=16,
                 min_free_gb=10, quick_jobs=2, heavy_jobs=3, nice=10,
                 timeout_seconds=7200, docker_image='', min_available_gb=4, paused=False,
                 quick_reserve_slots=2, quick_reserve_jobs=1, quick_reserve_memory_gb=2, aging_seconds=120, protected_quick=False)
+SCHEMA_VERSION = 2
+
 TERMINAL = ('succeeded', 'failed', 'cancelled', 'lost')
 STATES = ('queued', 'running', 'cancelling', 'succeeded', 'failed', 'cancelled', 'lost')
 
@@ -48,6 +51,7 @@ class Store:
         self.read_only = read_only
         self.db = None
         self._reservation_cache = None
+        self._config_cache = None
         if read_only:
             if self.path.exists():
                 self.db = sqlite3.connect(self.path.as_uri() + '?mode=ro', uri=True,
@@ -63,6 +67,37 @@ class Store:
         os.chmod(str(self.path), 0o600)
         self.db.execute('PRAGMA journal_mode=WAL')
         self.db.execute('PRAGMA busy_timeout=15000')
+        try:
+            self._ensure_schema()
+        except BaseException:
+            self.db.close()
+            raise
+
+    def _ensure_schema(self):
+        version = self.db.execute('PRAGMA user_version').fetchone()[0]
+        if version > SCHEMA_VERSION:
+            raise ValueError('Queue schema is newer than this Buildr; use a current runner')
+        if version == SCHEMA_VERSION:
+            return
+        # Serialize the complete legacy bootstrap, retaining all historical
+        # protocol guards. Current opens perform no migration transaction.
+        descriptor = os.open(str(self.root/'schema.lock'), os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(descriptor, 'a+b') as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            version = self.db.execute('PRAGMA user_version').fetchone()[0]
+            if version > SCHEMA_VERSION:
+                raise ValueError('Queue schema is newer than this Buildr; use a current runner')
+            if version < 1:
+                self._migrate_1()
+                with self.transaction():
+                    self.db.execute('PRAGMA user_version=1')
+                version = 1
+            if version < 2:
+                with self.transaction():
+                    self._migrate_2()
+                    self.db.execute('PRAGMA user_version=2')
+
+    def _migrate_1(self):
         self.db.execute('''CREATE TABLE IF NOT EXISTS jobs (
             id TEXT PRIMARY KEY, state TEXT NOT NULL, created REAL NOT NULL,
             started REAL, finished REAL, owner_pid INTEGER, owner_start TEXT,
@@ -187,20 +222,78 @@ class Store:
                       AND NEW.input_owner_epoch!=OLD.input_owner_epoch+1
                     BEGIN SELECT RAISE(ABORT, 'Declared input files require the installed Buildr controller/worker'); END''')
 
+    def _migrate_2(self):
+        self.db.execute('CREATE TABLE queue_events (id INTEGER PRIMARY KEY CHECK(id=1), generation INTEGER NOT NULL)')
+        self.db.execute('INSERT INTO queue_events VALUES (1,1)')
+        for event, name in (('INSERT','insert'), ('DELETE','delete'),
+                ('UPDATE OF state,cancel_requested,slots,memory_gb,lane,created,resource_key,resource_keys,reserve_protocol,min_free_gb,scratch_gb','update')):
+            self.db.execute('CREATE TRIGGER queue_event_'+name+' AFTER '+event+' ON jobs '
+                'BEGIN UPDATE queue_events SET generation=generation+1 WHERE id=1; END')
+        self.db.execute('CREATE TRIGGER queue_event_policy AFTER UPDATE OF requested,effective,required_protocol ON admission_policy '
+            'WHEN OLD.requested!=NEW.requested OR OLD.effective!=NEW.effective OR OLD.required_protocol!=NEW.required_protocol '
+            'BEGIN UPDATE queue_events SET generation=generation+1 WHERE id=1; END')
+
     def close(self):
         if self.db is not None:
             self.db.close()
 
+    def config_signature(self):
+        try:
+            stat = self.config_path.stat()
+            return (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns)
+        except FileNotFoundError:
+            return None
+
     def config(self):
-        result = dict(DEFAULTS)
-        if self.config_path.exists():
-            result.update(json.loads(self.config_path.read_text()))
-        self.validate_config(result)
+        signature = self.config_signature()
+        cached = self._config_cache
+        if cached is None or cached[0] != signature:
+            settings = dict(DEFAULTS)
+            if signature is not None:
+                settings.update(json.loads(self.config_path.read_text()))
+            self.validate_config(settings)
+            self._config_cache = (signature, settings) if self.config_signature() == signature else None
+        else:
+            settings = cached[1]
+        result = dict(settings)
+        # Policy activation belongs to SQLite and remains fresh even when the
+        # configuration file has not changed. Never cache these live flags.
         from .protection import exists
         row = self.db.execute('SELECT requested,effective FROM admission_policy WHERE id=1').fetchone() if exists(self) else (0, 0)
         result.update(protected_quick=bool(row[1]), protected_quick_requested=bool(row[0]),
                       protected_quick_pending=bool(row[0] and not row[1]))
         return result
+
+    def recover_if_due(self, interval=2):
+        """One crash-released file lease elects a periodic recovery sweep.
+
+        Explicit recover() remains synchronous. This fast path is for polling
+        loops only, and never runs from a read-only connection.
+        """
+        if self.read_only:
+            raise ValueError('Recovery requires a writable queue')
+        now = time.monotonic()
+        if now < getattr(self, '_next_recovery_check', 0):
+            return False
+        self._next_recovery_check = now+interval
+        descriptor = os.open(str(self.root/'recovery.lock'), os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(descriptor, 'r+b', buffering=0) as lease:
+            try:
+                fcntl.flock(lease, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                return False
+            try:
+                previous = float(lease.read(64) or b'0')
+            except ValueError:
+                previous = 0
+            now = time.monotonic()
+            if 0 <= now-previous < interval:
+                return False
+            self.recover()
+            lease.seek(0)
+            lease.write(str(time.monotonic()).encode())
+            lease.truncate()
+            return True
 
     @staticmethod
     def validate_config(result):

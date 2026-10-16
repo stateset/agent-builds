@@ -7,9 +7,11 @@ import base64
 import contextlib
 import io
 import json
+import math
 import os
 from pathlib import Path
 import re
+import sqlite3
 import subprocess
 import sys
 import time
@@ -120,8 +122,54 @@ def reconcile(store, handle):
     return record
 
 
+def submission_args(request, config):
+    """Validate every launch field before consuming a new request token."""
+    from .__main__ import parser
+    from .protection import validate_job
+    if request.get('locks') or request.get('resource_keys'):
+        raise ValueError('Remote protocol 1 does not support multiple locks; nothing was submitted')
+    lane, backend = request.get('lane'), request.get('backend')
+    if backend not in ('local', 'docker') or lane not in ('quick', 'heavy'):
+        raise ValueError('Invalid worker backend or lane')
+    command, cwd = request.get('command'), request.get('cwd')
+    if (not isinstance(command, list) or not 1 <= len(command) <= 128 or
+            any(not isinstance(item, str) or '\0' in item for item in command) or not command[0] or
+            sum(len(item.encode())+1 for item in command) > 32768):
+        raise ValueError('Remote command must be a bounded literal argv list')
+    if not isinstance(cwd, str) or '\0' in cwd or not Path(cwd).is_absolute() or not Path(cwd).is_dir():
+        raise ValueError('Remote checkout must already exist at an absolute path')
+    from .execution_policy import check_cwd
+    check_cwd(cwd)
+    args = parser().parse_args(['run', '--', 'placeholder'])
+    args.cwd, args.command, args.lane, args.backend = cwd, command, lane, backend
+    args.detach, args.events_json = True, True
+    for field, default in (('jobs', config[lane+'_jobs']), ('memory_gb', 6 if lane=='heavy' else 2),
+            ('timeout', config['timeout_seconds']), ('min_free_gb', 0), ('scratch_gb', 0)):
+        value = request.get(field)
+        value = default if value is None else value
+        try:
+            finite = type(value) in (int, float) and math.isfinite(value)
+        except OverflowError:
+            finite = False
+        if (not finite or
+                value < 0 or field not in ('min_free_gb','scratch_gb') and value == 0 or
+                field == 'jobs' and type(value) is not int):
+            raise ValueError('Invalid remote '+field)
+        setattr(args, field, value)
+    if args.jobs > config['cpu_slots'] or args.memory_gb > config['memory_gb']:
+        raise ValueError('Remote reservation exceeds current budget')
+    image = request.get('image')
+    if image is not None and not isinstance(image, str):
+        raise ValueError('Invalid Docker image')
+    args.image = image or config['docker_image']
+    if not isinstance(args.image, str) or '\0' in args.image or backend=='docker' and (not args.image or ',' in cwd):
+        raise ValueError('Invalid Docker image or bind path')
+    validate_job(dict(config, protected_quick=config['protected_quick_requested']), lane, args.jobs, args.memory_gb)
+    return args
+
+
 def serve(request):
-    if request.get('protocol') != PROTOCOL:
+    if not isinstance(request, dict) or request.get('protocol') != PROTOCOL:
         raise ValueError('Incompatible worker protocol')
     root = request.get('state_dir', '')
     if not isinstance(root, str) or not root.startswith('/'):
@@ -139,26 +187,17 @@ def serve(request):
             if not re.fullmatch(r'[a-f0-9]{32}', token):
                 raise ValueError('Invalid submission token')
             store.db.execute('CREATE TABLE IF NOT EXISTS remote_requests (token TEXT PRIMARY KEY, created REAL NOT NULL)')
+            duplicate = store.db.execute('SELECT token FROM remote_requests WHERE token=?', (token,)).fetchone()
+            if duplicate:
+                return dict(state='unknown', request_id=token, note='Token already submitted; use lookup. No retry was attempted.')
+            args = submission_args(request, store.config())
             with store.transaction():
                 duplicate = store.db.execute('SELECT token FROM remote_requests WHERE token=?', (token,)).fetchone()
                 if duplicate:
                     return dict(state='unknown', request_id=token, note='Token already submitted; use lookup. No retry was attempted.')
+                args = submission_args(request, store.config())
                 store.db.execute('INSERT INTO remote_requests VALUES (?,?)', (token, time.time()))
-            from .__main__ import parser
             from .runner import execute
-            if request.get('backend') not in ('local', 'docker') or request.get('lane') not in ('quick', 'heavy'):
-                raise ValueError('Invalid worker backend or lane')
-            command = request.get('command')
-            if not isinstance(command, list) or not command or any(not isinstance(s, str) for s in command):
-                raise ValueError('Remote command must be an argv list')
-            cwd = request.get('cwd', '')
-            if not cwd.startswith('/') or not Path(cwd).is_dir():
-                raise ValueError('Remote checkout must already exist at an absolute path')
-            argv = ['run', '--detach', '--events-json', '--cwd', cwd, '--lane', request['lane'], '--backend', request['backend']]
-            for key in ('jobs', 'memory_gb', 'timeout', 'min_free_gb', 'scratch_gb', 'image'):
-                if request.get(key) is not None:
-                    argv += ['--' + key.replace('_', '-'), str(request[key])]
-            args = parser().parse_args(argv + ['--'] + command)
             old_root = os.environ.get('AGENT_BUILDS_STATE')
             old_token = os.environ.get('AGENT_BUILDS_REMOTE_REQUEST_ID')
             old_nested = os.environ.pop('AGENT_BUILDS_JOB_ID', None)
@@ -220,7 +259,7 @@ def main():
         result = serve(json.loads(raw))
         print(json.dumps(dict(protocol=PROTOCOL, ok=True, result=result)))
         return 0
-    except (ValueError, OSError, KeyError, TypeError) as error:
+    except (ValueError, OSError, KeyError, TypeError, sqlite3.Error) as error:
         print(json.dumps(dict(protocol=PROTOCOL, ok=False, error=str(error))))
         return 0
 

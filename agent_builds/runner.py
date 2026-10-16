@@ -196,6 +196,21 @@ def submit_detached(args, receipt=None, retain_receipt=False):
         store.close()
 
 
+def spawn_gated(command, cwd, env):
+    read_fd, release_fd = os.pipe()
+    try:
+        child = subprocess.Popen([sys.executable, '-I', str(Path(__file__).with_name('launch.py')),
+            str(read_fd), '--']+command, cwd=str(cwd), env=env,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+            start_new_session=True, pass_fds=(read_fd,))
+    except BaseException:
+        os.close(release_fd)
+        raise
+    finally:
+        os.close(read_fd)
+    return child, release_fd
+
+
 def execute(args, prepared=None, external_probe=None):
     if os.environ.get('AGENT_BUILDS_JOB_ID'):
         raise ValueError('Already inside queued job {}. Queue the whole driver once, or its individual build steps; do not nest wrappers.'.format(os.environ['AGENT_BUILDS_JOB_ID']))
@@ -253,18 +268,20 @@ def execute(args, prepared=None, external_probe=None):
         cancelled[0] = True
     for sig in (signal.SIGTERM, signal.SIGINT):
         previous[sig] = signal.signal(sig, on_signal)
-    child, deadline_guard = None, None
+    child, deadline_guard, release_fd = None, None, None
     try:
         from .waits import WaitUpdates
         wait_updates = WaitUpdates()
+        from .polling import AdmissionPoll
+        admission_poll = AdmissionPoll(store)
         while True:
-            store.recover()
+            store.recover_if_due()
             row = store.get(job)
             if cancelled[0] or row['cancel_requested']:
                 store.finish(job, 'cancelled', 130, 'cancelled while queued')
                 event('cancelled', 'cancelled ' + job, exit_code=130)
                 return 130
-            if store.claim(job):
+            if admission_poll.due() and store.claim(job):
                 break
             row = store.get(job)
             # Cancellation can arrive between the pre-claim read and claim's
@@ -303,17 +320,27 @@ def execute(args, prepared=None, external_probe=None):
         env = os.environ.copy()
         env.update(CARGO_BUILD_JOBS=str(slots), RUST_TEST_THREADS=str(slots), AGENT_BUILDS_JOB_ID=job)
         # Command arguments remain arguments: no implicit shell evaluation.
-        child = subprocess.Popen(command_for(row, config), cwd=str(cwd), env=env,
-                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                 stdin=subprocess.DEVNULL, start_new_session=True)
+        from .execution_policy import check_cwd
+        check_cwd(cwd)
+        child, release_fd = spawn_gated(command_for(row, config), cwd, env)
         deadline = time.monotonic() + timeout
         if row['backend'] == 'local':
             deadline_guard = LocalDeadline(child.pid, deadline)
             deadline_guard.start()
         store.db.execute('UPDATE jobs SET child_pid=?,child_start=? WHERE id=?',
                          (child.pid, identity(child.pid), job))
+        released = not cancelled[0] and not store.get(job)['cancel_requested'] and (deadline_guard is None or not deadline_guard.expired.is_set())
+        if released:
+            try:
+                os.write(release_fd, b'1')
+            except BrokenPipeError:
+                if deadline_guard is None or not deadline_guard.expired.is_set():
+                    raise
+                released = False
+        os.close(release_fd)
+        release_fd = None
         if track_source:
-            source['command_started'] = True
+            source['command_started'] = released
             store.record_source(job, source)
         sampler = JobSampler(child.pid, identity(child.pid)) if row['backend'] == 'local' else None
         last_sample = 0
@@ -426,6 +453,8 @@ def execute(args, prepared=None, external_probe=None):
         event('failed', 'failed {}: {}'.format(job, error), exit_code=1, error=str(error))
         raise
     finally:
+        if release_fd is not None:
+            os.close(release_fd)
         if deadline_guard is not None:
             deadline_guard.close()
         for sig, handler in previous.items():

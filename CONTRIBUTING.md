@@ -49,6 +49,15 @@ Share measurements with their workload, policy, resource budgets, failures and
 censored waiting; avoid claiming overall coding-productivity gains from a fixed
 microbenchmark. CI runs Linux regression and optional MCP interoperability checks
 through an isolated Buildr queue, then builds and validates Python distributions.
+It also runs one plain unittest step so runner exit handling cannot hide a test
+failure. Python 3.8 remains in the runtime matrix for compatibility; it no longer
+receives upstream security fixes, so use a maintained Python for new installations.
+
+Static checks use Ruff 0.17.1 and mypy 2.4.0 in a separate Python 3.12 development
+environment. Queue `python -m ruff check --select E9,F63,F7,F82 agent_builds tests
+tools` for correctness checks across the tree. New coordination modules also
+have formatter checks and `mypy --follow-imports=skip --check-untyped-defs` checks
+in CI. This is incremental coverage, not whole-project strict typing or formatting.
 
 Contributions are made under the project's Apache-2.0 license. Preserve relevant
 copyright and third-party notices. No contributor agreement or sign-off is

@@ -83,6 +83,8 @@ def submit(name, arguments):
         root = Path(arguments['cwd']).expanduser()
         if not root.is_absolute() or not root.is_dir():
             raise ValueError('cwd must be an existing absolute directory')
+        from .execution_policy import check_cwd
+        check_cwd(root)
         config = with_reader.config()
         if name == 'buildr_watch_submit':
             from . import external

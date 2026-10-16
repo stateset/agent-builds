@@ -57,9 +57,10 @@ def validate(value):
 
 
 def command(value):
-    # Absolute launcher pins imports even when the selected checkout contains a
-    # package named agent_builds. The actual check cwd remains the user's cwd.
-    return [sys.executable,str(Path(__file__).resolve().parent.parent/'buildr'),
+    # Pin imports even when cwd contains another agent_builds package. A wheel
+    # has no repository-root buildr script, so bootstrap from its package root.
+    bootstrap = 'import sys; sys.path.insert(0,sys.argv.pop(1)); from agent_builds.__main__ import main; raise SystemExit(main())'
+    return [sys.executable,'-I','-c',bootstrap,str(Path(__file__).resolve().parent.parent),
             'batch-worker',json.dumps(validate(value),separators=(',',':'))]
 
 
@@ -150,6 +151,10 @@ def run(encoded):
                 save()
                 event(index, 'started',cpu_slots=budgets[index])
                 try:
+                    if stopped[0]:
+                        result.update(state='skipped',reason='batch stopped before command launch')
+                        save()
+                        continue
                     # All siblings stay in the outer native worker's group:
                     # timeout/cancel/crash cleanup retains its existing boundary.
                     env=dict(os.environ,CARGO_BUILD_JOBS=str(budgets[index]),RUST_TEST_THREADS=str(budgets[index]))
@@ -157,6 +162,11 @@ def run(encoded):
                         stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.STDOUT)
                     active[index] = dict(child=child,eof=False)
                     selector.register(child.stdout,selectors.EVENT_READ,index)
+                    # A group stop can arrive during Popen, before the new
+                    # process exists. That child missed the group signal; stop
+                    # it explicitly rather than waiting for the outer grace.
+                    if stopped[0]:
+                        child.terminate()
                 except OSError as error:
                     failed = True
                     result.update(state='failed',exit_code=127,finished=time.time(),reason=type(error).__name__)

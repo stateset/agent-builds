@@ -768,15 +768,19 @@ def main(screen, cwd):
                         message = 'Blocker details: agent-builds show ' + blocker['id']
             elif key == ord('a') and height >= 15 and width >= 65:
                 try:
-                    from .announce import create, preview, spawn_worker
+                    from .announce import create, preview, select, spawn_worker
                     recipients = preview()
                     screen.erase()
                     paint(screen, 0, 0, 'Preview: ask these agents to route future builds through the queue', curses.A_BOLD)
-                    paint(screen, 2, 0, 'Running Codex agents receive native queued input. Blocked agents wait.')
+                    paint(screen, 2, 0, 'Only explicitly selected idle recipients receive native agent input.')
                     for index, agent in enumerate(recipients[:max(1, height - 7)]):
                         paint(screen, 4 + index, 0, '{} {:8} {}'.format(agent['pane_id'], agent.get('agent_status', ''), agent.get('cwd', '')))
                     screen.refresh()
-                    answer = prompt(screen, 'Send queue instructions to {} agents? type yes'.format(len(recipients)))
+                    panes = prompt(screen, 'Select exact idle pane IDs, separated by spaces (blank cancels)')
+                    if not panes:
+                        continue
+                    recipients = select(recipients, panes.split())
+                    answer = prompt(screen, 'Send to '+', '.join(agent['pane_id'] for agent in recipients)+'? type yes')
                     if answer == 'yes':
                         announcement = create(store, recipients)
                         spawn_worker(announcement)
