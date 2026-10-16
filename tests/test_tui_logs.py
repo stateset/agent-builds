@@ -231,6 +231,7 @@ class TuiLogTests(unittest.TestCase):
         import fcntl
         import pty
         import selectors
+        import signal
         import struct
         import subprocess
         import sys
@@ -291,6 +292,19 @@ class TuiLogTests(unittest.TestCase):
                 wait_for(b"Repository focus:")
                 os.write(master, b"C")
                 wait_for(b"Browsing filters cleared")
+                os.write(master, b"i")
+                wait_for(b"JOB DETAILS |")
+                fcntl.ioctl(
+                    master, termios.TIOCSWINSZ, struct.pack("HHHH", 8, 40, 0, 0)
+                )
+                os.kill(child.pid, signal.SIGWINCH)
+                wait_for(b"DETAILS 1-")
+                os.write(master, b"i")
+                wait_for(b"JOBS")
+                fcntl.ioctl(
+                    master, termios.TIOCSWINSZ, struct.pack("HHHH", 20, 100, 0, 0)
+                )
+                os.kill(child.pid, signal.SIGWINCH)
                 os.write(master, b"l")
                 wait_for(b"LOG LIVE")
                 os.write(master, b"/")

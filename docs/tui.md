@@ -8,7 +8,7 @@ briefly; it is not an admission decision.
 
 The job browser reads lightweight rows rather than decoding full evidence for
 every loaded job. Full source, telemetry, batch results and wait history load
-only for the selected job while the full details view is visible. Inline wait
+only for the selected job while details are visible, including in narrow panes. Inline wait
 observations load separately for the selected job in the full split view;
 expanded tables, narrow monitors, help and focused logs do not request them.
 Selected reads refresh at most once a second and are released when hidden.
@@ -29,7 +29,7 @@ workbench retain their own inspection behavior.
 | `C` | Clear repository focus, search and state filter; retain order and selected job |
 | `s` | Cycle display order: queue, wait, runtime, repository; retain selected job |
 | Tab | Toggle an expanded job table in the jobs view |
-| Enter or `i` | Open job details in the full view |
+| Enter or `i` | Toggle the selected job’s details in full or narrow panes |
 | `g` | Jump to the selected job's recorded blocker |
 | `l` | Focus the selected job’s log; `l` returns to jobs |
 | `u` | Queue health |
@@ -78,6 +78,27 @@ help, full-view controls include `p` for shared new-start pause, `n` for a new
 job and `c` for cancellation with a typed confirmation. Budgets, plan submission,
 saved tasks and explicitly selected idle-recipient announcements remain available
 through their existing deliberate flows. Read help before taking a shared action.
+
+## Job details
+
+Enter or `i` opens the selected job's evidence in full or narrow panes. Long
+commands, checkout paths, wait reasons and source evidence wrap to the pane
+width, including wide Unicode characters. The header shows the visible row
+range and total. PgUp/PgDn scroll one visible page; Home/End jump to the first
+or last wrapped row. `j`/`k` still select jobs and reset the details position.
+Enter or `i` returns to jobs; `l` opens the selected log. Repository focus,
+search and sort settings stay in effect.
+
+Details include the recorded native exit, checkout and reason. A missing exit
+remains "not recorded" even for a terminal state. Selected reads refresh at most
+once a second. Formatting is reused until that snapshot changes; wrapping is
+reused until its content or pane width changes. Resize clamps the scroll
+position. Help and hidden views release cached evidence; read errors cannot
+show another job's old details. Narrow panes keep shared actions disabled.
+
+Rendered details retain at most 64 Ki characters plus a clipping notice. This
+bounds wrapping work, not the underlying selected database payload. Use
+`buildr show JOB_ID --json` for the complete evidence when the notice appears.
 
 ## Focused log inspection
 

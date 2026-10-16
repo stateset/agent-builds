@@ -2,6 +2,10 @@
 
 ## 0.25.1 (unreleased)
 
+- Wrap selected job details in full and narrow panes, with page/Home/End
+  navigation, row positions, native exit and checkout context. Cache formatted
+  evidence and wrapping; label clipped oversized details explicitly.
+
 - Focus the TUI browser on the selected checkout with `R`, and clear browsing
   filters with `C`. Compose repository focus with search/state filters, retain
   sort and selection, and keep global reservation totals visible.
