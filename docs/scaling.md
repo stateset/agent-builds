@@ -36,8 +36,18 @@ gate's cancellation checks and cancellation write transactions also use small
 control reads. Raw held state is preserved for older workers. Live reservation
 snapshots read only reservation and display fields for running jobs. Detailed
 inspection and final reports still include the full evidence. These changes
-reduce control-path data work; they do not change poll cadence, reservations,
-timeout codes, PID checks, or admission ordering.
+reduce control-path data work without changing reservations, timeout codes, PID
+checks, or admission ordering.
+
+Live execution control reads are scheduled approximately every 200 ms, independent
+of how many output chunks arrive. Ready output is drained without waiting for that interval;
+quiet output waits only until the next control refresh. Before termination, the
+runner explicitly re-reads the current PID/start identity rather than signalling
+from the cached row. This stop-boundary read is additional to periodic polling.
+Native timeout enforcement retains its independent deadline guard. Slow database,
+filesystem, telemetry or terminal writes can still delay the runner loop; the
+poll interval is not a real-time response guarantee. Existing runners keep their
+already-loaded behavior until they exit.
 
 ## Controlled coordination measurement
 

@@ -2,6 +2,11 @@
 
 ## 0.25.0 (unreleased)
 
+- Decouple live execution control polling from output volume: refresh control
+  rows approximately every 200 ms while continuing to drain ready output. Wake
+  quiet jobs by the control deadline and re-read PID/start identity explicitly
+  before termination. Retain native deadline guards and existing exit codes.
+
 - Refresh the TUI job browser using bounded lightweight rows, without decoding
   every job's source evidence, batch results, telemetry or wait history. Read
   full details only for the selected job while visible; cache selected reads
