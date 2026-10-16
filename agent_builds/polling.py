@@ -15,7 +15,7 @@ class AdmissionPoll:
         self.interval = interval
         self.clock = clock
         self.previous: Optional[Tuple[int, Any]] = None
-        self.next_refresh = 0
+        self.next_refresh = 0.0
 
     def due(self) -> bool:
         now = self.clock()
