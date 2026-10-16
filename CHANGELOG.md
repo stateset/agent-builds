@@ -2,6 +2,11 @@
 
 ## 0.25.0 (unreleased)
 
+- Expand the job browser into a table with Tab, using the pane height for more
+  jobs and showing reservation and wait/run columns where space permits. Add
+  local wait/runtime/repository sorting while retaining selected job identity;
+  display ordering never changes scheduler admission priority.
+
 - Find literal text in focused logs with case-insensitive matching, next/previous
   matching-line jumps, highlighting, and visible wrapped-row position. Search
   holds the bounded snapshot; clearing it does not pause or resume the queue.

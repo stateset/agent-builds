@@ -13,7 +13,7 @@ from .metrics import ProcessSampler, snapshot
 from . import __version__
 from .runner import cancel_job
 from .store import Store, TERMINAL
-from .tui_browser import MODES, filter_rows, label as browser_label, HELP
+from .tui_browser import MODES, ORDERS, filter_rows, sort_rows, page_size, columns, job_line, label as browser_label, HELP
 from .tui_logs import LogView
 
 
@@ -89,8 +89,15 @@ def compact_lines(rows, selected, plans, plan_index, view, config, height, width
                 lines += textwrap.wrap(selected_row['reason'], width-1)
         else:
             lines += ['No plans yet']
+    elif view==0 and browser and browser.get('expanded'):
+        lines += [browser_label(browser['mode'],browser['query'],len(rows),browser['loaded'],browser.get('order','queue'),short=True),columns(width)]
+        count=max(1,height-len(lines)-1)
+        start=max(0,selected-count+1)
+        lines += [('>' if index==selected else ' ')+job_line(row,width-1) for index,row in enumerate(rows[start:start+count],start)]
+        if not rows:
+            lines += ['No matching jobs']
     else:
-        lines += [browser_label(browser['mode'],browser['query'],len(rows),browser['loaded']) if browser else 'JOBS | {} shown'.format(len(rows))]
+        lines += [browser_label(browser['mode'],browser['query'],len(rows),browser['loaded'],browser.get('order','queue'),short=True) if browser else 'JOBS | {} shown'.format(len(rows))]
         if rows:
             selected_row = rows[selected]
             if height < 12:
@@ -104,7 +111,7 @@ def compact_lines(rows, selected, plans, plan_index, view, config, height, width
             lines += tail(Path(selected_row['log_path']), max(1, height-len(lines)-2))
         else:
             lines += ['No matching jobs' if browser and (browser['query'] or browser['mode']!='all') else 'No jobs yet']
-    footer = 'j/k scroll r back q' if view==12 else 'j/k scroll u back q' if view==11 else 'j/k l f / ? q' if browser and view in (0,3) else 'j/k move v views q'
+    footer = 'j/k scroll r back q' if view==12 else 'j/k scroll u back q' if view==11 else 'Tab s f / l ? q' if browser and view in (0,3) else 'j/k move v views q'
     return lines[:height-1] + [footer]
 
 
@@ -165,6 +172,7 @@ def main(screen, cwd):
     selected = 0
     message = '? help | / search | f filter | l logs | q quit (jobs continue)'
     browser_mode, browser_query = 'all',''
+    browser_order,jobs_expanded='queue',False
     help_active, help_offset = False,0
     loaded_rows, metrics, last_jobs = None,None,0
     log_view, log_job = LogView(),None
@@ -225,7 +233,7 @@ def main(screen, cwd):
                     loaded_rows=store.rows()
                 metrics=snapshot(cwd)
                 last_jobs=time.monotonic()
-            rows = filter_rows(loaded_rows,browser_mode,browser_query)
+            rows = sort_rows(filter_rows(loaded_rows,browser_mode,browser_query),browser_order)
             if selected_id:
                 selected = next((index for index, row in enumerate(rows) if row['id'] == selected_id), selected)
             selected = min(selected, max(0, len(rows) - 1))
@@ -304,7 +312,7 @@ def main(screen, cwd):
                     paint(screen,index+3,0,line,curses.A_REVERSE if match==2 else curses.color_pair(3) if match else 0)
                 paint(screen,height-1,0,'/ find  n/N match  End live  l jobs  ? help  q quit')
             elif compact:
-                browser=dict(mode=browser_mode,query=browser_query,loaded=len(loaded_rows))
+                browser=dict(mode=browser_mode,query=browser_query,loaded=len(loaded_rows),order=browser_order,expanded=jobs_expanded)
                 for index, line in enumerate(compact_lines(rows, selected, plan_rows, plan_index, view, config, height, width, watch_rows, watch_index, health_result, health_offset,workbench_result,workbench_offset,queue_health_result,browser)):
                     paint(screen, index, 0, line)
             else:
@@ -324,21 +332,28 @@ def main(screen, cwd):
                     from .queue_health import banner
                     color = 4 if queue_health_result['status']=='disk_blocked' else 3 if queue_health_result['waiting_jobs'] else 2
                     paint(screen, 4, 0, banner(queue_health_result), curses.A_BOLD | curses.color_pair(color))
-                heading = 'DETAILS / TOOLS | arrows select jobs | ? help' if view >= 3 else browser_label(browser_mode,browser_query,len(rows),len(loaded_rows))+' | / search f filter ? help'
+                heading = 'DETAILS / TOOLS | arrows select jobs | ? help' if view >= 3 else browser_label(browser_mode,browser_query,len(rows),len(loaded_rows),browser_order)+' | Tab table s sort'
                 paint(screen, 5, 0, heading, curses.A_BOLD)
-                count = 0 if view >= 3 else min(8, max(3, (height - 12) // 2))
+                expanded=view==0 and jobs_expanded
+                count = 0 if view >= 3 else page_size(height,expanded=expanded)
                 start = max(0, selected - count + 1)
+                if expanded:
+                    paint(screen,6,0,columns(width),curses.A_BOLD)
                 for index, row in enumerate(rows[start:start + count], start):
-                    text = '{} {:11} {:>2} {:>3g}  {:7}  {} / {}'.format(
+                    text = job_line(row,width) if expanded else '{} {:11} {:>2} {:>3g}  {:7}  {} / {}'.format(
                         row['id'], row['state'], row['slots'], row['memory_gb'], row['backend'],
                         Path(row['cwd']).name, shlex.join(json.loads(row['command'])))
                     color = 2 if row['state'] == 'succeeded' else (4 if row['state'] in ('failed', 'lost') else 3)
                     attr = curses.A_REVERSE if index == selected else curses.color_pair(color)
-                    paint(screen, 6 + index - start, 0, text, attr)
+                    paint(screen, (7 if expanded else 6) + index - start, 0, text, attr)
                 if not rows:
-                    paint(screen, 6, 0, 'No matching jobs; / clears search, f changes filter.' if browser_query or browser_mode!='all' else 'No jobs yet. Press n, or run: agent-builds run -- cargo check')
+                    paint(screen, 7 if expanded else 6, 0, 'No matching jobs; / clears search, f changes filter.' if browser_query or browser_mode!='all' else 'No jobs yet. Press n, or run: agent-builds run -- cargo check')
                 log_top = 7 + count
-                if view == 12:
+                if expanded:
+                    if rows:
+                        row=rows[selected]
+                        paint(screen,height-3,0,'Selected {}/{} {} | {}'.format(selected+1,len(rows),row['id'],row['reason'] or row['cwd']))
+                elif view == 12:
                     from .workbench import lines as workbench_lines
                     content=list(workbench_lines(workbench_result,workbench_candidate)) if workbench_result and 'error' not in workbench_result else [workbench_result.get('error','Loading workbench') if workbench_result else 'Loading workbench']
                     wrapped=[part for line in content for part in textwrap.wrap(line,max(1,width-1))]
@@ -552,7 +567,7 @@ def main(screen, cwd):
                     for index, line in enumerate(tail(store.log_path(row['id']), max(1, height - log_top - offset - 3))):
                         paint(screen, log_top + offset + index, 0, line)
                 paint(screen, height - 2, 0, message)
-                paint(screen, height - 1, 0, '? help  / search  f filter  l logs  i details  r workbench  u health  q quit' if view != 7 else 'o plan  c cancel plan  r resume  e export  PgUp/PgDn scroll  v views  q quit')
+                paint(screen, height - 1, 0, 'Tab table/split  s sort  / search  f filter  l logs  ? help  q quit' if view==0 else '? help  / search  f filter  s sort  l logs  i details  v views  q quit' if view!=7 else 'o plan  c cancel plan  r resume  e export  PgUp/PgDn scroll  v views  q quit')
                 if view==10:
                     paint(screen,height-1,0,'c stop observation  r resume controller  e export  Enter probe log  v views  q quit')
                 elif view==11:
@@ -612,6 +627,12 @@ def main(screen, cwd):
                 browser_mode=MODES[(MODES.index(browser_mode)+1)%len(MODES)]
                 selected,selected_id=0,None
                 continue
+            if view in (0,3) and key==ord('s'):
+                browser_order=ORDERS[(ORDERS.index(browser_order)+1)%len(ORDERS)]
+                continue
+            if view==0 and key==9:
+                jobs_expanded=not jobs_expanded
+                continue
             if view in (0,3) and key==ord('/') and height>=8 and width>=20:
                 query=prompt(screen,'Search (blank clears)',browser_query)
                 if query is not None:
@@ -619,7 +640,7 @@ def main(screen, cwd):
                     selected,selected_id=0,None
                 continue
             if view==0 and key in (curses.KEY_HOME,curses.KEY_END,curses.KEY_NPAGE,curses.KEY_PPAGE):
-                page=max(1,min(8,(height-12)//2)) if not compact else 1
+                page=page_size(height,compact,jobs_expanded)
                 if key==curses.KEY_HOME:
                     selected=0
                 elif key==curses.KEY_END:

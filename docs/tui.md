@@ -13,6 +13,8 @@ briefly; it is not an admission decision.
 | PgUp / PgDn, Home / End | Page through jobs or select first/last in the jobs view |
 | `/` | Search job ID, repository, command, wait reason or Herdr pane; blank clears; Esc cancels |
 | `f` | Cycle all, active, waiting and problems in jobs/details views |
+| `s` | Cycle display order: queue, wait, runtime, repository; retain selected job |
+| Tab | Toggle an expanded job table in the jobs view |
 | Enter or `i` | Open job details in the full view |
 | `g` | Jump to the selected job's recorded blocker |
 | `l` | Focus the selected job’s log; `l` returns to jobs |
@@ -27,6 +29,23 @@ shows matching and loaded counts. Problems include failed, lost and timed-out
 jobs; deliberate cancellations are separate. Global queue health and reservation
 totals remain global when jobs are filtered. Narrow panes put the selected wait
 reason before repository details and logs.
+
+Tab gives the job table more of the pane by hiding the inline log tail. Larger
+panes show CPU/RAM reservations, wait and run durations, repository and command.
+CPU is reserved slots and RAM is GiB, matching the global reservation totals.
+Narrower tables retain job ID and an abbreviated state. Page keys move by the visible table
+capacity, and the selected row remains visible. Tab restores the split with
+inline output; `l` opens focused logs without losing the expanded-table setting.
+
+`s` changes only the ordering of the loaded display rows. Queue order preserves
+the default browser order; it is not a forecast of start order. Wait order puts
+waiting jobs first, longest observed wait first; runtime order puts running and
+cancelling jobs first, longest observed run first. Repository order sorts by full
+checkout path, ignoring case. Ties use creation time and job ID. Sorting preserves
+the selected job across refreshes. Filtering/search still applies, global health
+remains global, and the browser still covers at most 200 loaded rows. Display
+sorting never changes admission priority or the order in which commands execute.
+Wait and run values are observed durations, not completion estimates.
 
 Browsing controls change only this dashboard. The help view consumes action
 keys, so typing `p`, `c` or `n` there cannot pause, cancel or submit work. Outside

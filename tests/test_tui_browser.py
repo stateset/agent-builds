@@ -10,7 +10,13 @@ from unittest import mock
 
 from agent_builds import tui
 from agent_builds.store import Store
-from agent_builds.tui_browser import filter_rows
+from agent_builds.tui_browser import (
+    filter_rows,
+    sort_rows,
+    page_size,
+    duration,
+    job_line,
+)
 
 
 class TuiBrowserTests(unittest.TestCase):
@@ -304,6 +310,164 @@ class TuiBrowserTests(unittest.TestCase):
         self.assertTrue(any(line.endswith("needle") for line in drawn))
         self.assertTrue(all(len(line) <= 19 for line in drawn))
         screen.timeout.assert_called_with(200)
+
+    def test_display_orders_are_deterministic_and_leave_input_untouched(self):
+        rows = [
+            dict(
+                id="done",
+                state="succeeded",
+                created=1,
+                cwd="/z",
+                wait_seconds=900,
+                elapsed_seconds=900,
+            ),
+            dict(id="young", state="queued", created=3, cwd="/B", wait_seconds=10),
+            dict(id="run", state="running", created=2, cwd="/a", elapsed_seconds=20),
+            dict(id="old-b", state="queued", created=1, cwd="/b", wait_seconds=80),
+            dict(id="old-a", state="queued", created=1, cwd="/b", wait_seconds=80),
+            dict(
+                id="cancel", state="cancelling", created=2, cwd="/a", elapsed_seconds=40
+            ),
+        ]
+        original = copy.deepcopy(rows)
+        ids = lambda order: [row["id"] for row in sort_rows(rows, order)]
+        self.assertEqual(ids("queue"), [row["id"] for row in rows])
+        self.assertEqual(ids("wait")[:3], ["old-a", "old-b", "young"])
+        self.assertEqual(ids("runtime")[:3], ["cancel", "run", "done"])
+        self.assertEqual(
+            ids("repository"), ["cancel", "run", "old-a", "old-b", "young", "done"]
+        )
+        self.assertEqual(rows, original)
+        self.assertEqual(sort_rows([], "runtime"), [])
+        with self.assertRaises(ValueError):
+            sort_rows(rows, "invalid")
+
+    def test_table_durations_and_layout_handle_sizes_and_invalid_numbers(self):
+        for value, text in (
+            (0, "0s"),
+            (59, "59s"),
+            (90, "1m30s"),
+            (3660, "1h01m"),
+            (90000, "1d01h"),
+            (float("inf"), "0s"),
+            (None, "0s"),
+        ):
+            self.assertEqual(duration(value), text)
+        self.assertEqual(page_size(46, expanded=True), 36)
+        self.assertEqual(page_size(8, compact=True, expanded=True), 1)
+        self.assertEqual(page_size(20), 4)
+        row = self.store.get(self.jobs[1])
+        row.update(wait_seconds=90, elapsed_seconds=3660)
+        self.assertIn("1m30s", job_line(row, 100))
+        self.assertIn("1h01m", job_line(row, 50))
+        self.assertIn(row["id"], job_line(row, 20))
+
+    def test_sort_preserves_selected_job_and_shared_state_in_full_and_narrow_panes(
+        self,
+    ):
+        for size in ((20, 100), (8, 20)):
+            frames = self.dashboard([ord("j"), ord("s"), ord("l"), ord("q")], size)
+            text = "\n".join(frames[-1].values())
+            self.assertIn(self.jobs[1], text)
+            self.assertIn("LOG LIVE", text)
+        self.assertFalse(self.store.config()["paused"])
+        self.assertFalse(
+            any(self.store.get(job)["cancel_requested"] for job in self.jobs)
+        )
+
+    def test_expanded_table_uses_height_pages_and_retains_selection_when_returning(
+        self,
+    ):
+        for index in range(45):
+            job = self.store.submit(
+                self.root,
+                ["true"],
+                "local",
+                "quick",
+                1,
+                0.25,
+                "extra-" + str(index),
+                "",
+                5,
+            )
+            self.store.db.execute("UPDATE jobs SET state='failed' WHERE id=?", (job,))
+        frames = self.dashboard(
+            [9, curses.KEY_NPAGE, ord("l"), ord("l"), ord("q")], (46, 100)
+        )
+        table = "\n".join(frames[2].values())
+        self.assertIn("WAIT", table)
+        self.assertIn("Selected 37/48", table)
+        self.assertGreaterEqual(
+            sum(job["id"] in table for job in self.store.rows()), 36
+        )
+        self.assertIn("Selected 37/48", "\n".join(frames[-1].values()))
+        self.assertEqual(self.process_samples, 0)
+
+    def test_expanded_table_does_not_read_inline_logs_and_is_safe_when_empty(self):
+        keys = iter([9, -1, ord("q")])
+        original_tail = tui.tail
+        reads = []
+
+        def tail(*args):
+            reads.append(len(reads))
+            return original_tail(*args)
+
+        with mock.patch("agent_builds.tui.tail", side_effect=tail):
+            self.dashboard(keys)
+        self.assertEqual(len(reads), 1)
+        for size in ((20, 100), (8, 20)):
+            frames = self.dashboard(
+                [9, ord("/"), ord("s"), curses.KEY_END, 9, ord("q")], size, "absent job"
+            )
+            self.assertIn("No matching", "\n".join(frames[-1].values()))
+
+    def test_sorted_snapshot_refresh_preserves_selection_when_order_changes(self):
+        now = [100]
+        keys = iter([ord("s"), curses.KEY_HOME, -1, ord("l"), ord("q")])
+        selected = self.jobs[1]
+
+        def key():
+            value = next(keys)
+            if value == -1:
+                self.store.db.execute(
+                    "UPDATE jobs SET state='succeeded' WHERE id=?", (selected,)
+                )
+                now[0] = 102
+            return value
+
+        frames = self.dashboard(key, clock=lambda: now[0])
+        self.assertIn(selected, "\n".join(frames[-1].values()))
+
+    def test_help_and_log_focus_consume_sort_and_table_keys(self):
+        frames = self.dashboard(
+            [ord("?"), ord("s"), 9, ord("?"), ord("l"), ord("s"), 9, ord("l"), ord("q")]
+        )
+        text = "\n".join(frames[-1].values())
+        self.assertIn("JOBS all", text)
+        self.assertNotIn("sort: wait", text)
+        self.assertNotIn("Selected 1/", text)
+
+    def test_narrow_table_page_size_matches_visible_rows(self):
+        for index in range(12):
+            self.store.submit(
+                self.root,
+                ["true"],
+                "local",
+                "quick",
+                1,
+                0.25,
+                "narrow-" + str(index),
+                "",
+                5,
+            )
+        rows = self.store.rows()
+        for size in ((8, 20), (14, 50)):
+            expected = rows[page_size(size[0], compact=True, expanded=True)]["id"]
+            frames = self.dashboard([9, curses.KEY_NPAGE, ord("l"), ord("q")], size)
+            table = "\n".join(frames[2].values())
+            self.assertIn(">" + expected, table)
+            self.assertIn(expected, "\n".join(frames[-1].values()))
+            self.assertLessEqual(len(frames[2]), size[0])
 
 
 if __name__ == "__main__":
