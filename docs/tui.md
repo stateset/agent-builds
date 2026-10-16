@@ -12,6 +12,8 @@ only for the selected job while the full details view is visible. Inline wait
 observations load separately for the selected job in the full split view;
 expanded tables, narrow monitors, help and focused logs do not request them.
 Selected reads refresh at most once a second and are released when hidden.
+Filtering and sorting reuse the same display snapshot until the jobs or local
+controls change. Selection and scrolling do not repeat that work.
 Unavailable details show a read error and retry on refresh, without displaying
 another job's cached evidence. Explicit tools such as plans, diagnostics and the
 workbench retain their own inspection behavior.
@@ -96,3 +98,32 @@ Narrow prompts shorten their label so the text being entered stays visible.
 
 The system process list is sampled only while its view is open. Other views
 retain their existing one-second job/host and two-second queue-health refreshes.
+
+Inline log tails retain at most 64 KiB for one selected job. Metadata is polled
+at most twice a second; unchanged metadata reuses the content snapshot, with a
+content recheck on the first poll after five seconds for rewrites that preserve
+metadata. Selection
+changes clear the prior job's snapshot immediately, and resize can reuse its
+lines. Detected appends, replacement, truncation and same-size rewrites refresh
+on the next poll. Nonregular paths are rejected without waiting for a FIFO writer, and
+reads have a fixed byte limit even if a log grows while being read. Visible rows
+remove ANSI decoration before painting. Expanded tables and help skip inline
+reads; help over focused logs also skips polling that hidden snapshot. Returning
+to a live view resumes normal refreshes. These caches affect only this dashboard.
+
+## Reproduce the cache comparison
+
+```sh
+buildr run --lane quick --jobs 1 --memory-gb 2 --timeout 120 -- \
+  python3 tools/verify_tui_cache.py --output /tmp/new-tui-cache.json
+```
+
+The developer tool compares the actual v0.25.0 package with the current source
+in both orders. Each arm processes 300 simulated 5 Hz frames and 200 synthetic
+display rows renewed once a second, with unchanged or once-a-second growing
+logs. It checks settled output and display order, counts reads/bytes and
+filter/sort calls, and retains CPU/wall observations plus source identity.
+No fixture command executes and the global queue configuration is unchanged.
+Reports require a new path outside the checkout. CI independently verifies the
+report and retains it as `tui-cache`. Timings are observations, not thresholds;
+this measures selected hot paths, not terminal frame rate or coding productivity.

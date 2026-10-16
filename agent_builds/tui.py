@@ -14,18 +14,12 @@ from .metrics import ProcessSampler, snapshot
 from . import __version__
 from .runner import cancel_job
 from .store import Store, TERMINAL
-from .tui_browser import MODES, ORDERS, SelectedJobRead, filter_rows, sort_rows, page_size, columns, job_line, label as browser_label, HELP
-from .tui_logs import LogView
+from .tui_browser import MODES, ORDERS, BrowserCache, SelectedJobRead, filter_rows, sort_rows, page_size, columns, job_line, label as browser_label, HELP
+from .tui_logs import LogView, TailCache, strip_escapes
 
 
 def tail(path, lines):
-    try:
-        with path.open('rb') as handle:
-            handle.seek(0, 2)
-            handle.seek(max(0, handle.tell() - 65536))
-            return handle.read().decode('utf-8', errors='replace').splitlines()[-lines:]
-    except OSError:
-        return []
+    return TailCache().read(path, lines, time.monotonic())
 
 
 def paint(screen, y, x, text, attr=0):
@@ -33,14 +27,17 @@ def paint(screen, y, x, text, attr=0):
     if y < 0 or y >= height or x >= width - 1:
         return
     # Strip terminal controls from command output before drawing it.
-    clean = ''.join(ch if ch.isprintable() else ' ' for ch in str(text))
+    text = str(text)
+    if '\x1b' in text:
+        text = strip_escapes(text)
+    clean = ''.join(ch if ch.isprintable() else ' ' for ch in text)
     try:
         screen.addnstr(y, x, clean, max(0, width - x - 1), attr)
     except curses.error:
         pass
 
 
-def compact_lines(rows, selected, plans, plan_index, view, config, height, width, watches=None, watch_index=0, health=None, health_offset=0, workbench=None, workbench_offset=0, queue_health=None, browser=None):
+def compact_lines(rows, selected, plans, plan_index, view, config, height, width, watches=None, watch_index=0, health=None, health_offset=0, workbench=None, workbench_offset=0, queue_health=None, browser=None, tail_reader=None):
     """A monitor for narrow split panes; editing actions need the full view."""
     lines = ['BUILDR ' + __version__ + (' PAUSED' if config['paused'] else '')]
     if height < 8 or width < 20:
@@ -109,7 +106,7 @@ def compact_lines(rows, selected, plans, plan_index, view, config, height, width
                 lines += textwrap.wrap(selected_row['reason'], width-1)
             lines += [Path(selected_row['cwd']).name,
                       'Wait {:.1f}s run {:.1f}s'.format(selected_row['wait_seconds'], selected_row['elapsed_seconds'])]
-            lines += tail(Path(selected_row['log_path']), max(1, height-len(lines)-2))
+            lines += (tail_reader or tail)(Path(selected_row['log_path']), max(1, height-len(lines)-2))
         else:
             lines += ['No matching jobs' if browser and (browser['query'] or browser['mode']!='all') else 'No jobs yet']
     footer = 'j/k scroll r back q' if view==12 else 'j/k scroll u back q' if view==11 else 'Tab s f / l ? q' if browser and view in (0,3) else 'j/k move v views q'
@@ -177,6 +174,9 @@ def main(screen, cwd):
     help_active, help_offset = False,0
     loaded_rows, metrics, last_jobs = None,None,0
     log_view, log_job = LogView(),None
+    inline_tail, browser_cache = TailCache(), BrowserCache()
+    def read_tail(path, lines):
+        return inline_tail.read(path, lines, time.monotonic())
     def read_details(handle):
         with store.read_snapshot():
             return store.get(handle)
@@ -238,7 +238,7 @@ def main(screen, cwd):
                     loaded_rows=store.browser_rows()
                 metrics=snapshot(cwd)
                 last_jobs=time.monotonic()
-            rows = sort_rows(filter_rows(loaded_rows,browser_mode,browser_query),browser_order)
+            rows = browser_cache.get(loaded_rows,browser_mode,browser_query,browser_order)
             if selected_id:
                 selected = next((index for index, row in enumerate(rows) if row['id'] == selected_id), selected)
             selected = min(selected, max(0, len(rows) - 1))
@@ -303,7 +303,9 @@ def main(screen, cwd):
             screen.erase()
             height, width = screen.getmaxyx()
             compact = height < 15 or width < 65
-            if view == 13:
+            if help_active:
+                pass  # Only the help overlay below is visible.
+            elif view == 13:
                 if log_job:
                     log_job=next((row for row in loaded_rows if row['id']==log_job['id']),log_job)
                 log_view.poll(time.monotonic())
@@ -321,7 +323,7 @@ def main(screen, cwd):
                 paint(screen,height-1,0,'/ find  n/N match  End live  l jobs  ? help  q quit')
             elif compact:
                 browser=dict(mode=browser_mode,query=browser_query,loaded=len(loaded_rows),order=browser_order,expanded=jobs_expanded)
-                for index, line in enumerate(compact_lines(rows, selected, plan_rows, plan_index, view, config, height, width, watch_rows, watch_index, health_result, health_offset,workbench_result,workbench_offset,queue_health_result,browser)):
+                for index, line in enumerate(compact_lines(rows, selected, plan_rows, plan_index, view, config, height, width, watch_rows, watch_index, health_result, health_offset,workbench_result,workbench_offset,queue_health_result,browser,read_tail)):
                     paint(screen, index, 0, line)
             else:
                 context = ' | Herdr ' + os.environ.get('HERDR_PANE_ID', '') if os.environ.get('HERDR_ENV') == '1' else ''
@@ -578,7 +580,7 @@ def main(screen, cwd):
                             paint(screen, log_top + offset, 0, 'Blocker {}: waited {:.1f}s, ran {:.1f}s | {} | g logs'.format(
                                 blocker['id'], blocker.get('wait_seconds', 0), blocker['elapsed_seconds'], blocker['command_display']))
                             offset += 1
-                    for index, line in enumerate(tail(store.log_path(row['id']), max(1, height - log_top - offset - 3))):
+                    for index, line in enumerate(read_tail(store.log_path(row['id']), max(1, height - log_top - offset - 3))):
                         paint(screen, log_top + offset + index, 0, line)
                 paint(screen, height - 2, 0, message)
                 paint(screen, height - 1, 0, 'Tab table/split  s sort  / search  f filter  l logs  ? help  q quit' if view==0 else '? help  / search  f filter  s sort  l logs  i details  v views  q quit' if view!=7 else 'o plan  c cancel plan  r resume  e export  PgUp/PgDn scroll  v views  q quit')

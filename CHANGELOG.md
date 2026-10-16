@@ -2,6 +2,11 @@
 
 ## 0.25.1 (unreleased)
 
+- Cache the selected inline log tail and browser filtering/sorting between
+  snapshot changes. Skip underlying log rendering during help. Bound inline
+  reads even during file growth, reject FIFO/directory paths without blocking,
+  refresh same-size rewrites and strip ANSI decoration from visible output.
+
 - Defer periodic telemetry on a busy SQLite BEGIN, without retrying transaction
   bodies or interrupting native output handling. Commit final telemetry and
   the native outcome in one update, with contention and atomicity regressions.

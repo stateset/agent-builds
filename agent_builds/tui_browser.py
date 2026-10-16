@@ -8,6 +8,20 @@ MODES = ("all", "active", "waiting", "problems")
 ORDERS = ("queue", "wait", "runtime", "repository")
 
 
+class BrowserCache:
+    """Reuse display filtering/sorting until the snapshot or controls change."""
+
+    def __init__(self):
+        self.loaded, self.controls, self.rows = None, None, []
+
+    def get(self, loaded, mode="all", query="", order="queue"):
+        controls = (mode, query, order)
+        if loaded is not self.loaded or controls != self.controls:
+            rows = sort_rows(filter_rows(loaded, mode, query), order)
+            self.loaded, self.controls, self.rows = loaded, controls, rows
+        return self.rows
+
+
 class SelectedJobRead:
     """Cache one explicitly selected read; never retain another job on failure."""
 
@@ -100,6 +114,8 @@ def job_line(row, width):
 
 def filter_rows(rows, mode="all", query=""):
     query = query.casefold()
+    if mode == "all" and not query:
+        return list(rows)
     result = []
     for row in rows:
         state = row["state"]
@@ -112,16 +128,18 @@ def filter_rows(rows, mode="all", query=""):
             or (state == "cancelled" and row.get("exit_code") == 124)
         ):
             continue
-        origin = row.get("origin") or {}
-        fields = [
-            str(row.get(key) or "")
-            for key in ("id", "cwd", "command_display", "reason", "state")
-        ]
-        fields += [
-            str(origin.get(key) or "") for key in ("pane_id", "tab_id", "workspace_id")
-        ]
-        if query and query not in "\n".join(fields).casefold():
-            continue
+        if query:
+            origin = row.get("origin") or {}
+            fields = [
+                str(row.get(key) or "")
+                for key in ("id", "cwd", "command_display", "reason", "state")
+            ]
+            fields += [
+                str(origin.get(key) or "")
+                for key in ("pane_id", "tab_id", "workspace_id")
+            ]
+            if query not in "\n".join(fields).casefold():
+                continue
         result.append(row)
     return result
 

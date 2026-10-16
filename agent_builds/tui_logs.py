@@ -7,10 +7,63 @@ from stat import S_ISREG
 import unicodedata
 
 MAX_BYTES = 256 * 1024
+TAIL_BYTES = 64 * 1024
+TAIL_RECHECK_SECONDS = 5
 
 
 class NonRegularLog(OSError):
     pass
+
+
+def signature(stat):
+    return (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns)
+
+
+def read_recent(path, limit):
+    """Never block on a FIFO or let a growing file turn a tail into a full read."""
+    descriptor = os.open(str(path), os.O_RDONLY | os.O_NONBLOCK)
+    with os.fdopen(descriptor, "rb") as handle:
+        stat = os.fstat(handle.fileno())
+        if not S_ISREG(stat.st_mode):
+            raise NonRegularLog()
+        start = max(0, stat.st_size - limit)
+        handle.seek(start)
+        return handle.read(limit), signature(stat), bool(start)
+
+
+class TailCache:
+    """One selected inline log, polled at most twice a second."""
+
+    def __init__(self):
+        self.path, self.signature = None, None
+        self.last_poll = float("-inf")
+        self.last_content_read = float("-inf")
+        self.lines = []
+
+    def read(self, path, lines, now):
+        if lines <= 0:
+            return []
+        path = Path(path)
+        if path != self.path:
+            self.path, self.signature, self.lines = path, None, []
+            self.last_poll = float("-inf")
+            self.last_content_read = float("-inf")
+        if now - self.last_poll >= 0.5:
+            self.last_poll = now
+            try:
+                current = signature(path.stat())
+                if (
+                    current != self.signature
+                    or now - self.last_content_read >= TAIL_RECHECK_SECONDS
+                ):
+                    data, self.signature, _ = read_recent(path, TAIL_BYTES)
+                    self.last_content_read = now
+                    # Preserve inline tail line semantics; ANSI cleaning is
+                    # done only for visible rows when painted.
+                    self.lines = data.decode("utf-8", errors="replace").splitlines()
+            except OSError:
+                self.signature, self.lines = None, []
+        return self.lines[-lines:]
 
 
 def strip_escapes(text):
@@ -102,22 +155,14 @@ class LogView:
         self.last_read = now
         try:
             stat = self.path.stat()
-            signature = (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns)
-            if signature == self.signature:
+            current = signature(stat)
+            if current == self.signature:
                 return
-            descriptor = os.open(str(self.path), os.O_RDONLY | os.O_NONBLOCK)
-            with os.fdopen(descriptor, "rb") as handle:
-                stat = os.fstat(handle.fileno())
-                if not S_ISREG(stat.st_mode):
-                    raise NonRegularLog()
-                start = max(0, stat.st_size - MAX_BYTES)
-                handle.seek(start)
-                data = handle.read(MAX_BYTES)
-            if start and b"\n" in data:
+            data, self.signature, clipped = read_recent(self.path, MAX_BYTES)
+            if clipped and b"\n" in data:
                 data = data.split(b"\n", 1)[1]
             self.lines = clean_lines(data)
-            self.signature = (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns)
-            self.clipped, self.error = bool(start), None
+            self.clipped, self.error = clipped, None
         except OSError as error:
             self.lines = []
             self.signature = None
