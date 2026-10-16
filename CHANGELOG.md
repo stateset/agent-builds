@@ -1,6 +1,10 @@
 # Changelog
 
-## 0.25.1 (unreleased)
+## 0.26.0 — 2026-10-16
+
+- Keep scrollable job/recipient context visible inside cancellation and
+  announcement prompts. Bound and cache context wrapping, preserve input while
+  paging, and label the context as a snapshot rather than live observations.
 
 - Show complete questions and input controls in TUI prompts, preserve entered
   text through resizes, and require enough space before accepting an answer.
@@ -16,7 +20,7 @@
   toggles/resize, and suspend it during help without changing queue state.
 
 - Wrap selected job details in full and narrow panes, with page/Home/End
-  navigation, row positions, native exit and checkout context. Cache formatted
+  navigation, row positions, job exit and checkout context. Cache formatted
   evidence and wrapping; label clipped oversized details explicitly.
 
 - Focus the TUI browser on the selected checkout with `R`, and clear browsing

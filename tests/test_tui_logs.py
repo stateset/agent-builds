@@ -245,7 +245,6 @@ class TuiLogTests(unittest.TestCase):
             job = store.submit(
                 root, ["true"], "local", "quick", 1, 0.25, "fixture", "", 5
             )
-            store.db.execute("UPDATE jobs SET state='failed' WHERE id=?", (job,))
             store.log_path(job).write_text(
                 "FIRST needle\n" + "padding\n" * 40 + "LAST needle\n"
             )
@@ -288,6 +287,10 @@ class TuiLogTests(unittest.TestCase):
                     )
 
                 wait_for(b"BUILDR")
+                os.write(master, b"c")
+                wait_for(b"Checkout:")
+                os.write(master, b"\x1b")
+                wait_for(b"JOBS")
                 os.write(master, b"F")
                 wait_for(b"Following first matching row")
                 os.write(master, b"F")
@@ -334,6 +337,7 @@ class TuiLogTests(unittest.TestCase):
                 os.write(master, b"q")
                 self.assertEqual(child.wait(timeout=3), 0)
                 self.assertIsNone(store.get(job)["started"])
+                self.assertFalse(store.get(job)["cancel_requested"])
                 self.assertFalse(store.config()["paused"])
             finally:
                 if child is not None and child.poll() is None:

@@ -17,6 +17,7 @@ from .store import Store, TERMINAL
 from .tui_browser import MODES, ORDERS, BrowserCache, SelectedJobRead, filter_rows, sort_rows, page_size, columns, job_line, label as browser_label, HELP
 from .tui_logs import LogView, TailCache, strip_escapes
 from .tui_details import DetailsView
+from .tui_prompt import PromptContext, job_context, recipient_context
 
 
 def tail(path, lines):
@@ -122,15 +123,16 @@ def compact_lines(rows, selected, plans, plan_index, view, config, height, width
     return lines[:height-1] + [footer]
 
 
-def prompt(screen, title, initial=''):
+def prompt(screen, title, initial='', context=''):
     value = initial
+    context = PromptContext(context)
     # Periodic reads let ncurses process resizes even without another key.
     screen.timeout(200)
     try:
         while True:
             height, width = screen.getmaxyx()
             question = textwrap.wrap(''.join(ch if ch.isprintable() else ' ' for ch in title), max(1,width-1)) or ['Input']
-            editable = width>=20 and height>=max(8,len(question)+6)
+            editable = width>=20 and height>=max(8,len(question)+(8 if context else 6))
             try:
                 curses.curs_set(1 if editable else 0)
             except curses.error:
@@ -141,6 +143,12 @@ def prompt(screen, title, initial=''):
                     paint(screen,0,0,'BUILDR INPUT',curses.A_BOLD)
                     for index,line in enumerate(question,2):
                         paint(screen,index,0,line)
+                    if context:
+                        page=context.page(width-1,height-len(question)-7)
+                        paint(screen,len(question)+3,0,'Snapshot '+context.position())
+                        for index,line in enumerate(page,len(question)+4):
+                            paint(screen,index,0,line)
+                        paint(screen,height-2,0,'PgUp/PgDn context')
                     visible=value[-max(1,width-3):]
                     paint(screen,height-3,0,'> '+visible)
                     paint(screen,height-1,0,'Enter accept | Esc cancel | Ctrl+U clear' if width>=40 else 'Enter OK Esc cancel')
@@ -165,6 +173,9 @@ def prompt(screen, title, initial=''):
                 continue
             if key in ('\n', '\r', curses.KEY_ENTER):
                 return value
+            if context and key in (curses.KEY_PPAGE,curses.KEY_NPAGE):
+                context.scroll(1 if key==curses.KEY_NPAGE else -1)
+                continue
             if key in ('\b', '\x7f', curses.KEY_BACKSPACE):
                 value = value[:-1]
             elif key == '\x15':
@@ -942,17 +953,11 @@ def main(screen, cwd):
                 try:
                     from .announce import create, preview, select, spawn_worker
                     recipients = preview()
-                    screen.erase()
-                    paint(screen, 0, 0, 'Preview: ask these agents to route future builds through the queue', curses.A_BOLD)
-                    paint(screen, 2, 0, 'Only explicitly selected idle recipients receive native agent input.')
-                    for index, agent in enumerate(recipients[:max(1, height - 7)]):
-                        paint(screen, 4 + index, 0, '{} {:8} {}'.format(agent['pane_id'], agent.get('agent_status', ''), agent.get('cwd', '')))
-                    screen.refresh()
-                    panes = prompt(screen, 'Select exact idle pane IDs, separated by spaces (blank cancels)')
+                    panes = prompt(screen, 'Select exact idle pane IDs, separated by spaces (blank cancels)', context=recipient_context(recipients))
                     if not panes:
                         continue
                     recipients = select(recipients, panes.split())
-                    answer = prompt(screen, 'Send to '+', '.join(agent['pane_id'] for agent in recipients)+'? type yes')
+                    answer = prompt(screen, 'Send announcement to {} selected idle agents? type yes'.format(len(recipients)), context=recipient_context(recipients))
                     if answer == 'yes':
                         announcement = create(store, recipients)
                         spawn_worker(announcement)
@@ -990,7 +995,7 @@ def main(screen, cwd):
             elif key == ord('c') and rows and view != 7:
                 row = rows[selected]
                 if row['state'] not in TERMINAL:
-                    answer = prompt(screen, 'Cancel {}? type yes'.format(row['id']))
+                    answer = prompt(screen, 'Cancel {}? type yes'.format(row['id']), context=job_context(row))
                     if answer == 'yes':
                         cancel_job(store, row['id'])
                         message = 'Cancellation requested: ' + row['id']
