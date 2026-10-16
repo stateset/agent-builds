@@ -2,6 +2,10 @@
 
 ## 0.25.1 (unreleased)
 
+- Add opt-in `F` following of the first matching displayed job across refreshes.
+  Pin selection on navigation or inspection, preserve following through table
+  toggles/resize, and suspend it during help without changing queue state.
+
 - Wrap selected job details in full and narrow panes, with page/Home/End
   navigation, row positions, native exit and checkout context. Cache formatted
   evidence and wrapping; label clipped oversized details explicitly.

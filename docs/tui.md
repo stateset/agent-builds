@@ -22,6 +22,7 @@ workbench retain their own inspection behavior.
 | --- | --- |
 | `?` | Open scrollable help; Esc, `?` or `q` returns without taking an action |
 | `j` / `k`, arrows | Select a job |
+| `F` | Toggle following the first matching row in the jobs view |
 | PgUp / PgDn, Home / End | Page through jobs or select first/last in the jobs view |
 | `/` | Search job ID, repository, command, wait reason or Herdr pane; blank clears; Esc cancels |
 | `f` | Cycle all, active, waiting and problems in jobs/details views |
@@ -43,6 +44,19 @@ shows matching and loaded counts. Problems include failed, lost and timed-out
 jobs; deliberate cancellations are separate. Global queue health and reservation
 totals remain global when jobs are filtered. Narrow panes put the selected wait
 reason before repository details and logs.
+
+`F` enables optional following in the jobs view. `JOBS FOLLOW` (or `FOLLOW` in
+narrow panes) marks the mode. Each refreshed snapshot selects its first row
+after the current filter, search, repository focus and display order. This is
+the first displayed row, not necessarily the newest submission or next job to
+start. An empty result stays in follow mode until a matching row appears.
+
+Following starts disabled. Press `F` again to retain the current selection.
+Other input also stops following, including navigation, changing browsing
+controls, shared actions and opening details/logs. Tab, terminal resize and idle
+frames keep it enabled. Help temporarily suspends following and consumes `F`;
+returning from help resumes the previous mode. This only changes this dashboard's
+selection; it never pauses, reprioritizes or starts queue work.
 
 Repository focus combines with search and the state filter in jobs and details.
 It compares the exact recorded checkout path: similarly named repositories,

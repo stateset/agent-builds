@@ -97,14 +97,14 @@ def compact_lines(rows, selected, plans, plan_index, view, config, height, width
         else:
             lines += ['No plans yet']
     elif view==0 and browser and browser.get('expanded'):
-        lines += [browser_label(browser['mode'],browser['query'],len(rows),browser['loaded'],browser.get('order','queue'),short=True,repository=browser.get('repository')),' '+columns(width-1)]
+        lines += [browser_label(browser['mode'],browser['query'],len(rows),browser['loaded'],browser.get('order','queue'),short=True,repository=browser.get('repository'),follow=browser.get('follow',False)),' '+columns(width-1)]
         count=max(1,height-len(lines)-1)
         start=max(0,selected-count+1)
         lines += [('>' if index==selected else ' ')+job_line(row,width-1) for index,row in enumerate(rows[start:start+count],start)]
         if not rows:
             lines += ['No matching jobs']
     else:
-        lines += [browser_label(browser['mode'],browser['query'],len(rows),browser['loaded'],browser.get('order','queue'),short=True,repository=browser.get('repository')) if browser else 'JOBS | {} shown'.format(len(rows))]
+        lines += [browser_label(browser['mode'],browser['query'],len(rows),browser['loaded'],browser.get('order','queue'),short=True,repository=browser.get('repository'),follow=browser.get('follow',False)) if browser else 'JOBS | {} shown'.format(len(rows))]
         if rows:
             selected_row = rows[selected]
             if height < 12:
@@ -118,7 +118,7 @@ def compact_lines(rows, selected, plans, plan_index, view, config, height, width
             lines += (tail_reader or tail)(Path(selected_row['log_path']), max(1, height-len(lines)-2))
         else:
             lines += ['No matching jobs' if browser and (browser['query'] or browser['mode']!='all' or browser.get('repository') is not None) else 'No jobs yet']
-    footer = 'PgUp/Dn i/l ? q' if view==3 else 'j/k scroll r back q' if view==12 else 'j/k scroll u back q' if view==11 else 'R C Tab / f l ? q' if browser and view==0 else 'j/k move v views q'
+    footer = 'PgUp/Dn i/l ? q' if view==3 else 'j/k scroll r back q' if view==12 else 'j/k scroll u back q' if view==11 else 'F R C Tab / f l ? q' if browser and view==0 else 'j/k move v views q'
     return lines[:height-1] + [footer]
 
 
@@ -180,6 +180,7 @@ def main(screen, cwd):
     message = '? help | / search | f filter | l logs | q quit (jobs continue)'
     browser_mode, browser_query = 'all',''
     browser_repository = None
+    follow_head = False
     browser_order,jobs_expanded='queue',False
     help_active, help_offset = False,0
     loaded_rows, metrics, last_jobs = None,None,0
@@ -248,7 +249,9 @@ def main(screen, cwd):
                 metrics=snapshot(cwd)
                 last_jobs=time.monotonic()
             rows = browser_cache.get(loaded_rows,browser_mode,browser_query,browser_order,browser_repository)
-            if selected_id:
+            if follow_head and view==0 and not help_active:
+                selected=0
+            elif selected_id:
                 selected = next((index for index, row in enumerate(rows) if row['id'] == selected_id), selected)
             selected = min(selected, max(0, len(rows) - 1))
             selected_id = rows[selected]['id'] if rows else None
@@ -333,7 +336,7 @@ def main(screen, cwd):
                     paint(screen,index+3,0,line,curses.A_REVERSE if match==2 else curses.color_pair(3) if match else 0)
                 paint(screen,height-1,0,'/ find  n/N match  End live  l jobs  ? help  q quit')
             elif compact:
-                browser=dict(mode=browser_mode,query=browser_query,loaded=len(loaded_rows),order=browser_order,expanded=jobs_expanded,repository=browser_repository)
+                browser=dict(mode=browser_mode,query=browser_query,loaded=len(loaded_rows),order=browser_order,expanded=jobs_expanded,repository=browser_repository,follow=follow_head)
                 for index, line in enumerate(compact_lines(rows, selected, plan_rows, plan_index, view, config, height, width, watch_rows, watch_index, health_result, health_offset,workbench_result,workbench_offset,queue_health_result,browser,read_tail,details_view,detail_row,detail_read.error)):
                     paint(screen, index, 0, line)
             else:
@@ -353,7 +356,7 @@ def main(screen, cwd):
                     from .queue_health import banner
                     color = 4 if queue_health_result['status']=='disk_blocked' else 3 if queue_health_result['waiting_jobs'] else 2
                     paint(screen, 4, 0, banner(queue_health_result), curses.A_BOLD | curses.color_pair(color))
-                heading = 'DETAILS / TOOLS | arrows select jobs | ? help' if view >= 3 else browser_label(browser_mode,browser_query,len(rows),len(loaded_rows),browser_order,repository=browser_repository)+' | Tab table s sort'
+                heading = 'DETAILS / TOOLS | arrows select jobs | ? help' if view >= 3 else browser_label(browser_mode,browser_query,len(rows),len(loaded_rows),browser_order,repository=browser_repository,follow=follow_head)+' | Tab table s sort'
                 if view==3 and browser_repository is not None:
                     heading='DETAILS | repo: '+browser_repository
                 paint(screen, 5, 0, heading, curses.A_BOLD)
@@ -532,7 +535,7 @@ def main(screen, cwd):
                     for index, line in enumerate(read_tail(store.log_path(row['id']), max(1, height - log_top - offset - 3))):
                         paint(screen, log_top + offset + index, 0, line)
                 paint(screen, height - 2, 0, message)
-                paint(screen, height - 1, 0, 'R repo  C clear  Tab table  s sort  / search  f filter  l logs  ? help  q quit' if view==0 else 'PgUp/Dn Home/End  j/k job  i jobs  l logs  ? help  q quit' if view==3 else '? help  / search  f filter  s sort  l logs  i details  v views  q quit' if view!=7 else 'o plan  c cancel plan  r resume  e export  PgUp/PgDn scroll  v views  q quit')
+                paint(screen, height - 1, 0, 'F follow  R repo  C clear  Tab table  / find  f filter  l log  ? q' if view==0 else 'PgUp/Dn Home/End  j/k job  i jobs  l logs  ? help  q quit' if view==3 else '? help  / search  f filter  s sort  l logs  i details  v views  q quit' if view!=7 else 'o plan  c cancel plan  r resume  e export  PgUp/PgDn scroll  v views  q quit')
                 if view==10:
                     paint(screen,height-1,0,'c stop observation  r resume controller  e export  Enter probe log  v views  q quit')
                 elif view==11:
@@ -563,6 +566,13 @@ def main(screen, cwd):
                 continue
             if key in (ord('q'), 27):
                 break
+            if view==0:
+                if key==ord('F'):
+                    follow_head=not follow_head
+                    message='Following first matching row; other input pins selection.' if follow_head else 'Selection pinned; F follows the first matching row.'
+                    continue
+                if key not in (-1,curses.KEY_RESIZE,9):
+                    follow_head=False
             if view==13:
                 if key in (ord('l'),ord('v')):
                     view=0
