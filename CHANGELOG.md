@@ -2,6 +2,10 @@
 
 ## 0.25.1 (unreleased)
 
+- Show complete questions and input controls in TUI prompts, preserve entered
+  text through resizes, and require enough space before accepting an answer.
+  Keep Esc cancellation available in tiny panes and handle unsupported cursors.
+
 - Keep accepted jobs running when lifecycle/native-output readers close, without
   repeated broken writes or interpreter exit-code replacement. Preserve durable
   completion if later notification/reporting fails. Label TUI job exit codes

@@ -93,6 +93,19 @@ job and `c` for cancellation with a typed confirmation. Budgets, plan submission
 saved tasks and explicitly selected idle-recipient announcements remain available
 through their existing deliberate flows. Read help before taking a shared action.
 
+## Input prompts
+
+Search, command entry and confirmations open a focused input screen. The full
+question wraps above the input; Enter accepts, Esc cancels and Ctrl+U clears.
+Long values show their tail while retaining the complete entered value.
+
+Resizing preserves the text already entered. If the full question and controls
+cannot fit (at least 20 columns by 8 rows), the prompt shows `Resize to edit`.
+Typing, deletion and Enter are ignored until the pane has enough room again;
+Esc still cancels, even in a tiny pane. This prevents accepting a confirmation
+whose question is hidden. The prompt itself never changes shared queue state;
+the existing action runs only after its answer is accepted and validated.
+
 ## Job details
 
 Enter or `i` opens the selected job's evidence in full or narrow panes. Long
@@ -144,7 +157,7 @@ the selected match and matching-line count. Searches cover the recent loaded
 256 KiB, never the entire log. Queries are limited to 256 characters. Clearing
 search keeps the current live/held mode; End resumes live output. Job-browser
 search and log search are independent and do not change shared queue state.
-Narrow prompts shorten their label so the text being entered stays visible.
+Search uses the same resize-aware input prompts described above.
 
 The system process list is sampled only while its view is open. Other views
 retain their existing one-second job/host and two-second queue-health refreshes.

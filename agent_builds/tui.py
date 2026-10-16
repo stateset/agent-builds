@@ -126,21 +126,41 @@ def prompt(screen, title, initial=''):
     value = initial
     screen.timeout(-1)
     try:
-        curses.curs_set(1)
         while True:
             height, width = screen.getmaxyx()
-            screen.move(height - 2, 0)
-            screen.clrtoeol()
-            usable=max(1,width-1)
-            input_room=min(12,max(1,usable//2))
-            label=title[:max(0,usable-input_room-2)]+': ' if usable>=4 else ''
-            paint(screen, height - 2, 0, label + value[-max(1,usable-len(label)):])
-            screen.refresh()
-            key = screen.get_wch()
-            if key in ('\n', '\r'):
-                return value
+            question = textwrap.wrap(''.join(ch if ch.isprintable() else ' ' for ch in title), max(1,width-1)) or ['Input']
+            editable = width>=20 and height>=max(8,len(question)+6)
+            try:
+                curses.curs_set(1 if editable else 0)
+            except curses.error:
+                pass  # Some terminals do not support cursor visibility.
+            try:
+                screen.erase()
+                if editable:
+                    paint(screen,0,0,'BUILDR INPUT',curses.A_BOLD)
+                    for index,line in enumerate(question,2):
+                        paint(screen,index,0,line)
+                    visible=value[-max(1,width-3):]
+                    paint(screen,height-3,0,'> '+visible)
+                    paint(screen,height-1,0,'Enter accept | Esc cancel | Ctrl+U clear' if width>=40 else 'Enter OK Esc cancel')
+                    screen.move(height-3,min(width-2,2+len(visible)))
+                else:
+                    paint(screen,0,0,'Resize to edit')
+                    paint(screen,height-1,0,'Esc cancels')
+                screen.refresh()
+                key = screen.get_wch()
+            except curses.error:
+                # Retry an interrupted resize, not a disconnected terminal
+                # that would otherwise spin on a permanently failing read.
+                if screen.getmaxyx() != (height,width):
+                    continue
+                raise
             if key == '\x1b':
                 return None
+            if not editable or key == curses.KEY_RESIZE:
+                continue
+            if key in ('\n', '\r', curses.KEY_ENTER):
+                return value
             if key in ('\b', '\x7f', curses.KEY_BACKSPACE):
                 value = value[:-1]
             elif key == '\x15':
@@ -148,7 +168,10 @@ def prompt(screen, title, initial=''):
             elif isinstance(key, str) and key.isprintable():
                 value += key
     finally:
-        curses.curs_set(0)
+        try:
+            curses.curs_set(0)
+        except curses.error:
+            pass
         screen.timeout(200)
 
 
