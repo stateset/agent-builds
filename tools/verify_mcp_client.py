@@ -59,6 +59,7 @@ async def verify(output):
             assert all(tool.inputSchema['type'] == 'object' for tool in tools.tools)
             status = await call(session, 'buildr_status', {})
             assert status['initialized'] is False
+            assert status['queue_health']['status']=='uninitialized' and not status['queue_health']['changes_applied']
             diagnostics = await call(session,'buildr_diagnose',{})
             assert diagnostics['initialized'] is False and not diagnostics['changes_applied']
             marker=root/'preflight-must-not-execute'

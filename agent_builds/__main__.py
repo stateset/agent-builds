@@ -121,7 +121,7 @@ def parser():
     diagnose.add_argument('--json', action='store_true')
     status = sub.add_parser('status', help='Show jobs and machine pressure')
     status.add_argument('--json', action='store_true')
-    status.add_argument('--summary', action='store_true', help='Only machine resources, budgets and job counts')
+    status.add_argument('--summary', action='store_true', help='Queue health, machine resources, budgets and job counts')
     status.add_argument('--active', action='store_true', help='Only queued/running/cancelling jobs')
     status.add_argument('--repo', help='Filter by absolute repository or worktree path')
     status.add_argument('--limit', type=int, default=20, help='Maximum jobs returned (default 20)')
@@ -821,6 +821,7 @@ def main():
             elif args.action == 'status':
                 from .external import counts as watch_counts
                 from .diagnostics import brief, history, policy_summary
+                from .queue_health import report as queue_health, lines as queue_health_lines
                 if not 1 <= args.limit <= 2000:
                     raise ValueError('--limit must be between 1 and 2000')
                 if args.active and args.history:
@@ -836,6 +837,7 @@ def main():
                                   count_scope=dict(active_only=args.active,
                                       repository=str(Path(args.repo).expanduser().resolve()) if args.repo else None,
                                       limited_by_result_limit=False))
+                    result['queue_health'] = queue_health(store, args.repo, result['config'])
                     if not args.summary:
                         jobs = history(store, args.limit+1, args.repo, args.before) if args.history else store.rows(args.limit+1, True, args.repo)
                         result['jobs'] = [row if args.details else brief(row) for row in jobs[:args.limit]]
@@ -848,7 +850,9 @@ def main():
                     print('Machine: ' + json.dumps(result['machine']))
                     print('Jobs: ' + json.dumps(result['counts']))
                     print('External watches: '+json.dumps(result['external_watch_counts']))
+                    print('\n'.join(queue_health_lines(result['queue_health'])))
                 else:
+                    print('\n'.join(queue_health_lines(result['queue_health'])))
                     for row in result['jobs']:
                         print('{} {:11} {:7} {} | {} {}'.format(row['id'], row['state'], row['backend'],
                             Path(row['cwd']).name, row['command_display'], row['reason'] or ''))

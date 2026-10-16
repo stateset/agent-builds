@@ -54,7 +54,7 @@ jobs:
       - name: Format and type checks for new coordination modules
         if: matrix.python == '3.12'
         run: |
-          python -m agent_builds run --lane quick --jobs 1 --memory-gb 1 --timeout 120 -- python -m ruff format --check agent_builds/execution_policy.py agent_builds/polling.py agent_builds/launch.py agent_builds/scale.py tests/test_coordination.py tests/test_scale.py tools/verify_coordination.py tools/verify_installed.py
+          python -m agent_builds run --lane quick --jobs 1 --memory-gb 1 --timeout 120 -- python -m ruff format --check agent_builds/execution_policy.py agent_builds/polling.py agent_builds/launch.py agent_builds/scale.py agent_builds/queue_health.py tests/test_coordination.py tests/test_scale.py tests/test_queue_health.py tools/verify_coordination.py tools/verify_installed.py
           python -m agent_builds run --lane quick --jobs 1 --memory-gb 1 --timeout 120 -- python -m mypy --follow-imports=skip --check-untyped-defs agent_builds/execution_policy.py agent_builds/polling.py agent_builds/launch.py
       - name: Regression tests through Buildr
         run: >-
@@ -137,6 +137,7 @@ jobs:
               assert data['native_outcomes_verified'] and data['lock_conflicts']==0
               assert data['peak_native_commands']<=2 and data['peak_reserved_slots']<=2
               assert data['queued_cancel_exit']==130 and data['killed_runner_state']=='lost'
+              assert data['inspection_includes_queue_health']
           PY
       - name: Retain the full comparison evidence
         if: always()
