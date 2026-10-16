@@ -2,6 +2,10 @@
 
 ## 0.25.1 (unreleased)
 
+- Focus the TUI browser on the selected checkout with `R`, and clear browsing
+  filters with `C`. Compose repository focus with search/state filters, retain
+  sort and selection, and keep global reservation totals visible.
+
 - Cache the selected inline log tail and browser filtering/sorting between
   snapshot changes. Skip underlying log rendering during help. Bound inline
   reads even during file growth, reject FIFO/directory paths without blocking,

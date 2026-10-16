@@ -25,6 +25,8 @@ workbench retain their own inspection behavior.
 | PgUp / PgDn, Home / End | Page through jobs or select first/last in the jobs view |
 | `/` | Search job ID, repository, command, wait reason or Herdr pane; blank clears; Esc cancels |
 | `f` | Cycle all, active, waiting and problems in jobs/details views |
+| `R` | Toggle focus on the selected job's exact checkout; press again to remove focus |
+| `C` | Clear repository focus, search and state filter; retain order and selected job |
 | `s` | Cycle display order: queue, wait, runtime, repository; retain selected job |
 | Tab | Toggle an expanded job table in the jobs view |
 | Enter or `i` | Open job details in the full view |
@@ -41,6 +43,17 @@ shows matching and loaded counts. Problems include failed, lost and timed-out
 jobs; deliberate cancellations are separate. Global queue health and reservation
 totals remain global when jobs are filtered. Narrow panes put the selected wait
 reason before repository details and logs.
+
+Repository focus combines with search and the state filter in jobs and details.
+It compares the exact recorded checkout path: similarly named repositories,
+subdirectories and other worktrees are separate. The heading marks focus with
+`@checkout`; full panes also show the complete path when focus is selected.
+Counts still compare matches with all loaded rows, at most 200; this is not a
+complete repository history. Global health and reservation totals stay global.
+Focus survives refreshes and returning from logs. `R` removes it even when no
+jobs match; `C` also clears search and the state filter without changing sort
+order or the expanded-table setting. Both retain the selected job when it
+remains in the result. These keys are ignored inside help and focused logs.
 
 Tab gives the job table more of the pane by hiding the inline log tail. Larger
 panes show CPU/RAM reservations, wait and run durations, repository and command.

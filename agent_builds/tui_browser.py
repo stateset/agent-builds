@@ -14,10 +14,10 @@ class BrowserCache:
     def __init__(self):
         self.loaded, self.controls, self.rows = None, None, []
 
-    def get(self, loaded, mode="all", query="", order="queue"):
-        controls = (mode, query, order)
+    def get(self, loaded, mode="all", query="", order="queue", repository=None):
+        controls = (mode, query, order, repository)
         if loaded is not self.loaded or controls != self.controls:
-            rows = sort_rows(filter_rows(loaded, mode, query), order)
+            rows = sort_rows(filter_rows(loaded, mode, query, repository), order)
             self.loaded, self.controls, self.rows = loaded, controls, rows
         return self.rows
 
@@ -112,12 +112,14 @@ def job_line(row, width):
     return text + (" / " + row.get("command_display", "") if width >= 65 else "")
 
 
-def filter_rows(rows, mode="all", query=""):
+def filter_rows(rows, mode="all", query="", repository=None):
     query = query.casefold()
-    if mode == "all" and not query:
+    if mode == "all" and not query and repository is None:
         return list(rows)
     result = []
     for row in rows:
+        if repository is not None and row.get("cwd") != repository:
+            continue
         state = row["state"]
         if mode == "active" and state not in ("queued", "running", "cancelling"):
             continue
@@ -144,10 +146,13 @@ def filter_rows(rows, mode="all", query=""):
     return result
 
 
-def label(mode, query, shown, loaded, order="queue", short=False):
+def label(mode, query, shown, loaded, order="queue", short=False, repository=None):
+    scope = " @" + (Path(repository).name or repository) if repository else ""
     if short:
+        if scope:
+            return "JOBS {}/{}{} {} {}".format(shown, loaded, scope, mode, order)
         return "JOBS {} {} {}/{}".format(order, mode, shown, loaded)
-    text = "JOBS {} | {}/{} loaded".format(mode, shown, loaded)
+    text = "JOBS {} | {}/{} loaded".format(mode, shown, loaded) + scope
     if order != "queue":
         text += " | sort: " + order
     return text + (" | search: " + query if query else "")
@@ -158,6 +163,9 @@ HELP = (
     "j/k or arrows: select a job",
     "PgUp/PgDn: page through jobs; Home/End: first/last",
     "f: all / active / waiting / problems",
+    "R: focus the selected checkout; R again removes repository focus, even with no matches",
+    "C: clear repository focus, search and state filter; keep display order and selection",
+    "Repository focus uses the exact recorded checkout path; other worktrees stay separate.",
     "s: display order queue / wait / runtime / repository; selected job stays selected",
     "Tab: expand jobs into a table; Tab again restores the split with output",
     "Wait sort shows waiting jobs first; runtime sort shows running jobs first.",

@@ -287,6 +287,10 @@ class TuiLogTests(unittest.TestCase):
                     )
 
                 wait_for(b"BUILDR")
+                os.write(master, b"R")
+                wait_for(b"Repository focus:")
+                os.write(master, b"C")
+                wait_for(b"Browsing filters cleared")
                 os.write(master, b"l")
                 wait_for(b"LOG LIVE")
                 os.write(master, b"/")

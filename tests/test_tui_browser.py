@@ -617,6 +617,159 @@ class TuiBrowserTests(unittest.TestCase):
         tui.paint(screen, 1, 0, "\x1b[31merror\x1b[0m \x1b]0;title\x07plain")
         self.assertEqual(screen.addnstr.call_args.args[2], "error plain")
 
+    def focus_repository(self):
+        checkout = self.root / "focused"
+        checkout.mkdir(exist_ok=True)
+        for job in self.jobs[1:]:
+            self.store.db.execute(
+                "UPDATE jobs SET cwd=? WHERE id=?", (str(checkout), job)
+            )
+        return str(checkout)
+
+    def test_repository_filter_uses_exact_checkout_and_combines_with_other_controls(
+        self,
+    ):
+        rows = [
+            dict(
+                id="one", cwd="/work/app", state="queued", command_display="cargo test"
+            ),
+            dict(
+                id="two",
+                cwd="/work/app-copy",
+                state="queued",
+                command_display="cargo test",
+            ),
+            dict(
+                id="three",
+                cwd="/other/app",
+                state="queued",
+                command_display="cargo test",
+            ),
+            dict(
+                id="four", cwd="/work/app", state="failed", command_display="npm test"
+            ),
+        ]
+        before = copy.deepcopy(rows)
+        with mock.patch.object(
+            Path, "resolve", side_effect=AssertionError("filesystem lookup")
+        ):
+            scoped = filter_rows(rows, repository="/work/app")
+            self.assertEqual([r["id"] for r in scoped], ["one", "four"])
+            self.assertEqual(filter_rows(rows, "problems", "cargo", "/work/app"), [])
+            self.assertEqual(
+                filter_rows(rows, "waiting", "TEST", "/work/app"), [rows[0]]
+            )
+            self.assertEqual(filter_rows(rows, repository="/missing"), [])
+        self.assertEqual(rows, before)
+
+    def test_repository_focus_keeps_global_reservations_and_selected_log(self):
+        self.focus_repository()
+        for size in ((20, 100), (8, 20)):
+            frames = self.dashboard([ord("j"), ord("R"), ord("l"), ord("q")], size)
+            focused = "\n".join(frames[2].values())
+            self.assertIn("2/3", focused)
+            self.assertNotIn(self.jobs[0], focused)
+            self.assertIn(
+                "Managed reservations: 1/" if size[1] == 100 else "CPU 1/", focused
+            )
+            self.assertIn(self.jobs[1], "\n".join(frames[-1].values()))
+        self.assertFalse(self.store.config()["paused"])
+
+    def test_repository_toggle_keeps_search_and_can_leave_an_empty_result(self):
+        self.focus_repository()
+        for size in ((20, 100), (8, 20)):
+            frames = self.dashboard(
+                [ord("j"), ord("R"), ord("/"), ord("R"), ord("C"), ord("q")],
+                size,
+                query="absent",
+            )
+            self.assertIn("No matching", "\n".join(frames[3].values()))
+            self.assertIn("No matching", "\n".join(frames[4].values()))
+            self.assertIn("3/3", "\n".join(frames[-1].values()))
+
+    def test_clear_filters_preserves_order_table_setting_and_selection(self):
+        self.focus_repository()
+        frames = self.dashboard(
+            [
+                9,
+                ord("j"),
+                ord("R"),
+                ord("s"),
+                ord("/"),
+                ord("f"),
+                ord("C"),
+                ord("l"),
+                ord("q"),
+            ],
+            (46, 120),
+            query=self.jobs[1],
+        )
+        cleared = "\n".join(frames[7].values())
+        self.assertIn("JOBS all | 3/3 loaded | sort: wait", cleared)
+        self.assertIn("WAIT", cleared)
+        self.assertNotIn("@focused", cleared)
+        self.assertIn(self.jobs[1], "\n".join(frames[-1].values()))
+
+    def test_help_and_log_focus_ignore_repository_and_clear_keys(self):
+        self.focus_repository()
+        frames = self.dashboard(list(map(ord, "jR/?CR?lCRlq")), query=self.jobs[1])
+        final = "\n".join(frames[-1].values())
+        self.assertIn("JOBS all | 1/3 loaded @focused", final)
+        self.assertIn("search: " + self.jobs[1], final)
+        self.assertIn(self.jobs[1], final)
+
+    def test_repository_focus_is_available_from_details(self):
+        checkout = self.focus_repository()
+        frames = self.dashboard([ord("j"), 10, ord("R"), ord("C"), ord("q")], (46, 120))
+        self.assertIn("DETAILS | repo: " + checkout, "\n".join(frames[3].values()))
+        self.assertIn(self.jobs[1], "\n".join(frames[-1].values()))
+        self.assertNotIn("DETAILS | repo:", "\n".join(frames[-1].values()))
+
+    def test_repository_scope_cache_invalidates_and_reuses_idle_snapshots(self):
+        checkout = self.focus_repository()
+        rows, cache = self.store.browser_rows(), BrowserCache()
+        initial = cache.get(rows)
+        with mock.patch.object(
+            tui_browser, "filter_rows", wraps=filter_rows
+        ) as filtered:
+            scoped = cache.get(rows, repository=checkout)
+            for _ in range(100):
+                self.assertIs(cache.get(rows, repository=checkout), scoped)
+            self.assertEqual(filtered.call_count, 1)
+            self.assertEqual([r["id"] for r in scoped], self.jobs[1:])
+            self.assertEqual(cache.get(rows), initial)
+            self.assertEqual(filtered.call_count, 2)
+            self.assertEqual(len(cache.get(list(rows), repository=checkout)), 2)
+            self.assertEqual(filtered.call_count, 3)
+
+    def test_repository_focus_survives_refresh_and_clears_after_jobs_leave_scope(self):
+        self.focus_repository()
+        now = [100]
+        keys = iter(map(ord, "jRzRCq"))
+
+        def key():
+            value = next(keys)
+            if value == ord("z"):
+                for job in self.jobs[1:]:
+                    self.store.db.execute(
+                        "UPDATE jobs SET cwd=? WHERE id=?", (str(self.root), job)
+                    )
+                now[0] = 102
+            return value
+
+        frames = self.dashboard(key, clock=lambda: now[0])
+        self.assertIn("No matching jobs", "\n".join(frames[3].values()))
+        self.assertIn("JOBS all | 3/3 loaded", "\n".join(frames[4].values()))
+
+    def test_empty_repository_toggle_does_not_create_a_scope_or_read_evidence(self):
+        self.store.db.execute("DELETE FROM jobs")
+        with mock.patch.object(
+            Store, "describe", side_effect=AssertionError("full evidence read")
+        ):
+            frames = self.dashboard(list(map(ord, "RCq")))
+        self.assertIn("No job selected", "\n".join(frames[1].values()))
+        self.assertIn("JOBS all | 0/0 loaded", "\n".join(frames[-1].values()))
+
 
 if __name__ == "__main__":
     unittest.main()
