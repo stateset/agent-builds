@@ -30,6 +30,8 @@ STATES = ('queued', 'running', 'cancelling', 'succeeded', 'failed', 'cancelled',
 ADMISSION_COLUMNS = ('id,state,created,cwd,lane,slots,memory_gb,resource_key,'
                      'resource_keys,lock_protocol,cancel_requested,min_free_gb,scratch_gb')
 RESERVATION_COLUMNS = ADMISSION_COLUMNS + ',command,herdr,started'
+BROWSER_COLUMNS = 'id,state,created,started,finished,cwd,command,backend,slots,memory_gb,exit_code,reason,herdr'
+JOB_ORDER = " ORDER BY CASE WHEN state IN ('running','cancelling') THEN 0 WHEN state IN ('queued','held') THEN 1 ELSE 2 END, CASE WHEN state IN ('running','cancelling','queued','held') THEN created END ASC, created DESC"
 
 
 class AdmissionBusy(sqlite3.OperationalError):
@@ -443,6 +445,37 @@ class Store:
             raise ValueError('Unknown job: ' + job)
         return row
 
+    def get_wait_context(self, job):
+        """Read one selected job's recorded wait observations, without evidence."""
+        row = self.db.execute('SELECT wait_context FROM jobs WHERE id=?', (job,)).fetchone() if self.db else None
+        if row is None:
+            raise ValueError('Unknown job: ' + job)
+        context = json.loads(row[0] or '{}')
+        if not isinstance(context, dict):
+            raise ValueError('Invalid recorded wait context for ' + job)
+        return context
+
+    def browser_rows(self, limit=200):
+        """Bounded browser projection; detailed inspection remains explicit."""
+        if type(limit) is not int or not 1<=limit<=200:
+            raise ValueError('Browser limit must be an integer from 1 to 200')
+        if self.db is None:
+            return []
+        now = time.time()
+        rows = []
+        for stored in self.db.execute('SELECT '+BROWSER_COLUMNS+' FROM jobs'+JOB_ORDER+' LIMIT ?', (limit,)):
+            row = dict(stored)
+            row['storage_state'] = row['state']
+            if row['state']=='held':
+                row['state']='queued'
+            row['command_display'] = shlex.join(json.loads(row['command']))
+            row['origin'] = json.loads(row.pop('herdr') or '{}')
+            row['log_path'] = str(self.log_path(row['id']))
+            row['wait_seconds'] = max(0,(row['started'] or row['finished'] or now)-row['created'])
+            row['elapsed_seconds'] = max(0,(row['finished'] or now)-row['started']) if row['started'] else 0
+            rows.append(row)
+        return rows
+
     def describe(self, row):
         row['storage_state'] = row['state']
         if row['state'] == 'held':
@@ -500,7 +533,7 @@ class Store:
             return []
         where, parameters = self.filters(active, repo)
         return [self.describe(dict(row)) for row in self.db.execute(
-            "SELECT * FROM jobs" + where + " ORDER BY CASE WHEN state IN ('running','cancelling') THEN 0 WHEN state IN ('queued','held') THEN 1 ELSE 2 END, CASE WHEN state IN ('running','cancelling','queued','held') THEN created END ASC, created DESC LIMIT ?", parameters + (limit,))]
+            "SELECT * FROM jobs" + where + JOB_ORDER+" LIMIT ?", parameters + (limit,))]
 
     @staticmethod
     def filters(active=False, repo=None):

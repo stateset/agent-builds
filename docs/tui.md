@@ -6,6 +6,16 @@ Job snapshots and host metrics refresh once a second; keyboard input is checked
 every 200 ms. Queue health refreshes every two seconds. Displayed state can lag
 briefly; it is not an admission decision.
 
+The job browser reads lightweight rows rather than decoding full evidence for
+every loaded job. Full source, telemetry, batch results and wait history load
+only for the selected job while the full details view is visible. Inline wait
+observations load separately for the selected job in the full split view;
+expanded tables, narrow monitors, help and focused logs do not request them.
+Selected reads refresh at most once a second and are released when hidden.
+Unavailable details show a read error and retry on refresh, without displaying
+another job's cached evidence. Explicit tools such as plans, diagnostics and the
+workbench retain their own inspection behavior.
+
 | Key | Action |
 | --- | --- |
 | `?` | Open scrollable help; Esc, `?` or `q` returns without taking an action |
