@@ -324,6 +324,7 @@ class TuiLogTests(unittest.TestCase):
                     master, termios.TIOCSWINSZ, struct.pack("HHHH", 20, 100, 0, 0)
                 )
                 os.kill(child.pid, signal.SIGWINCH)
+                wait_for(b"l jobs  ? help  q quit")
                 os.write(master, b"/")
                 wait_for(b"Find in loaded log")
                 os.write(master, b"needle\n")

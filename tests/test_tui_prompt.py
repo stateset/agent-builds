@@ -119,6 +119,12 @@ class PromptTests(unittest.TestCase):
         with self.assertRaises(curses.error):
             self.edit([curses.error("disconnected")])
 
+    def test_idle_read_retries_with_bounded_polling(self):
+        with mock.patch("agent_builds.tui.time.sleep") as pause:
+            result, _ = self.edit([curses.error("no input"), "x", "\n"])
+        self.assertEqual(result, "x")
+        pause.assert_called_once_with(0.05)
+
 
 if __name__ == "__main__":
     unittest.main()

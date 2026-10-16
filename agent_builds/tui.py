@@ -124,7 +124,8 @@ def compact_lines(rows, selected, plans, plan_index, view, config, height, width
 
 def prompt(screen, title, initial=''):
     value = initial
-    screen.timeout(-1)
+    # Periodic reads let ncurses process resizes even without another key.
+    screen.timeout(200)
     try:
         while True:
             height, width = screen.getmaxyx()
@@ -149,10 +150,13 @@ def prompt(screen, title, initial=''):
                     paint(screen,height-1,0,'Esc cancels')
                 screen.refresh()
                 key = screen.get_wch()
-            except curses.error:
+            except curses.error as error:
                 # Retry an interrupted resize, not a disconnected terminal
                 # that would otherwise spin on a permanently failing read.
                 if screen.getmaxyx() != (height,width):
+                    continue
+                if str(error) == 'no input':
+                    time.sleep(.05)  # Also bound retries on an immediately failing tty.
                     continue
                 raise
             if key == '\x1b':
