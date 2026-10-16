@@ -52,5 +52,18 @@ missing files. Lines wrap to the pane width; ANSI control sequences are removed
 and carriage-return progress uses the last segment of each line. This is a text
 viewer, not a complete terminal emulator.
 
+In log focus, `/` searches literal text, ignoring case, across the loaded logical
+lines (including text spanning a visual wrap). Enter accepts, Esc leaves the
+existing search unchanged, and a blank query clears it. Search holds the current
+snapshot and jumps to the first matching line. `n`/`N` move to the next/previous
+matching line, wrapping at either end; multiple occurrences on one line count
+as one match. Matching lines are highlighted, with the selected match reversed.
+The header shows the visible wrapped-row range and total; the search label shows
+the selected match and matching-line count. Searches cover the recent loaded
+256 KiB, never the entire log. Queries are limited to 256 characters. Clearing
+search keeps the current live/held mode; End resumes live output. Job-browser
+search and log search are independent and do not change shared queue state.
+Narrow prompts shorten their label so the text being entered stays visible.
+
 The system process list is sampled only while its view is open. Other views
 retain their existing one-second job/host and two-second queue-health refreshes.

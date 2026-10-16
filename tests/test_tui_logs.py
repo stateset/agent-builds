@@ -123,6 +123,185 @@ class TuiLogTests(unittest.TestCase):
         self.assertIn("not a regular file", self.view.error)
         self.assertEqual(self.view.page(20, 4), [])
 
+    def test_search_is_literal_casefolded_and_spans_visual_wraps(self):
+        self.write(["prefix ERROR.[x] twice ERROR.[x] suffix", "other", "Straße"])
+        self.view.poll(0)
+        self.view.search("error.[x]", 8, 2)
+        self.assertFalse(self.view.follow)
+        self.assertEqual(self.view.matches, [0])
+        self.assertEqual(self.view.search_label(), "Find 1/1: error.[x]")
+        self.assertEqual(self.view.match_kind(0), 2)
+        self.view.search("STRASSE", 8, 2)
+        self.assertEqual(self.view.matches, [2])
+        self.assertIn("Straße", self.view.page(8, 2))
+
+    def test_match_navigation_wraps_even_when_page_clamps_near_the_end(self):
+        self.write(["hit first", *["padding"] * 8, "hit next", "hit last"])
+        self.view.poll(0)
+        self.view.search("hit", 30, 5)
+        self.assertEqual(self.view.match_index, 0)
+        self.assertEqual(self.view.match_kind(0), 2)
+        self.view.next_match(1, 30, 5)
+        top = self.view.top
+        self.assertEqual(self.view.match_index, 1)
+        self.assertEqual(self.view.match_kind(3), 2)
+        self.assertEqual(self.view.match_kind(4), 1)
+        self.view.next_match(1, 30, 5)
+        self.assertEqual(self.view.top, top)
+        self.assertEqual(self.view.match_index, 2)
+        self.assertEqual(self.view.match_kind(4), 2)
+        self.view.next_match(1, 30, 5)
+        self.assertEqual(self.view.match_index, 0)
+        self.view.next_match(-1, 30, 5)
+        self.assertEqual(self.view.match_index, 2)
+
+    def test_search_holds_snapshot_and_clear_preserves_mode_without_file_reads(self):
+        self.write(["first hit", "old"])
+        self.view.poll(0)
+        self.view.search("hit", 20, 2)
+        self.write(["new hit", "hit extra"])
+        with mock.patch.object(
+            Path, "stat", side_effect=AssertionError("search polled")
+        ):
+            self.view.poll(1)
+            self.view.next_match(1, 20, 2)
+            self.view.search("", 20, 2)
+        self.assertFalse(self.view.follow)
+        self.assertEqual(self.view.matches, [])
+        self.assertIn("first hit", self.view.page(20, 2))
+        self.view.end()
+        self.view.poll(2)
+        self.assertTrue(self.view.follow)
+        self.assertIn("new hit", self.view.page(20, 2))
+        self.view.search("", 20, 2)
+        self.assertTrue(self.view.follow)
+
+    def test_missing_match_empty_log_and_long_query_are_safe(self):
+        self.path.write_bytes(b"")
+        self.view.poll(0)
+        self.view.search("x" * 300, 20, 2)
+        self.assertEqual(len(self.view.query), 256)
+        self.assertEqual(self.view.position(2), "rows 0-0/0")
+        self.assertEqual(self.view.matches, [])
+        self.view.next_match(1, 20, 2)
+        self.view.next_match(-1, 20, 2)
+        self.assertEqual(self.view.top, 0)
+        self.assertEqual(self.view.match_kind(0), 0)
+
+    def test_resize_keeps_selected_match_and_manual_scroll_restarts_from_position(self):
+        self.write(["long wrapped introductory line", "hit one", "middle", "hit two"])
+        self.view.poll(0)
+        self.view.search("hit", 10, 2)
+        self.view.page(40, 2)
+        self.assertEqual(self.view.top, 1)
+        self.assertEqual(self.view.match_kind(0), 2)
+        self.assertEqual(self.view.position(2), "rows 2-3/4")
+        self.view.scroll(1, 40, 2)
+        self.assertIsNone(self.view.match_index)
+        self.view.next_match(1, 40, 2)
+        self.assertEqual(self.view.match_index, 1)
+        self.view.home()
+        self.view.next_match(-1, 40, 2)
+        self.assertEqual(self.view.match_index, 1)
+
+    def test_resuming_live_updates_search_and_switching_job_clears_it(self):
+        self.write(["hit"])
+        self.view.poll(0)
+        self.view.search("hit", 20, 2)
+        self.write(["gone"])
+        self.view.end()
+        self.view.poll(1)
+        self.assertEqual(self.view.matches, [])
+        self.assertIsNone(self.view.match_index)
+        self.view.select("different", self.path)
+        self.assertEqual(self.view.query, "")
+        self.assertEqual(self.view.matches, [])
+        self.view.next_match(1, 20, 2)
+        self.assertTrue(self.view.follow)
+
+    def test_real_terminal_can_search_jump_and_quit_without_running_a_job(self):
+        import fcntl
+        import pty
+        import selectors
+        import struct
+        import subprocess
+        import sys
+        import termios
+        import time
+        from agent_builds.store import Store
+
+        root = Path(self.temp.name)
+        store = Store(root / "state")
+        try:
+            job = store.submit(
+                root, ["true"], "local", "quick", 1, 0.25, "fixture", "", 5
+            )
+            store.db.execute("UPDATE jobs SET state='failed' WHERE id=?", (job,))
+            store.log_path(job).write_text(
+                "FIRST needle\n" + "padding\n" * 40 + "LAST needle\n"
+            )
+            master, slave = pty.openpty()
+            fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 20, 100, 0, 0))
+            env = dict(
+                os.environ, AGENT_BUILDS_STATE=str(store.root), TERM="xterm-256color"
+            )
+            env.pop("AGENT_BUILDS_JOB_ID", None)
+            child = None
+            selector = selectors.DefaultSelector()
+            selector.register(master, selectors.EVENT_READ)
+            try:
+                child = subprocess.Popen(
+                    [sys.executable, "-m", "agent_builds", "tui", "--cwd", str(root)],
+                    stdin=slave,
+                    stdout=slave,
+                    stderr=slave,
+                    env=env,
+                    start_new_session=True,
+                )
+                os.close(slave)
+                slave = None
+
+                def wait_for(needle):
+                    output = b""
+                    deadline = time.monotonic() + 10
+                    while time.monotonic() < deadline:
+                        for unused, events in selector.select(0.1):
+                            output += os.read(master, 65536)
+                        if needle in output:
+                            return
+                        if child.poll() is not None:
+                            break
+                    self.fail(
+                        "Missing terminal output: "
+                        + repr(needle)
+                        + " in "
+                        + repr(output[-4000:])
+                    )
+
+                wait_for(b"BUILDR")
+                os.write(master, b"l")
+                wait_for(b"LOG LIVE")
+                os.write(master, b"/")
+                wait_for(b"Find in loaded log")
+                os.write(master, b"needle\n")
+                wait_for(b"FIRST needle")
+                os.write(master, b"n")
+                wait_for(b"LAST needle")
+                os.write(master, b"q")
+                self.assertEqual(child.wait(timeout=3), 0)
+                self.assertIsNone(store.get(job)["started"])
+                self.assertFalse(store.config()["paused"])
+            finally:
+                if child is not None and child.poll() is None:
+                    child.terminate()
+                    child.wait(timeout=3)
+                selector.close()
+                os.close(master)
+                if slave is not None:
+                    os.close(slave)
+        finally:
+            store.close()
+
 
 if __name__ == "__main__":
     unittest.main()

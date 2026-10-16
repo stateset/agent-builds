@@ -2,6 +2,11 @@
 
 ## 0.25.0 (unreleased)
 
+- Find literal text in focused logs with case-insensitive matching, next/previous
+  matching-line jumps, highlighting, and visible wrapped-row position. Search
+  holds the bounded snapshot; clearing it does not pause or resume the queue.
+- Keep typed text visible when prompt labels are wider than a narrow pane.
+
 - Add focused, wrapped log browsing with explicit live/held output, scrolling,
   job pinning, bounded reads, ANSI cleanup and replacement/truncation handling.
   Holding output does not pause jobs or the shared queue.
