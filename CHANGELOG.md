@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.24.2
+
+- Serialize first-time SQLite WAL activation with schema bootstrap. Current
+  writable opens only read journal mode and schema version under the short file
+  lock; no journal-mode change or migration transaction is repeated.
+- Add a deterministic lock-ownership regression guard for WAL activation after
+  concurrent first opens exposed the race in the v0.24.1 tag gate. That beta
+  remains unpublished; this release includes its TUI and admission improvements.
+
 ## 0.24.1
 
 - Refresh job snapshots and host metrics once a second while retaining the
