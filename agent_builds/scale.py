@@ -102,8 +102,12 @@ def worker(args):
 
     def observed(method, field):
         def call(self, *values, **options):
-            counters[field] += 1
-            return method(self, *values, **options)
+            if field != "recovery_sweeps":
+                counters[field] += 1
+            result = method(self, *values, **options)
+            if field == "recovery_sweeps":
+                counters[field] += 1  # completed sweeps, excluding a busy BEGIN
+            return result
 
         return call
 
