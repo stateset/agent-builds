@@ -206,6 +206,7 @@ HELP = (
     "DELIBERATE ACTIONS (FULL VIEW)",
     "n: new job; o: submit plan; t: saved task",
     "c: request cancellation after typing yes",
+    "Input prompts: Enter accepts, Esc cancels, Ctrl+U clears; resize preserves entered text.",
     "p: toggle new-start pause; running jobs continue",
     "b: edit budgets; a: explicitly select idle announcement recipients",
     "These affect the shared queue. Search and filters only change this dashboard.",
