@@ -10,6 +10,9 @@
 - Serialize complete JSON replies, reject duplicate in-flight IDs, retain protocol
   lifecycle ordering and drain accepted calls on disconnect without retries or
   implicit job cancellation. Keep build budgets and scheduling policy unchanged.
+- Enforce native process-group deadlines independently of slow telemetry or
+  output handling. Join the deadline guard before reaping the owned leader to
+  prevent late signals from targeting a reused process-group ID.
 
 ## 0.21.0
 

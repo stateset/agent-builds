@@ -107,6 +107,55 @@ class ParallelBatchTests(unittest.TestCase):
         self.assertFalse((self.repo/'out'/'escaped').exists())
         self.assertNotEqual(row['batch']['checks'][2]['state'],'succeeded')
 
+    def test_slow_telemetry_cannot_delay_parallel_timeout(self):
+        (self.repo/'out').mkdir()
+        marker=self.repo/'out'/'escaped-slow-sampler'
+        child_code='import time; from pathlib import Path; time.sleep(.8); Path({!r}).touch()'.format(str(marker))
+        manifest=self.root/'slow-checks.json'
+        manifest.write_text(json.dumps(dict(max_parallel=2,checks=[self.check('one',child_code),
+            self.check('two',child_code),self.check('later',child_code)])))
+        wrapper = (
+            'import sys,time; from agent_builds import telemetry; '
+            'original=telemetry.JobSampler.sample; '
+            'telemetry.JobSampler.sample=lambda self: (time.sleep(1.4),original(self))[1]; '
+            'from agent_builds.__main__ import main; sys.exit(main())')
+        result=subprocess.run([sys.executable,'-c',wrapper,'batch','run',str(manifest),
+            '--cwd',str(self.repo),'--jobs','2','--memory-gb','.5','--timeout','.15'],
+            env=self.env,stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=10)
+        self.assertEqual(result.returncode,124,result.stderr)
+        self.assertFalse(marker.exists(), 'Slow telemetry delayed process-group timeout')
+        row=self.store.rows()[0]
+        self.assertEqual(row['exit_code'],124)
+        self.assertNotEqual(row['batch']['checks'][2]['state'],'succeeded')
+
+    def test_post_reap_telemetry_error_cannot_signal_reused_process_group(self):
+        marker=self.root/'late-group-signal'
+        wrapper = """import os,signal,sys
+from pathlib import Path
+from agent_builds import telemetry
+original_sample=telemetry.JobSampler.result
+original_signal=os.killpg
+marker=Path(sys.argv.pop(1))
+def result(self, finished=False):
+    if finished:
+        raise RuntimeError('deliberate post-reap telemetry failure')
+    return original_sample(self, finished)
+def send(pid, signum):
+    if signum==signal.SIGTERM:
+        marker.touch()
+    return original_signal(pid, signum)
+telemetry.JobSampler.result=result
+os.killpg=send
+from agent_builds.__main__ import main
+sys.exit(main())
+"""
+        result=subprocess.run([sys.executable,'-c',wrapper,str(marker),'run',
+            '--cwd',str(self.repo),'--lane','quick','--jobs','1','--memory-gb','.25',
+            '--timeout','8','--','true'],env=self.env,stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=12)
+        self.assertEqual(result.returncode,1,result.stderr)
+        self.assertFalse(marker.exists(), 'Cleanup signalled a process group after reaping its leader')
+        self.assertEqual(self.store.rows()[0]['exit_code'],1)
+
     def test_cancel_terminates_all_running_siblings(self):
         handle=self.launch([self.check('one','import time; time.sleep(10)'),self.check('two','import time; time.sleep(10)'),
             self.check('later','raise SystemExit(99)')],timeout=15)

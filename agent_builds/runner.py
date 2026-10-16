@@ -8,6 +8,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import threading
 import time
 import uuid
 
@@ -82,6 +83,41 @@ def exited(child):
     # cannot be reused while cancellation is signalling descendants.
     info = os.waitid(os.P_PID, child.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)
     return info is not None and info.si_pid != 0
+
+
+class LocalDeadline:
+    """Signal only our unreaped native process group, independent of telemetry.
+
+    The owner must close/join this guard before reaping its child, including on
+    exceptions. That pins the process-group ID until all watchdog signals stop.
+    Docker continues through its existing stop/reconciliation path.
+    """
+    def __init__(self, pid, deadline, grace=3):
+        self.pid, self.deadline, self.grace = pid, deadline, grace
+        self.stopped, self.expired = threading.Event(), threading.Event()
+        self.thread = threading.Thread(target=self._watch, name='buildr-local-deadline', daemon=True)
+
+    def start(self):
+        self.thread.start()
+
+    def _signal(self, signum):
+        try:
+            os.killpg(self.pid, signum)
+        except ProcessLookupError:
+            pass
+
+    def _watch(self):
+        if self.stopped.wait(max(0, self.deadline-time.monotonic())):
+            return
+        self.expired.set()
+        self._signal(signal.SIGTERM)
+        if not self.stopped.wait(self.grace):
+            self._signal(signal.SIGKILL)
+
+    def close(self):
+        self.stopped.set()
+        if self.thread.ident is not None:
+            self.thread.join()
 
 
 def notify(row):
@@ -217,7 +253,7 @@ def execute(args, prepared=None, external_probe=None):
         cancelled[0] = True
     for sig in (signal.SIGTERM, signal.SIGINT):
         previous[sig] = signal.signal(sig, on_signal)
-    child = None
+    child, deadline_guard = None, None
     try:
         from .waits import WaitUpdates
         wait_updates = WaitUpdates()
@@ -270,6 +306,10 @@ def execute(args, prepared=None, external_probe=None):
         child = subprocess.Popen(command_for(row, config), cwd=str(cwd), env=env,
                                  stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                  stdin=subprocess.DEVNULL, start_new_session=True)
+        deadline = time.monotonic() + timeout
+        if row['backend'] == 'local':
+            deadline_guard = LocalDeadline(child.pid, deadline)
+            deadline_guard.start()
         store.db.execute('UPDATE jobs SET child_pid=?,child_start=? WHERE id=?',
                          (child.pid, identity(child.pid), job))
         if track_source:
@@ -280,7 +320,6 @@ def execute(args, prepared=None, external_probe=None):
         last_persist = 0
         selector = selectors.DefaultSelector()
         selector.register(child.stdout, selectors.EVENT_READ)
-        deadline = time.monotonic() + timeout
         stopped_at = None
         reason = ''
         with store.log_path(job).open('ab', buffering=0) as log:
@@ -327,6 +366,10 @@ def execute(args, prepared=None, external_probe=None):
                 os.killpg(child.pid, signal.SIGKILL)
             except ProcessLookupError:
                 pass
+            if deadline_guard is not None:
+                deadline_guard.close()
+                if not reason and deadline_guard.expired.is_set():
+                    reason = 'timeout'
             code = child.wait()
         selector.close()
         child.stdout.close()
@@ -354,13 +397,26 @@ def execute(args, prepared=None, external_probe=None):
         return result
     except BaseException as error:
         row = store.get(job)
-        if child is not None:
-            terminate(row)
+        if child is not None and child.returncode is None:
+            if deadline_guard is not None:
+                deadline_guard.close()
+            if row['backend'] == 'local':
+                # This child is still ours and unreaped even if persisting its
+                # PID failed. Do not rely on a possibly absent database identity.
+                try:
+                    os.killpg(child.pid, signal.SIGTERM)
+                except ProcessLookupError:
+                    pass
+            else:
+                terminate(row)
             try:
                 child.wait(timeout=4)
             except subprocess.TimeoutExpired:
-                if alive(child.pid, row['child_start']):
-                    os.killpg(child.pid, signal.SIGKILL)
+                if row['backend'] == 'local' or alive(child.pid, row['child_start']):
+                    try:
+                        os.killpg(child.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
                 child.wait()
         if row['backend'] == 'docker' and not docker_stopped(row):
             store.db.execute("UPDATE jobs SET state='cancelling',reason=? WHERE id=?",
@@ -370,6 +426,8 @@ def execute(args, prepared=None, external_probe=None):
         event('failed', 'failed {}: {}'.format(job, error), exit_code=1, error=str(error))
         raise
     finally:
+        if deadline_guard is not None:
+            deadline_guard.close()
         for sig, handler in previous.items():
             signal.signal(sig, handler)
         store.close()

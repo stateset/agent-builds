@@ -57,3 +57,13 @@ Use `remote reconcile` to refresh a dispatch record. Real-host execution must be
 validated on the designated build machine before relying on it. The automated
 suite exercises protocol, dispatch, disconnect and reconciliation with isolated
 local fixtures and no live hosts.
+
+## Native deadline guard (v0.22)
+
+Local runners signal their own process group at the runtime deadline from a
+separate watchdog, so a slow telemetry scan or blocked output forwarding cannot
+delay the initial termination signal. SIGKILL follows the existing three-second
+grace period. The runner stops and joins the guard before reaping the process
+leader, preventing signals from reaching a reused process-group ID. This is
+best-effort Linux process signalling, not a hard real-time execution limit.
+Docker retains its existing stop and uncertain-outcome reconciliation behavior.
