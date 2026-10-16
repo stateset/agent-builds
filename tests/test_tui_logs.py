@@ -367,12 +367,12 @@ class InlineTailTests(unittest.TestCase):
         # metadata must not hold the old contents indefinitely.
         with mock.patch.object(Path, "stat", return_value=before):
             self.assertEqual(self.cache.read(self.path, 1, 4.9), ["first"])
-            self.assertEqual(self.cache.read(self.path, 1, 5), ["other"])
+            self.assertEqual(self.cache.read(self.path, 1, 5.5), ["other"])
         self.path.rename(self.root / "old.log")
         self.path.write_text("replacement\n")
-        self.assertEqual(self.cache.read(self.path, 1, 6), ["replacement"])
+        self.assertEqual(self.cache.read(self.path, 1, 6.5), ["replacement"])
         self.path.write_bytes(b"")
-        self.assertEqual(self.cache.read(self.path, 1, 7), [])
+        self.assertEqual(self.cache.read(self.path, 1, 7.5), [])
 
     def test_large_and_growing_files_use_a_hard_read_bound(self):
         self.path.write_bytes(b"line\n" * TAIL_BYTES + b"end\n")

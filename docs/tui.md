@@ -101,7 +101,8 @@ retain their existing one-second job/host and two-second queue-health refreshes.
 
 Inline log tails retain at most 64 KiB for one selected job. Metadata is polled
 at most twice a second; unchanged metadata reuses the content snapshot, with a
-five-second content recheck for rewrites that preserve metadata. Selection
+content recheck on the first poll after five seconds for rewrites that preserve
+metadata. Selection
 changes clear the prior job's snapshot immediately, and resize can reuse its
 lines. Detected appends, replacement, truncation and same-size rewrites refresh
 on the next poll. Nonregular paths are rejected without waiting for a FIFO writer, and
