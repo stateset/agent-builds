@@ -137,11 +137,14 @@ class OutputRunnerTests(unittest.TestCase):
         release.touch()
         # Drain the surviving observer while waiting. Even lifecycle messages
         # may exceed a small pipe buffer if admission reports a temporary wait.
-        _, stderr = process.communicate(timeout=15)
+        stdout, stderr = process.communicate(timeout=15)
         self.assertEqual(process.returncode, code)
         if close_output:
             remaining = [json.loads(line) for line in stderr.splitlines()]
+            self.assertIn("running", [event["state"] for event in remaining])
             self.assertEqual(remaining[-1]["exit_code"], code)
+        elif events_json:
+            self.assertIn(b"native output\n", stdout)
         row = self.store.get(handle)
         self.assertEqual(row["exit_code"], code)
         self.assertEqual(row["state"], "succeeded" if code == 0 else "failed")
