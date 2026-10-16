@@ -161,6 +161,7 @@ adopted. Uncertain submissions are never automatically retried.
 | Dependencies and acceptance evidence | [Plans](docs/plans.md) |
 | Resource alternatives before submission | [Preflight](docs/preflight.md) |
 | Disk and queue blockers | [Diagnostics](docs/diagnostics.md) |
+| Dashboard search, filters and keyboard help | [TUI guide](docs/tui.md) |
 | Why the whole queue is waiting | [Queue health](docs/queue-health.md) |
 | Shared checkout/output locks | [Resource locks](docs/resource-locks.md) |
 | Measured resource profiles | [Reviewed profiles](docs/reviewed-profiles.md) |
