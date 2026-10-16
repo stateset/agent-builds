@@ -370,7 +370,7 @@ def execute(args, prepared=None, external_probe=None):
                     usage = sampler.sample()
                     last_sample = time.monotonic()
                     if last_sample - last_persist >= 2:
-                        store.record_usage(job, usage)
+                        store.poll_usage(job, usage)
                         last_persist = last_sample
                 row = execution_poll.read()
                 timed_out = time.monotonic() >= deadline
@@ -417,8 +417,7 @@ def execute(args, prepared=None, external_probe=None):
             code = child.wait()
         selector.close()
         child.stdout.close()
-        if sampler is not None:
-            store.record_usage(job, sampler.result(finished=True))
+        final_usage = sampler.result(finished=True) if sampler is not None else None
         if track_source:
             source['finish'] = capture(cwd, input_files)
             source['changed_during_run'] = changed(source['start'], source['finish'])
@@ -429,10 +428,10 @@ def execute(args, prepared=None, external_probe=None):
             return 1
         if reason:
             result = 124 if reason == 'timeout' else 130
-            store.finish(job, 'cancelled', result, reason)
+            store.finish(job, 'cancelled', result, reason, usage=final_usage)
         else:
             result = code if code >= 0 else 128 - code
-            store.finish(job, 'succeeded' if code == 0 else 'failed', result)
+            store.finish(job, 'succeeded' if code == 0 else 'failed', result, usage=final_usage)
         if args.notify:
             notify(store.get(job))
         final = store.get(job)

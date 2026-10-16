@@ -763,15 +763,34 @@ class Store:
             self._reservation_cache = None
             return True
 
-    def finish(self, job, state, code, reason=''):
+    def finish(self, job, state, code, reason='', usage=None):
         row = self.db.execute('SELECT started,wait_history FROM jobs WHERE id=?', (job,)).fetchone()
         now = time.time()
         history = json.loads(row['wait_history'] or '{}')
         if history and not row['started']:
             history = waits.advance(history, now)
-        self.db.execute('UPDATE jobs SET state=?,exit_code=?,finished=?,reason=?,wait_history=? WHERE id=?',
-                        (state, code, now, reason, json.dumps(history), job))
+        values = (state, code, now, reason, json.dumps(history))
+        if usage is None:
+            self.db.execute('UPDATE jobs SET state=?,exit_code=?,finished=?,reason=?,wait_history=? WHERE id=?',
+                            values + (job,))
+        else:
+            # One statement commits the native outcome and its final telemetry.
+            # Optional sampling must not add a separate fallible final write.
+            self.db.execute('UPDATE jobs SET state=?,exit_code=?,finished=?,reason=?,wait_history=?,usage=? WHERE id=?',
+                            values + (json.dumps(usage), job))
         self._reservation_cache = None
+
+    def poll_usage(self, job, usage):
+        """Defer an optional sample only when BEGIN cannot acquire the writer.
+
+        A later cumulative sample supersedes it. Never retry a transaction body,
+        hide SQL failures, or alter command/outcome persistence semantics.
+        """
+        def persist():
+            with self.transaction():
+                self.record_usage(job, usage)
+        acquired, _ = self._try_write(persist)
+        return acquired
 
     def record_usage(self, job, usage):
         self.db.execute('UPDATE jobs SET usage=? WHERE id=?', (json.dumps(usage), job))
