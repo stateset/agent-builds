@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.25.0 (unreleased)
+
+- Add focused, wrapped log browsing with explicit live/held output, scrolling,
+  job pinning, bounded reads, ANSI cleanup and replacement/truncation handling.
+  Holding output does not pause jobs or the shared queue.
+- Sample the user process list only while its view is open.
+
 ## 0.24.2
 
 - Serialize first-time SQLite WAL activation with schema bootstrap. Current

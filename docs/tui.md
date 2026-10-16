@@ -15,6 +15,7 @@ briefly; it is not an admission decision.
 | `f` | Cycle all, active, waiting and problems in jobs/details views |
 | Enter or `i` | Open job details in the full view |
 | `g` | Jump to the selected job's recorded blocker |
+| `l` | Focus the selected job’s log; `l` returns to jobs |
 | `u` | Queue health |
 | `r` | Selected-job workbench |
 | `v` | Cycle views |
@@ -33,3 +34,23 @@ help, full-view controls include `p` for shared new-start pause, `n` for a new
 job and `c` for cancellation with a typed confirmation. Budgets, plan submission,
 saved tasks and explicitly selected idle-recipient announcements remain available
 through their existing deliberate flows. Read help before taking a shared action.
+
+## Focused log inspection
+
+Press `l` from jobs or details, including in a narrow pane. `j`/`k` and arrow keys
+scroll one wrapped row; PgUp/PgDn scroll a page. Home shows the oldest **loaded**
+output. Space holds a fixed output snapshot; End or Space resumes live output.
+Holding output never pauses the shared queue. The selected log stays attached to
+its job even if completion removes that job from the active filter. `l` returns
+to jobs; `q` closes the dashboard. Shared action keys are ignored in log focus.
+
+The viewer loads at most the recent 256 KiB and labels omitted earlier output.
+Use `buildr logs JOB_ID` or the job’s log file for the full history. Changed logs
+refresh at most twice a second; unchanged logs are not reread. Held snapshots
+perform no log-file reads. Following handles file replacement, truncation and
+missing files. Lines wrap to the pane width; ANSI control sequences are removed
+and carriage-return progress uses the last segment of each line. This is a text
+viewer, not a complete terminal emulator.
+
+The system process list is sampled only while its view is open. Other views
+retain their existing one-second job/host and two-second queue-health refreshes.
