@@ -121,6 +121,10 @@ class QueueHealthTests(unittest.TestCase):
             unknown = queue_health.report(self.store)
         self.assertIsNone(unknown["disk"]["available_gb"])
         self.assertIsNone(unknown["disk"]["shortfall_min_gb"])
+        self.assertIsNone(unknown["disk"]["limited_jobs"])
+        self.assertIn(
+            "Shared state disk: unknown", "\n".join(queue_health.lines(unknown))
+        )
         self.assertEqual(unknown["disk"]["error"], "FileNotFoundError")
         self.assertNotEqual(unknown["status"], "disk_blocked")
 

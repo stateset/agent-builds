@@ -68,7 +68,7 @@ def report(store, repo=None, config=None, now=None):
                 required_max_gb=None,
                 shortfall_min_gb=None,
                 shortfall_max_gb=None,
-                limited_jobs=0,
+                limited_jobs=None,
             ),
             status="uninitialized" if store.db is None else "idle",
             changes_applied=False,
@@ -249,6 +249,8 @@ def banner(result, compact=False):
 def lines(result):
     yield result["summary"]
     disk = result["disk"]
+    if result["waiting_jobs"] and disk["available_gb"] is None:
+        yield "Shared state disk: unknown (" + disk.get("error", "not measured") + ")"
     if result["waiting_jobs"] and disk["available_gb"] is not None:
         yield (
             "Shared state disk: {:.1f} GiB free | waiting requirements {:.1f}-{:.1f} GiB | "
