@@ -288,6 +288,10 @@ class TuiLogTests(unittest.TestCase):
                     )
 
                 wait_for(b"BUILDR")
+                os.write(master, b"F")
+                wait_for(b"Following first matching row")
+                os.write(master, b"F")
+                wait_for(b"Selection pinned")
                 os.write(master, b"R")
                 wait_for(b"Repository focus:")
                 os.write(master, b"C")

@@ -146,13 +146,29 @@ def filter_rows(rows, mode="all", query="", repository=None):
     return result
 
 
-def label(mode, query, shown, loaded, order="queue", short=False, repository=None):
+def label(
+    mode,
+    query,
+    shown,
+    loaded,
+    order="queue",
+    short=False,
+    repository=None,
+    follow=False,
+):
     scope = " @" + (Path(repository).name or repository) if repository else ""
     if short:
+        if follow:
+            return "FOLLOW {}/{} {} {}{}".format(shown, loaded, order, mode, scope)
         if scope:
             return "JOBS {}/{}{} {} {}".format(shown, loaded, scope, mode, order)
         return "JOBS {} {} {}/{}".format(order, mode, shown, loaded)
-    text = "JOBS {} | {}/{} loaded".format(mode, shown, loaded) + scope
+    text = (
+        "JOBS{} {} | {}/{} loaded".format(
+            " FOLLOW" if follow else "", mode, shown, loaded
+        )
+        + scope
+    )
     if order != "queue":
         text += " | sort: " + order
     return text + (" | search: " + query if query else "")
@@ -161,6 +177,9 @@ def label(mode, query, shown, loaded, order="queue", short=False, repository=Non
 HELP = (
     "BROWSE JOBS",
     "j/k or arrows: select a job",
+    "F: follow the first matching displayed job as snapshots refresh; F again pins it",
+    "Following is opt-in. Other input pins selection, except Tab, resize and help.",
+    "Opening details/logs pins that job. Help suspends following until you return.",
     "PgUp/PgDn: page through jobs; Home/End: first/last",
     "f: all / active / waiting / problems",
     "R: focus the selected checkout; R again removes repository focus, even with no matches",

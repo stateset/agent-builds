@@ -846,6 +846,142 @@ class TuiBrowserTests(unittest.TestCase):
         self.assertIn(self.jobs[1], text)
         self.assertFalse(self.store.config()["paused"])
 
+    def finish_followed_job(self):
+        self.store.db.execute(
+            "UPDATE jobs SET state='succeeded',exit_code=0 WHERE id=?", (self.jobs[0],)
+        )
+
+    def follow_refresh(self, controls, dimensions=(20, 100), query="", final="l"):
+        now = [100]
+        keys = iter([*controls, ord("z"), *([ord(final)] if final else []), ord("q")])
+
+        def key():
+            value = next(keys)
+            if value == ord("z"):
+                self.finish_followed_job()
+                now[0] = 102
+                return -1
+            return value
+
+        return self.dashboard(key, dimensions, query=query, clock=lambda: now[0])
+
+    def test_follow_moves_to_the_new_head_in_full_and_narrow_panes(self):
+        for size in ((20, 100), (8, 20)):
+            self.store.db.execute(
+                "UPDATE jobs SET state='running',exit_code=NULL WHERE id=?",
+                (self.jobs[0],),
+            )
+            frames = self.follow_refresh([ord("F")], size)
+            self.assertIn("FOLLOW", "\n".join(frames[1].values()))
+            self.assertIn(self.jobs[1], "\n".join(frames[-1].values()))
+            self.assertIn("LOG LIVE", "\n".join(frames[-1].values()))
+
+    def test_follow_is_opt_in_and_toggle_off_pins_the_current_job(self):
+        for controls in ([], list(map(ord, "FF"))):
+            self.store.db.execute(
+                "UPDATE jobs SET state='running' WHERE id=?", (self.jobs[0],)
+            )
+            frames = self.follow_refresh(controls)
+            self.assertIn(self.jobs[0], "\n".join(frames[-1].values()))
+
+    def test_navigation_pins_selection_before_the_next_snapshot(self):
+        for key in (
+            ord("j"),
+            ord("k"),
+            curses.KEY_UP,
+            curses.KEY_DOWN,
+            curses.KEY_HOME,
+            curses.KEY_END,
+            curses.KEY_PPAGE,
+            curses.KEY_NPAGE,
+        ):
+            self.store.db.execute(
+                "UPDATE jobs SET state='running' WHERE id=?", (self.jobs[0],)
+            )
+            frames = self.follow_refresh([ord("F"), key])
+            before = next(
+                line for line in frames[2].values() if "| live output" in line
+            ).split()[0]
+            self.assertNotIn("JOBS FOLLOW", "\n".join(frames[2].values()))
+            self.assertIn("Selection pinned", "\n".join(frames[2].values()))
+            self.assertIn(before, "\n".join(frames[-1].values()))
+
+    def test_tab_resize_and_idle_input_preserve_follow_and_cached_browser_work(self):
+        with mock.patch.object(
+            tui_browser, "filter_rows", wraps=filter_rows
+        ) as filtered:
+            frames = self.dashboard(
+                [ord("F"), 9, curses.KEY_RESIZE, -1, ord("q")], (46, 100)
+            )
+        self.assertEqual(filtered.call_count, 1)
+        self.assertIn("JOBS FOLLOW", "\n".join(frames[-1].values()))
+        self.assertIn("WAIT", "\n".join(frames[-1].values()))
+
+    def test_search_sort_focus_and_clear_pin_selection_and_keep_their_settings(self):
+        for key in map(ord, "sRfC/"):
+            frames = self.dashboard([ord("F"), key, ord("q")], query=self.jobs[0])
+            self.assertNotIn("JOBS FOLLOW", "\n".join(frames[-1].values()))
+        self.assertIn("search: " + self.jobs[0], "\n".join(frames[-1].values()))
+
+    def test_follow_respects_repository_search_and_wait_order(self):
+        self.focus_repository()
+        frames = self.dashboard(list(map(ord, "jR/sFq")), query=self.jobs[1])
+        text = "\n".join(frames[-1].values())
+        self.assertIn("JOBS FOLLOW all | 1/3 loaded @focused", text)
+        self.assertIn("sort: wait", text)
+        self.assertIn("search: " + self.jobs[1], text)
+        self.assertIn(self.jobs[1], text)
+        self.assertIn("Managed reservations: 1/", text)
+
+    def test_opening_details_pins_the_followed_job_across_completion(self):
+        for size in ((20, 100), (8, 20)):
+            self.store.db.execute(
+                "UPDATE jobs SET state='running' WHERE id=?", (self.jobs[0],)
+            )
+            frames = self.follow_refresh(list(map(ord, "Fi")), size, final="l")
+            self.assertIn(self.jobs[0], "\n".join(frames[-1].values()))
+
+    def test_help_consumes_follow_key_and_resumes_the_selected_mode(self):
+        frames = self.dashboard(list(map(ord, "F?F?q")))
+        self.assertIn("JOBS FOLLOW", "\n".join(frames[-1].values()))
+        frames = self.dashboard(list(map(ord, "?F?q")))
+        self.assertNotIn("JOBS FOLLOW", "\n".join(frames[-1].values()))
+
+    def test_empty_follow_waits_for_matching_jobs_to_arrive(self):
+        self.store.db.execute("UPDATE jobs SET state='succeeded'")
+        now = [100]
+        keys = iter([ord("f"), ord("F"), -1, ord("l"), ord("q")])
+
+        def key():
+            value = next(keys)
+            if value == -1:
+                self.store.db.execute(
+                    "UPDATE jobs SET state='queued' WHERE id=?", (self.jobs[1],)
+                )
+                now[0] = 102
+            return value
+
+        frames = self.dashboard(key, clock=lambda: now[0])
+        self.assertIn("JOBS FOLLOW active | 0/3", "\n".join(frames[2].values()))
+        self.assertIn(self.jobs[1], "\n".join(frames[-1].values()))
+
+    def test_log_focus_ignores_follow_key_and_stays_attached_to_its_job(self):
+        frames = self.follow_refresh(list(map(ord, "FlF")), final=None)
+        self.assertIn(self.jobs[0], "\n".join(frames[-1].values()))
+
+    def test_follow_heading_keeps_loaded_counts_visible_in_the_smallest_pane(self):
+        label = tui_browser.label(
+            "waiting",
+            "test",
+            100,
+            200,
+            short=True,
+            repository="/repo/long-checkout-name",
+            follow=True,
+        )
+        self.assertTrue(label.startswith("FOLLOW 100/200 "))
+        self.assertIn("100/200", label[:19])
+
 
 if __name__ == "__main__":
     unittest.main()
