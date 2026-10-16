@@ -3,6 +3,11 @@
 An A+ assessment requires production evidence as well as passing regression
 tests. These gates make the next improvements reviewable:
 
+[Native runner-loss checks](recovery-checks.md) add repeated real child/runner
+crashes across current and v0.24.2 code, preserving secondary locks, capacity,
+unknown outcomes and no-retry behavior. These controlled fault cases supplement
+the scale gate; they are not long-duration production evidence.
+
 | Area | Current release gate | Remaining production evidence |
 | --- | --- | --- |
 | Scheduling correctness | Global CPU/RAM/job/heavy limits, per-key FIFO, quick reserves and aging tests pass; safe backfill checks every completion subset; seeded finite workloads finish | Mixed real workloads preserve these bounds across new runners |

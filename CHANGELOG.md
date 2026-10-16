@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.25.1 (unreleased)
+
+- Defer periodic telemetry on a busy SQLite BEGIN, without retrying transaction
+  bodies or interrupting native output handling. Commit final telemetry and
+  the native outcome in one update, with contention and atomicity regressions.
+
+- Add repeated native runner-loss acceptance across current and v0.24.2 runners.
+  Verify live orphan locks/reservations, unrelated progress, explicit cancellation,
+  unknown native outcomes and no duplicate execution. Retain independently
+  checked CI reports, including failure evidence.
+
 ## 0.25.0 — 2026-10-16
 
 - Avoid growing-set copies while scanning queued resource heads, and replace

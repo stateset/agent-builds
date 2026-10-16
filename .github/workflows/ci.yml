@@ -54,7 +54,7 @@ jobs:
       - name: Format and type checks for new coordination modules
         if: matrix.python == '3.12'
         run: |
-          python -m agent_builds run --lane quick --jobs 1 --memory-gb 1 --timeout 120 -- python -m ruff format --check agent_builds/execution_policy.py agent_builds/polling.py agent_builds/launch.py agent_builds/scale.py agent_builds/queue_health.py tests/test_coordination.py tests/test_scale.py tests/test_queue_health.py tests/test_admission_reads.py tests/test_lock_scaling.py agent_builds/tui_browser.py agent_builds/tui_logs.py tests/test_tui_browser.py tests/test_tui_logs.py tools/verify_admission_reads.py tools/verify_coordination.py tools/verify_installed.py
+          python -m agent_builds run --lane quick --jobs 1 --memory-gb 1 --timeout 120 -- python -m ruff format --check agent_builds/execution_policy.py agent_builds/polling.py agent_builds/launch.py agent_builds/scale.py agent_builds/queue_health.py tests/test_coordination.py tests/test_scale.py tests/test_queue_health.py tests/test_admission_reads.py tests/test_lock_scaling.py tests/test_recovery_check.py tests/test_usage_contention.py agent_builds/tui_browser.py agent_builds/tui_logs.py tests/test_tui_browser.py tests/test_tui_logs.py tools/verify_admission_reads.py tools/verify_coordination.py tools/verify_installed.py tools/verify_recovery.py
           python -m agent_builds run --lane quick --jobs 1 --memory-gb 1 --timeout 120 -- python -m mypy --follow-imports=skip --check-untyped-defs agent_builds/execution_policy.py agent_builds/polling.py agent_builds/launch.py
       - name: Verify bounded admission reads with bulky evidence
         if: matrix.python == '3.12'
@@ -107,6 +107,69 @@ jobs:
           name: distributions
           path: dist/*
           if-no-files-found: error
+          retention-days: 14
+
+  recovery:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    env:
+      AGENT_BUILDS_STATE: ${{ github.workspace }}/.agent-builds-output/recovery
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: '3.12'
+      - name: Configure the isolated outer reservation
+        run: >-
+          python -m agent_builds config --set cpu_slots=2 --set memory_gb=2
+          --set max_running=1 --set quick_reserve_slots=0 --set quick_reserve_jobs=0
+          --set quick_reserve_memory_gb=0 --set min_free_gb=1
+          --set min_available_gb=0 --set nice=0
+      - name: Repeated native runner-loss and mixed-version recovery checks
+        run: >-
+          python -m agent_builds run --lane quick --jobs 2 --memory-gb 2 --timeout 240 --
+          python tools/verify_recovery.py --cycles 3 --output '${{ runner.temp }}/recovery.json'
+      - name: Independently verify the retained recovery evidence
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          report = json.loads((Path(os.environ['RUNNER_TEMP'])/'recovery.json').read_text())
+          assert report['result']=='passed' and report['source_changed'] is False
+          assert len(report['cases'])==12
+          assert {(c['cycle'],c['arm'],c['cancelled']) for c in report['cases']} == {
+              (cycle,arm,cancel) for cycle in range(3)
+              for arm in ('candidate','v0.24.2') for cancel in (False,True)}
+          for case in report['cases']:
+              assert case['result']=='passed' and case['native_attempts']==1
+              assert case['recoveries_while_child_live']==4
+              assert case['secondary_lock_preserved'] and case['unrelated_work_completed']
+              assert case['native_lock_overlap'] is False
+              assert case['peak_reserved_slots']<=2 and case['peak_reserved_memory_gb']<=2
+              assert case['outcome']==('cancelled' if case['cancelled'] else 'lost')
+              if case['cancelled']:
+                  assert case['exit_code'] in (None,130)
+              else:
+                  assert case['exit_code'] is None
+          PY
+      - name: Retain recovery evidence even on failure
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: recovery
+          path: ${{ runner.temp }}/recovery.json*
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Retain failed fixture databases and process logs
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: recovery-failure-fixtures
+          path: ${{ runner.temp }}/buildr-recovery-*/
+          if-no-files-found: warn
           retention-days: 14
 
   process-scale:
