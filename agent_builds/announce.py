@@ -1,6 +1,7 @@
 """Explicit user-authorized queue announcements through Herdr's native API."""
 import json
 import os
+import shlex
 from pathlib import Path
 import subprocess
 import sys
@@ -9,19 +10,22 @@ import uuid
 
 from .store import Store, alive, identity
 
+_script = Path(__file__).resolve().parent.parent / 'buildr'
+_launcher = shlex.quote(str(_script)) if _script.is_file() else shlex.join([sys.executable, '-m', 'agent_builds'])
+
 POLICY = '''The user asks all coding agents in this Herdr session to route future expensive builds, checks and tests through our shared workstation queue.
 
 Use this executable from your repository:
-  /home/dom/agent-builds/agent-builds run --lane quick -- cargo check
-  /home/dom/agent-builds/agent-builds run -- cargo build
-  /home/dom/agent-builds/agent-builds run -- cargo test
-  /home/dom/agent-builds/agent-builds run -- npm run build
+  {buildr} run --lane quick -- cargo check
+  {buildr} run -- cargo build
+  {buildr} run -- cargo test
+  {buildr} run -- npm run build
 
-Keep the original command and arguments after --. The wrapper waits for resources, streams output, and preserves the exit code. It sets Cargo/test worker budgets; for other tools set their own worker flags where needed. --cwd /absolute/repo is supported. Inspect the queue with /home/dom/agent-builds/agent-builds status --json. The TUI is running in a separate Herdr pane.
+Keep the original command and arguments after --. The wrapper waits for resources, streams output, and preserves the exit code. It sets Cargo/test worker budgets; for other tools set their own worker flags where needed. --cwd /absolute/repo is supported. Inspect the queue with {buildr} status --json. The TUI is running in a separate Herdr pane.
 
 Continue your current task. Let an already-running build finish, then use the queue for subsequent expensive commands. Do not nest one queue wrapper inside another or wrap an entire agent session. Do not cancel existing jobs, change global Cargo settings, or bypass normal sandbox approval requirements. If shared-state access is blocked by your sandbox, request normal approval for the wrapper command. Light reads and edits can run directly. Existing repository instructions and required verification still apply.
 
-Please briefly acknowledge this policy and apply it to your next build/check/test command.'''
+Please briefly acknowledge this policy and apply it to your next build/check/test command.'''.format(buildr=_launcher)
 
 
 def require_herdr():

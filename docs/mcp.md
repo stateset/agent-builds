@@ -6,7 +6,7 @@ Launch Buildr as a local stdio MCP server from your coding agent's MCP settings:
 {
   "mcpServers": {
     "buildr": {
-      "command": "/home/dom/agent-builds/buildr",
+      "command": "/absolute/path/to/buildr",
       "args": ["mcp", "serve"]
     }
   }
@@ -20,14 +20,14 @@ server entries when adding Buildr. For an inspection-only connection, append
 For Codex, the equivalent registration command is:
 
 ```sh
-codex mcp add buildr -- /home/dom/agent-builds/buildr mcp serve
+codex mcp add buildr -- /absolute/path/to/buildr mcp serve
 ```
 
 Or add an entry to the existing Codex configuration:
 
 ```toml
 [mcp_servers.buildr]
-command = "/home/dom/agent-builds/buildr"
+command = "/absolute/path/to/buildr"
 args = ["mcp", "serve"]
 ```
 

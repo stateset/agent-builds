@@ -7,7 +7,7 @@ build just to launch the dashboard.
 For meaningful changes, run the relevant tests. Full verification is:
 
 ```sh
-/home/dom/agent-builds/agent-builds run --lane quick --jobs 2 --memory-gb 2 -- python3 -m unittest discover -s tests -v
+./buildr run --lane quick --jobs 2 --memory-gb 2 -- python3 -m unittest discover -s tests -v
 ```
 
 Don't nest queue wrappers. Integration tests use isolated state directories and

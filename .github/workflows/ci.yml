@@ -1,0 +1,75 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.8', '3.12']
+    env:
+      AGENT_BUILDS_STATE: ${{ runner.temp }}/buildr-ci-${{ matrix.python }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Configure this isolated CI queue
+        run: >-
+          python -m agent_builds config
+          --set cpu_slots=2 --set max_running=1 --set max_heavy=1
+          --set memory_gb=2 --set quick_jobs=2 --set heavy_jobs=2
+          --set quick_reserve_slots=0 --set quick_reserve_jobs=0
+          --set quick_reserve_memory_gb=0 --set min_free_gb=1
+          --set min_available_gb=0 --set nice=0
+      - name: Regression tests through Buildr
+        run: >-
+          python -m agent_builds run --lane quick --jobs 2 --memory-gb 2
+          --timeout 600 -- python -m unittest discover -s tests -v
+      - name: Install the optional MCP test client
+        if: matrix.python == '3.12'
+        run: python -m pip install 'mcp==1.30.0'
+      - name: Official MCP client through Buildr
+        if: matrix.python == '3.12'
+        run: >-
+          python -m agent_builds run --lane quick --jobs 2 --memory-gb 1
+          --timeout 120 -- python tools/verify_mcp_client.py
+          --output '${{ runner.temp }}/official-mcp.json'
+      - name: Install distribution test tools
+        if: matrix.python == '3.12'
+        run: python -m pip install build twine
+      - name: Build distributions through Buildr
+        if: matrix.python == '3.12'
+        run: >-
+          python -m agent_builds run --lane quick --jobs 2 --memory-gb 1
+          --timeout 120 -- python -m build
+      - name: Validate distributions
+        if: matrix.python == '3.12'
+        run: python -m twine check dist/*
+      - name: Verify an installed wheel outside the checkout
+        if: matrix.python == '3.12'
+        shell: bash
+        run: |
+          python -m venv "$RUNNER_TEMP/buildr-wheel"
+          "$RUNNER_TEMP/buildr-wheel/bin/python" -m pip install --no-deps dist/*.whl
+          cd "$RUNNER_TEMP"
+          "$RUNNER_TEMP/buildr-wheel/bin/buildr" --help
+          "$RUNNER_TEMP/buildr-wheel/bin/python" -c 'import agent_builds; print(agent_builds.__version__)'

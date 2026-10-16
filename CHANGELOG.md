@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.22.1
+
+- Prepare the public beta with Apache-2.0 licensing, portable Linux installation
+  instructions, package metadata, contributor/security guidance and hosted CI.
+- Derive default Herdr announcement commands from the installed launcher instead
+  of embedding the development workstation path. No messages are sent on update.
+
 ## 0.22.0
 
 - Service concurrent MCP requests on one stdio connection, separating bounded

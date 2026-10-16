@@ -1,0 +1,16 @@
+name: Feature request
+description: Improve the shared build workflow
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What workflow is difficult today?
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Proposed behavior and how to measure improvement
+      description: Concrete examples, workload constraints and tradeoffs help.
+    validations:
+      required: true
