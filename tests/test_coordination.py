@@ -373,7 +373,13 @@ class CoordinationTests(unittest.TestCase):
         ):
             self.assertEqual(runner.execute(args), 124)
         row = self.store.rows()[0]
-        self.assertEqual(row["batch"]["checks"][0]["state"], "pending")
+        stored = json.loads(
+            self.store.db.execute(
+                "SELECT batch FROM jobs WHERE id=?", (row["id"],)
+            ).fetchone()[0]
+        )
+        self.assertEqual(stored["checks"][0]["state"], "pending")
+        self.assertEqual(row["batch"]["checks"][0]["state"], "skipped")
         self.assertIsNone(row["batch"]["checks"][0]["exit_code"])
         summary = batch.summary(row)
         self.assertFalse(summary["complete"])
