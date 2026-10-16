@@ -99,7 +99,19 @@ class GrowthTests(unittest.TestCase):
     finish=test_plans.PlanTests.finish
 
     def seed(self,duration=2,code=None,slots=2,memory=2):
-        command=code or [sys.executable,'-c','import time; time.sleep(1.2); print("profile-fixture")']
+        # A RAM trial requires three actual samples. Fixed sleeps can end before
+        # the busy host sampler records them; wait for persisted evidence instead.
+        command=code or [sys.executable,'-c',
+            'import json,os,sqlite3,time; from pathlib import Path\n'
+            'path=Path(os.environ["AGENT_BUILDS_STATE"])/"queue.sqlite3"\n'
+            'db=sqlite3.connect(path.as_uri()+"?mode=ro",uri=True,timeout=2)\n'
+            'deadline=time.monotonic()+6\n'
+            'while time.monotonic()<deadline:\n'
+            '    row=db.execute("SELECT usage FROM jobs WHERE id=?",(os.environ["AGENT_BUILDS_JOB_ID"],)).fetchone()\n'
+            '    if json.loads(row[0] or "{}").get("samples",0)>=3: break\n'
+            '    time.sleep(.05)\n'
+            'else: raise SystemExit("fixture did not observe three telemetry samples")\n'
+            'db.close(); print("profile-fixture")']
         handle=self.store.submit(self.repo,command,'local','quick',slots,memory,str(self.repo),'',8,
                                  source=dict(submission=capture(self.repo)))
         end=time.time()-.1
@@ -119,7 +131,7 @@ class GrowthTests(unittest.TestCase):
         filename,proposal=self.proposal()
         self.assertEqual(proposal['candidate']['memory_gb'],.5)
         handle=task_review.trial(self.store,filename,emit=False,processes=self.children)
-        self.finish(handle)
+        self.finish(handle,timeout=30)
         result=task_review.review(self.store,filename,handle)
         self.assertTrue(result['eligible'],result['issues'])
         task_review.promote(self.store,filename,handle)
@@ -130,7 +142,7 @@ class GrowthTests(unittest.TestCase):
         self.assertEqual(result.returncode,0,result.stderr)
         saved=json.loads(result.stdout)
         self.assertTrue(saved['reviewed_task'])
-        self.finish(saved['plan_id'])
+        self.finish(saved['plan_id'],timeout=30)
         before=len(plans.listing(self.store))
         (self.repo/'source.txt').write_text('changed after profile review')
         result=self.cli('task','run','reviewed-fixture','--cwd',str(self.repo),'--detach')
