@@ -14,6 +14,7 @@ from . import __version__
 from .runner import cancel_job
 from .store import Store, TERMINAL
 from .tui_browser import MODES, filter_rows, label as browser_label, HELP
+from .tui_logs import LogView
 
 
 def tail(path, lines):
@@ -103,7 +104,7 @@ def compact_lines(rows, selected, plans, plan_index, view, config, height, width
             lines += tail(Path(selected_row['log_path']), max(1, height-len(lines)-2))
         else:
             lines += ['No matching jobs' if browser and (browser['query'] or browser['mode']!='all') else 'No jobs yet']
-    footer = 'j/k scroll r back q' if view==12 else 'j/k scroll u back q' if view==11 else 'j/k f / ? q' if browser and view in (0,3) else 'j/k move v views q'
+    footer = 'j/k scroll r back q' if view==12 else 'j/k scroll u back q' if view==11 else 'j/k l f / ? q' if browser and view in (0,3) else 'j/k move v views q'
     return lines[:height-1] + [footer]
 
 
@@ -160,10 +161,11 @@ def main(screen, cwd):
     screen.timeout(200)
     store = Store()
     selected = 0
-    message = '? help | / search | f filter | n new job | q quit (jobs continue)'
+    message = '? help | / search | f filter | l logs | q quit (jobs continue)'
     browser_mode, browser_query = 'all',''
     help_active, help_offset = False,0
     loaded_rows, metrics, last_jobs = None,None,0
+    log_view, log_job = LogView(),None
     children = []
     last_recovery = 0
     sampler = ProcessSampler()
@@ -226,7 +228,8 @@ def main(screen, cwd):
                 selected = next((index for index, row in enumerate(rows) if row['id'] == selected_id), selected)
             selected = min(selected, max(0, len(rows) - 1))
             selected_id = rows[selected]['id'] if rows else None
-            if time.monotonic() - last_sample >= 1:
+            process_height,process_width=screen.getmaxyx()
+            if view == 1 and not help_active and process_height>=15 and process_width>=65 and time.monotonic() - last_sample >= 1:
                 processes = sampler.sample()
                 last_sample = time.monotonic()
             config = store.config()
@@ -282,7 +285,19 @@ def main(screen, cwd):
             screen.erase()
             height, width = screen.getmaxyx()
             compact = height < 15 or width < 65
-            if compact:
+            if view == 13:
+                if log_job:
+                    log_job=next((row for row in loaded_rows if row['id']==log_job['id']),log_job)
+                log_view.poll(time.monotonic())
+                mode='LIVE' if log_view.follow else 'HELD (output only)'
+                paint(screen,0,0,'LOG '+mode,curses.A_BOLD | curses.color_pair(1 if log_view.follow else 3))
+                paint(screen,1,0,log_job['id']+' '+log_job['state'] if log_job else 'No job selected')
+                note=log_view.error or ('Recent 256 KiB; earlier output omitted' if log_view.clipped else 'Space hold/resume | End live')
+                paint(screen,2,0,note)
+                for index,line in enumerate(log_view.page(max(1,width-1),max(1,height-4))):
+                    paint(screen,index+3,0,line)
+                paint(screen,height-1,0,'j/k scroll  End live  l jobs  ? help  q quit')
+            elif compact:
                 browser=dict(mode=browser_mode,query=browser_query,loaded=len(loaded_rows))
                 for index, line in enumerate(compact_lines(rows, selected, plan_rows, plan_index, view, config, height, width, watch_rows, watch_index, health_result, health_offset,workbench_result,workbench_offset,queue_health_result,browser)):
                     paint(screen, index, 0, line)
@@ -531,7 +546,7 @@ def main(screen, cwd):
                     for index, line in enumerate(tail(store.log_path(row['id']), max(1, height - log_top - offset - 3))):
                         paint(screen, log_top + offset + index, 0, line)
                 paint(screen, height - 2, 0, message)
-                paint(screen, height - 1, 0, '? help  / search  f filter  i details  r workbench  u health  v views  q quit' if view != 7 else 'o plan  c cancel plan  r resume  e export  PgUp/PgDn scroll  v views  q quit')
+                paint(screen, height - 1, 0, '? help  / search  f filter  l logs  i details  r workbench  u health  q quit' if view != 7 else 'o plan  c cancel plan  r resume  e export  PgUp/PgDn scroll  v views  q quit')
                 if view==10:
                     paint(screen,height-1,0,'c stop observation  r resume controller  e export  Enter probe log  v views  q quit')
                 elif view==11:
@@ -562,6 +577,25 @@ def main(screen, cwd):
                 continue
             if key in (ord('q'), 27):
                 break
+            if view==13:
+                if key in (ord('l'),ord('v')):
+                    view=0
+                elif key==ord(' '):
+                    log_view.toggle()
+                elif key==curses.KEY_HOME:
+                    log_view.home()
+                elif key==curses.KEY_END:
+                    log_view.end()
+                elif key in (ord('j'),curses.KEY_DOWN,ord('k'),curses.KEY_UP,curses.KEY_NPAGE,curses.KEY_PPAGE):
+                    amount=max(1,height-4) if key in (curses.KEY_NPAGE,curses.KEY_PPAGE) else 1
+                    direction=1 if key in (ord('j'),curses.KEY_DOWN,curses.KEY_NPAGE) else -1
+                    log_view.scroll(direction*amount,max(1,width-1),max(1,height-4))
+                continue
+            if view in (0,3) and key==ord('l'):
+                log_job=rows[selected] if rows else None
+                log_view.select(log_job['id'] if log_job else None,log_job['log_path'] if log_job else None)
+                view=13
+                continue
             if view in (0,3) and key==ord('f'):
                 browser_mode=MODES[(MODES.index(browser_mode)+1)%len(MODES)]
                 selected,selected_id=0,None

@@ -74,6 +74,7 @@ class TuiBrowserTests(unittest.TestCase):
         ), mock.patch("agent_builds.tui.prompt", return_value=query):
             sampler.return_value.sample.return_value = []
             tui.main(screen, self.root)
+            self.process_samples = sampler.return_value.sample.call_count
         return frames
 
     def test_filters_and_literal_search_cover_commands_paths_and_agent_origin(self):
@@ -203,6 +204,66 @@ class TuiBrowserTests(unittest.TestCase):
         with mock.patch.object(Store, "rows", observed):
             self.dashboard(key, clock=lambda: now[0])
         self.assertEqual(reads, [100, 102])
+
+    def test_process_scans_run_only_in_the_process_view(self):
+        self.dashboard([-1, ord("q")])
+        self.assertEqual(self.process_samples, 0)
+        self.dashboard([ord("v"), ord("q")])
+        self.assertEqual(self.process_samples, 1)
+
+    def test_focused_logs_work_in_narrow_panes_and_consume_action_keys(self):
+        self.store.log_path(self.jobs[0]).write_text("readable log\n")
+        for size in ((20, 100), (8, 20)):
+            frames = self.dashboard(
+                [ord("l"), *map(ord, "pcbnat"), ord(" "), ord("q")], size
+            )
+            text = "\n".join(frames[-1].values())
+            self.assertIn("LOG HELD", text)
+            self.assertIn("readable log", text)
+            self.assertIn(self.jobs[0], text)
+        self.assertFalse(self.store.config()["paused"])
+        self.assertEqual(self.process_samples, 0)
+
+    def test_log_focus_stays_on_finished_job_when_active_filter_changes(self):
+        self.store.log_path(self.jobs[0]).write_text("pinned output\n")
+        self.store.log_path(self.jobs[1]).write_text("wrong job output\n")
+        now = [100]
+        keys = iter([ord("f"), ord("l"), ord(" "), -1, ord("q")])
+
+        def key():
+            value = next(keys)
+            if value == -1:
+                self.store.db.execute(
+                    "UPDATE jobs SET state='succeeded' WHERE id=?", (self.jobs[0],)
+                )
+                now[0] = 102
+            return value
+
+        frames = self.dashboard(key, clock=lambda: now[0])
+        text = "\n".join(frames[-1].values())
+        self.assertIn(self.jobs[0], text)
+        self.assertIn("succeeded", text)
+        self.assertIn("pinned output", text)
+        self.assertNotIn("wrong job output", text)
+
+    def test_log_home_page_and_end_preserve_selection_and_return_to_live(self):
+        self.store.log_path(self.jobs[0]).write_text(
+            "\n".join("line-" + str(i) for i in range(60)) + "\n"
+        )
+        frames = self.dashboard(
+            [
+                ord("l"),
+                curses.KEY_HOME,
+                curses.KEY_NPAGE,
+                curses.KEY_PPAGE,
+                curses.KEY_END,
+                ord("l"),
+                ord("q"),
+            ]
+        )
+        self.assertTrue(any("line-0" in "\n".join(frame.values()) for frame in frames))
+        self.assertTrue(any("line-59" in "\n".join(frame.values()) for frame in frames))
+        self.assertIn("JOBS all", "\n".join(frames[-1].values()))
 
 
 if __name__ == "__main__":
