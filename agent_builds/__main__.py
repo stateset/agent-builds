@@ -150,7 +150,8 @@ def parser():
     processes = sub.add_parser('processes', help='Show resource use of visible processes owned by you')
     processes.add_argument('--json', action='store_true')
     announce = sub.add_parser('announce', help='Preview or send queue instructions to Herdr agents')
-    announce.add_argument('--send', action='store_true', help='Send the previewed policy to the current agent snapshot')
+    announce.add_argument('--send', action='store_true', help='Send only to explicitly selected idle recipients')
+    announce.add_argument('--recipient', action='append', default=[], help='Exact idle pane ID to authorize; repeat for each recipient')
     announce.add_argument('--exclude-pane', default=None)
     announce.add_argument('--message-file', help='Use a UTF-8 message file instead of the queue policy')
     announcements = sub.add_parser('announcements', help='Inspect announcement delivery outcomes')
@@ -343,6 +344,7 @@ def parser():
     mcp_sub = mcp.add_subparsers(dest='mcp_action', required=True)
     mcp_serve = mcp_sub.add_parser('serve', help='Read newline-delimited MCP on stdin; protocol messages only on stdout')
     mcp_serve.add_argument('--read-only', action='store_true', help='Expose inspection tools only')
+    mcp_serve.add_argument('--allow-root', action='append', help='Allow new command working directories only under this absolute root; repeat as needed. Not an OS sandbox.')
     watches = sub.add_parser('watch', help='Observe external completion with short queued read-only probes and no idle reservations')
     watch_sub = watches.add_subparsers(dest='watch_action', required=True)
     watch_start = watch_sub.add_parser('start')
@@ -471,6 +473,8 @@ def main():
             finally:
                 reader.close()
         if args.action == 'mcp':
+            from .execution_policy import configure
+            configure(args.allow_root)
             from .mcp import serve
             return serve(args.read_only)
         if args.action in (None, 'tui'):
@@ -891,12 +895,13 @@ def main():
                     for row in rows:
                         print('{:<7} {:>5.1f} {:>9.0f}  {} {}'.format(row['pid'], row['cpu'] or 0, row['rss_mb'], row['name'], row['cwd']))
             elif args.action == 'announce':
-                from .announce import POLICY, create, preview, spawn_worker
+                from .announce import POLICY, create, preview, select, spawn_worker
                 message = Path(args.message_file).read_text(encoding='utf-8') if args.message_file else POLICY
                 if not message.strip() or len(message.encode('utf-8')) > 16384:
                     raise ValueError('Announcement must contain 1 to 16384 bytes of text')
                 recipients = preview(args.exclude_pane)
                 if args.send:
+                    recipients = select(recipients, args.recipient)
                     announcement = create(store, recipients, message=message)
                     spawn_worker(announcement)
                     print(json.dumps(dict(announcement=announcement, recipients=len(recipients),
@@ -905,7 +910,7 @@ def main():
                     for agent in recipients:
                         print('{} {:8} {}'.format(agent['pane_id'], agent.get('agent_status', ''), agent.get('cwd', '')))
                     print('\nMessage:\n' + message)
-                    print('\nPreview only. Use announce --send to send to these agents.')
+                    print('\nPreview only. Select each idle recipient: announce --send --recipient PANE (repeat as needed).')
             elif args.action == 'announcements':
                 from .announce import deliveries
                 rows = deliveries(store)

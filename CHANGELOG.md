@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.22.2
+
+- Cache configuration files, use read-only queue-generation admission wakeups,
+  share periodic recovery and run numbered migrations only when needed. Preserve
+  Python 3.8 and historical queue protocol guards.
+- Gate native command execution until the child's PID and start time are saved;
+  an attachment-time runner crash cannot leave an unrecorded command executing.
+- Stop a batch child created during a concurrent group shutdown, including when
+  slow outer telemetry delays the main cancellation loop.
+- Record pending batch checks before launch so an early bootstrap timeout keeps
+  the planned check list without inventing per-check native results.
+- Require explicitly selected idle Herdr recipients and recheck before sending.
+  Add optional MCP working-directory roots and prominent host-execution guidance.
+- Validate remote submissions before consuming request tokens and return database
+  errors as protocol JSON. Keep uncertain request outcomes non-retryable.
+- Add an independent plain unittest CI step and derive package version metadata
+  from the application version. Add focused correctness lint and incremental
+  formatting/type checks; consolidate internal feedback notes into a public guide.
+- Launch installed-wheel batch workers from the package root instead of requiring
+  a repository-root script, retaining protection against imports shadowed by cwd.
+
 ## 0.22.1
 
 - Prepare the public beta with Apache-2.0 licensing, portable Linux installation

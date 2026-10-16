@@ -399,22 +399,22 @@ shadowing Cargo can interfere with rustup and build scripts.
 
 ### Announce queue adoption
 
-Press `a` in the TUI to preview the current Herdr agents and confirm sending the
-queue instructions. From a Herdr-managed agent pane:
+Press `a` in the TUI to preview idle Herdr agents, select explicit pane IDs and
+confirm sending the queue instructions. From a Herdr-managed agent pane:
 
 ```sh
 agent-builds announce           # preview recipients and exact policy
-agent-builds announce --send    # explicitly send to that snapshot
+agent-builds announce --send --recipient w1:p2 --recipient w1:p3
 agent-builds announce --message-file /path/to/message.txt  # preview custom text
-agent-builds announce --send --message-file /path/to/message.txt
+agent-builds announce --send --recipient w1:p2 --message-file /path/to/message.txt
 agent-builds announcements --json
 ```
 
-The caller is excluded. Running Codex agents receive the instruction through
-Herdr's native prompt input so they can adopt it during their current task;
-no stop keys are sent. Idle agents receive normal prompts. Blocked/unknown agents
-wait for a safe input state, for up to 15 minutes. Agent-session identities are
-checked before submission, so a replacement in the same pane is skipped.
+Announcements submit prompts that can influence other agents. The caller and
+working, blocked or unknown agents are excluded. Each destination must be named
+with `--recipient`; there is no implicit all-recipient send. Idle status and
+agent-session identity are checked again before submission. A changed session,
+working recipient or native blocked response is skipped rather than prompted later.
 Uncertain submissions are recorded and never automatically retried.
 
 `submitted` proves that Herdr accepted the input, not that the agent adopted the

@@ -5,3 +5,5 @@ __pycache__/
 dist/
 build/
 .agent-builds-output/
+.ruff_cache/
+.mypy_cache/

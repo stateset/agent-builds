@@ -103,6 +103,11 @@ steps once; do not nest wrappers or wrap an entire coding-agent session.
 
 ## MCP
 
+**Execution boundary:** the MCP server runs commands as your host user, outside
+the calling agent's sandbox. Enable mutation tools only for trusted clients and
+use their command-approval controls. Anyone able to modify queue state can affect
+commands later run by plans or watches. Keep that directory private.
+
 Point your agent's stdio MCP configuration at the installed executable:
 
 ```json
@@ -110,7 +115,7 @@ Point your agent's stdio MCP configuration at the installed executable:
   "mcpServers": {
     "buildr": {
       "command": "/absolute/path/to/buildr",
-      "args": ["mcp", "serve"]
+      "args": ["mcp", "serve", "--allow-root", "/absolute/path/to/repos"]
     }
   }
 }
@@ -121,8 +126,32 @@ unique `request_key`, retain the returned handle and poll it. After a lost
 response, inspect or replay the same key and exact arguments. Existing MCP
 sessions need reconnecting to load an updated server.
 
+Repeat `--allow-root` to permit several working-directory trees. This optional
+scope is checked at submission and launch, including plan stages and watch
+probes; symlinks are resolved. It does not restrict command arguments, file access
+or network access. Omit it for the historical unrestricted behavior, or use
+`--read-only` for inspection without command execution. Use an OS/container
+sandbox when commands need isolation.
+
 See [MCP setup and tools](docs/mcp.md) for bounded concurrent requests,
 read-only mode, cancellation and recovery semantics.
+
+## Herdr announcements
+
+Announcements submit prompts to other agents and can influence their work.
+Preview the text and idle recipients, then explicitly select each destination:
+
+```sh
+buildr announce
+buildr announce --send --recipient w1:p2 --recipient w1:p3
+buildr announcements --json
+```
+
+The TUI's `a` action also requires pane selection and confirmation. Working,
+blocked and unknown agents are excluded. Session identity and idle status are
+checked again immediately before sending; a changed recipient is skipped rather
+than prompted later. Delivery means input was submitted, not that policy was
+adopted. Uncertain submissions are never automatically retried.
 
 ## Documentation
 
@@ -136,6 +165,7 @@ read-only mode, cancellation and recovery semantics.
 | Measured resource profiles | [Reviewed profiles](docs/reviewed-profiles.md) |
 | Representative workflow comparisons | [Workflow studies](docs/workflow-studies.md) |
 | Optional worker backends | [Workers](docs/workers.md) |
+| Queue coordination and compatibility | [Scaling](docs/scaling.md) |
 | Additional commands and feature history | [CLI reference](docs/cli-reference.md) |
 
 Tests cover scheduling, recovery, mixed-version compatibility, MCP and native

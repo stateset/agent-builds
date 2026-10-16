@@ -42,6 +42,23 @@ Client approval controls still apply. This stdio process runs as the same local
 user as its client; command execution has that user's permissions. It is not a
 filesystem sandbox or a separate authenticated network service.
 
+## Optional working-directory scope
+
+Add `--allow-root /absolute/repositories` to the server arguments, repeating it
+for additional roots. New submissions, plan roots and watch probes must resolve
+inside a permitted directory. Detached descendants inherit the policy through
+`BUILDR_ALLOWED_ROOTS`; the runner rechecks the working directory before launch.
+Sibling path prefixes and symlinks escaping a root are rejected. An invalid
+inherited policy fails closed. Existing durable request receipts remain readable.
+
+This option limits the working directory only. It does not filter executable
+names or arguments and cannot prevent a command accessing files outside that
+directory or using the network. Commands execute outside the caller's agent
+sandbox as the host user. Keep queue state private and trusted: plans and watches
+load commands from it. Use client approvals and OS/container isolation where
+needed. Omitting the option preserves unrestricted working directories; read-only
+mode exposes inspection tools without execution.
+
 ## Agent workflow
 
 1. Discover tools and inspect `buildr_status` for budgets and queue pressure.

@@ -57,9 +57,10 @@ def validate(value):
 
 
 def command(value):
-    # Absolute launcher pins imports even when the selected checkout contains a
-    # package named agent_builds. The actual check cwd remains the user's cwd.
-    return [sys.executable,str(Path(__file__).resolve().parent.parent/'buildr'),
+    # Pin imports even when cwd contains another agent_builds package. A wheel
+    # has no repository-root buildr script, so bootstrap from its package root.
+    bootstrap = 'import sys; sys.path.insert(0,sys.argv.pop(1)); from agent_builds.__main__ import main; raise SystemExit(main())'
+    return [sys.executable,'-I','-c',bootstrap,str(Path(__file__).resolve().parent.parent),
             'batch-worker',json.dumps(validate(value),separators=(',',':'))]
 
 
@@ -83,6 +84,30 @@ def minimum_slots(definition):
     return max([definition.get('max_parallel',1)]+[check.get('jobs',1) for check in definition['checks']])
 
 
+def initial_report(definition, slots):
+    from .budgets import worker_budget
+    uniform = worker_slots(definition, slots)
+    budgets = allocations(definition, slots)
+    return dict(schema='buildr-batch-v1',keep_going=definition['keep_going'],complete=False,
+        max_parallel=min(definition.get('max_parallel',1),len(definition['checks'])),
+        slots_per_check=uniform,memory_scope='one aggregate reservation; no per-check memory limit',
+        cpu_allocation='explicit' if uniform is None else 'uniform',
+        checks=[dict(name=check['name'],state='pending',exit_code=None,cpu_slots=budgets[index],
+                     worker_budget=worker_budget(check['command'],budgets[index]))
+                for index,check in enumerate(definition['checks'])])
+
+
+def pending_report(argv, slots):
+    # Recognize only this package's canonical worker, never arbitrary argv that
+    # happen to end with batch-worker. No command has executed at this point.
+    if len(argv)<2 or argv[-2]!='batch-worker':
+        return None
+    prefix=command(dict(checks=[dict(name='placeholder',command=['true'])]))[:-1]
+    if argv[:-1]!=prefix:
+        return None
+    return initial_report(validate(json.loads(argv[-1])),slots)
+
+
 def run(encoded):
     from .store import Store
     definition = validate(json.loads(encoded))
@@ -97,15 +122,9 @@ def run(encoded):
         row = store.get(handle)
         if row['state']!='running' or row['backend']!='local' or row['argv'][-2:]!=['batch-worker',encoded]:
             raise ValueError('Batch definition does not match this running local job')
-        slots = worker_slots(definition, row['slots'])
         budgets = allocations(definition,row['slots'])
         parallel = min(definition.get('max_parallel', 1), len(definition['checks']))
-        from .budgets import worker_budget
-        report = dict(schema='buildr-batch-v1',keep_going=definition['keep_going'],complete=False,
-            max_parallel=parallel, slots_per_check=slots, memory_scope='one aggregate reservation; no per-check memory limit',
-            cpu_allocation='explicit' if slots is None else 'uniform',
-            checks=[dict(name=check['name'],state='pending',exit_code=None,cpu_slots=budgets[index],
-                         worker_budget=worker_budget(check['command'],budgets[index])) for index,check in enumerate(definition['checks'])])
+        report = initial_report(definition,row['slots'])
         def save():
             store.db.execute('UPDATE jobs SET batch=? WHERE id=?', (json.dumps(report),handle))
         def stop(signum, frame):
@@ -150,6 +169,10 @@ def run(encoded):
                 save()
                 event(index, 'started',cpu_slots=budgets[index])
                 try:
+                    if stopped[0]:
+                        result.update(state='skipped',reason='batch stopped before command launch')
+                        save()
+                        continue
                     # All siblings stay in the outer native worker's group:
                     # timeout/cancel/crash cleanup retains its existing boundary.
                     env=dict(os.environ,CARGO_BUILD_JOBS=str(budgets[index]),RUST_TEST_THREADS=str(budgets[index]))
@@ -157,6 +180,11 @@ def run(encoded):
                         stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.STDOUT)
                     active[index] = dict(child=child,eof=False)
                     selector.register(child.stdout,selectors.EVENT_READ,index)
+                    # A group stop can arrive during Popen, before the new
+                    # process exists. That child missed the group signal; stop
+                    # it explicitly rather than waiting for the outer grace.
+                    if stopped[0]:
+                        child.terminate()
                 except OSError as error:
                     failed = True
                     result.update(state='failed',exit_code=127,finished=time.time(),reason=type(error).__name__)

@@ -40,6 +40,22 @@ jobs:
           --set quick_reserve_slots=0 --set quick_reserve_jobs=0
           --set quick_reserve_memory_gb=0 --set min_free_gb=1
           --set min_available_gb=0 --set nice=0
+      - name: Independent regression exit status
+        run: python -m unittest discover -s tests -v
+      - name: Install static check tools
+        if: matrix.python == '3.12'
+        run: python -m pip install 'ruff==0.17.1' 'mypy==2.4.0'
+      - name: Focused correctness lint
+        if: matrix.python == '3.12'
+        run: >-
+          python -m agent_builds run --lane quick --jobs 1 --memory-gb 1
+          --timeout 120 -- python -m ruff check --select E9,F63,F7,F82
+          agent_builds tests tools
+      - name: Format and type checks for new coordination modules
+        if: matrix.python == '3.12'
+        run: |
+          python -m agent_builds run --lane quick --jobs 1 --memory-gb 1 --timeout 120 -- python -m ruff format --check agent_builds/execution_policy.py agent_builds/polling.py agent_builds/launch.py tests/test_coordination.py tools/verify_coordination.py tools/verify_installed.py
+          python -m agent_builds run --lane quick --jobs 1 --memory-gb 1 --timeout 120 -- python -m mypy --follow-imports=skip --check-untyped-defs agent_builds/execution_policy.py agent_builds/polling.py agent_builds/launch.py
       - name: Regression tests through Buildr
         run: >-
           python -m agent_builds run --lane quick --jobs 2 --memory-gb 2
@@ -64,12 +80,10 @@ jobs:
       - name: Validate distributions
         if: matrix.python == '3.12'
         run: python -m twine check dist/*
-      - name: Verify an installed wheel outside the checkout
+      - name: Verify native and batch execution from an installed wheel
         if: matrix.python == '3.12'
         shell: bash
         run: |
           python -m venv "$RUNNER_TEMP/buildr-wheel"
           "$RUNNER_TEMP/buildr-wheel/bin/python" -m pip install --no-deps dist/*.whl
-          cd "$RUNNER_TEMP"
-          "$RUNNER_TEMP/buildr-wheel/bin/buildr" --help
-          "$RUNNER_TEMP/buildr-wheel/bin/python" -c 'import agent_builds; print(agent_builds.__version__)'
+          python -m agent_builds run --lane quick --jobs 2 --memory-gb 1 --timeout 120 -- python tools/verify_installed.py --python "$RUNNER_TEMP/buildr-wheel/bin/python"
