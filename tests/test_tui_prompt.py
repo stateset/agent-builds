@@ -167,9 +167,12 @@ class PromptTests(unittest.TestCase):
 
 class PromptContextTests(unittest.TestCase):
     def test_context_is_bounded_cleaned_and_clipping_is_explicit(self):
-        context = PromptContext("\x1b[31mred\x1b[0m\n" + "x" * MAX_CONTEXT_CHARS)
+        context = PromptContext(
+            "bad\udcffname\n\x1b[31mred\x1b[0m\n" + "x" * MAX_CONTEXT_CHARS
+        )
         rows = context.page(40, MAX_CONTEXT_CHARS)
         self.assertIn("red", rows)
+        self.assertIn("bad?name", rows)
         self.assertNotIn("\x1b", "\n".join(rows))
         self.assertIn("[Context clipped at 16 Ki characters]", rows)
         self.assertLessEqual(sum(map(len, rows)), MAX_CONTEXT_CHARS + 40)

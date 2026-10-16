@@ -8,7 +8,9 @@ MAX_CONTEXT_CHARS = 16 * 1024
 class PromptContext:
     def __init__(self, text=""):
         clipped = len(text) > MAX_CONTEXT_CHARS
-        self.lines = clean_lines(text[:MAX_CONTEXT_CHARS].encode("utf-8"))
+        self.lines = clean_lines(
+            text[:MAX_CONTEXT_CHARS].encode("utf-8", errors="replace")
+        )
         if clipped:
             self.lines.append("[Context clipped at 16 Ki characters]")
         self.width, self.wrapped = None, []
