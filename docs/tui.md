@@ -15,8 +15,11 @@ Selected reads refresh at most once a second and are released when hidden.
 Filtering and sorting reuse the same display snapshot until the jobs or local
 controls change. Selection and scrolling do not repeat that work.
 Unavailable details show a read error and retry on refresh, without displaying
-another job's cached evidence. Explicit tools such as plans, diagnostics and the
-workbench retain their own inspection behavior.
+another job's cached evidence. Job details, workbench and wait diagnosis keep
+their original job when it leaves the browser snapshot. Explicit job navigation
+or filter changes in details select another job; passive refreshes do not.
+Confirmations and logs opened from details use that inspected job. Checkout
+history likewise keeps its checkout until you leave the view.
 
 | Key | Action |
 | --- | --- |
@@ -32,6 +35,7 @@ workbench retain their own inspection behavior.
 | `s` | Cycle display order: queue, wait, runtime, repository; retain selected job |
 | Tab | Toggle an expanded job table in the jobs view |
 | Enter or `i` | Toggle the selected job’s details in full or narrow panes |
+| `w` | Why waiting? Selected-job diagnosis; `w` returns to jobs |
 | `g` | Jump to the selected job's recorded blocker |
 | `l` | Focus the selected job’s log; `l` returns to jobs |
 | `H` | Selected-checkout history; `H` returns to jobs |
@@ -47,8 +51,9 @@ the highlighted view; Esc returns. Inside the picker, letters including `q`,
 
 The picker marks the current view with `*` and unavailable views with `!`.
 The selected description explains its purpose or requirement. Full-pane tools
-require 65 columns by 15 rows; details, logs and workbench require a selected
+require 65 columns by 15 rows; details, logs, workbench and wait diagnosis require a selected
 job. An already open log remains available even if its job leaves the browser.
+Opening details, workbench, diagnosis or history from it keeps its job/checkout.
 An unavailable selection stays in the picker until you resize or choose another
 view. Below 20x8, only Esc is accepted; query and selection survive resizing.
 
@@ -122,6 +127,37 @@ job and `c` for cancellation with a typed confirmation. Budgets, plan submission
 saved tasks and explicitly selected idle-recipient announcements remain available
 through their existing deliberate flows. Read help before taking a shared action.
 
+## Why a job is waiting
+
+Press `w` from jobs or details, or find **Why waiting?** with `V`. The report
+shows the inspected job's recorded wait reason and its observation age, current
+global and lane reservation arithmetic, host RAM, disk requirements and deficits,
+and recorded blocker links. Unrecorded and stale wait evidence is labelled.
+A running blocker is not labelled stale merely because it has no queued wait
+observation. Terminal jobs show their recorded outcome; missing exit evidence
+stays explicit.
+
+These are observations, not a predicted start time or a new admission decision.
+CPU slots and RAM reservations are estimates, not hard host limits. Free capacity
+alone does not establish that a job can start: locks, priority, protected quick
+capacity, pause and uncertain workers also matter. Reports do not change jobs,
+reservations, settings or files.
+
+Use j/k, arrows or PgUp/PgDn to scroll, Home/End for first/last, `i` for the
+inspected job's details, `l` for its log, and `g` for the first recorded blocker
+log if present. `w` or `v` returns to jobs. Shared action keys are consumed in
+this view. The full job handle stays visible even in the 20x8 monitor.
+
+Why waiting and queue health refresh every two seconds after completion;
+workbench refreshes every three. These three views share at most one in-flight
+background read on a separate read-only connection. Navigation and quitting do
+not wait for it. Changing view/job discards a mismatched result; help, hidden
+views and undersized panes do not start reads. Failed refreshes label retained
+reports stale; initial errors wrap in the body. Report formatting/wrapping is
+cached and bounded at 64 Ki characters, with an explicit clipping notice.
+`buildr diagnose JOB`, `buildr diagnose`, and `buildr workbench JOB` provide
+CLI reports. Other dashboard reads retain their existing refresh behavior.
+
 ## Command history
 
 `H` opens history for the selected job's checkout (or the dashboard checkout if
@@ -131,7 +167,7 @@ The complete checkout path wraps with the results. Global reservations remain
 visible; suggestions never change configuration automatically.
 
 History supports narrow panes: j/k or arrows scroll lines, PgUp/PgDn page,
-Home/End select the beginning/end, and `H` returns to the pinned job. Help and
+Home/End select the beginning/end, and `H` returns to jobs. Help and
 quit remain available while loading. Shared action keys are ignored in history.
 
 Reads run on a separate read-only connection, with at most one in flight and a

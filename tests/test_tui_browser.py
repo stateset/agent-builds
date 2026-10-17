@@ -91,6 +91,185 @@ class TuiBrowserTests(unittest.TestCase):
             self.prompt_calls = prompt.call_args_list
         return frames
 
+    def test_inspection_pending_reads_share_one_worker_and_ignore_actions(self):
+        from concurrent.futures import Future
+
+        for size in ((20, 100), (8, 20)):
+            for target in (11, 12, 14):
+                future = Future()
+                with self.subTest(size=size, target=target), mock.patch(
+                    "agent_builds.tui.choose_view", return_value=target
+                ), mock.patch(
+                    "agent_builds.tui_reads.submit_read", return_value=future
+                ) as submit:
+                    frames = self.dashboard(
+                        [
+                            ord("V"),
+                            -1,
+                            ord("j"),
+                            curses.KEY_NPAGE,
+                            ord("?"),
+                            ord("p"),
+                            ord("q"),
+                            ord("c"),
+                            ord("p"),
+                            ord("n"),
+                            ord("q"),
+                        ],
+                        size,
+                    )
+                self.assertEqual(submit.call_count, 1)
+                self.assertFalse(future.done())
+                self.assertIn("Loading", " ".join(frames[-1].values()))
+                self.assertEqual(self.prompt_calls, [])
+                self.assertFalse(self.store.config()["paused"])
+                self.assertEqual(self.store.counts()["queued"], 1)
+
+    def test_details_context_survives_browser_eviction_for_confirmation_and_logs(self):
+        original = Store.browser_rows
+        now, hidden = [100], [False]
+        keys = iter([ord("i"), -1, ord("c"), ord("l"), ord("q")])
+        self.store.log_path(self.jobs[0]).write_text("retained inspection output\n")
+
+        def rows(store, *args, **kwargs):
+            return [
+                row
+                for row in original(store, *args, **kwargs)
+                if not hidden[0] or row["id"] != self.jobs[0]
+            ]
+
+        def key():
+            value = next(keys)
+            if value == -1:
+                hidden[0], now[0] = True, 102
+            return value
+
+        with mock.patch.object(Store, "browser_rows", rows):
+            frames = self.dashboard(key, clock=lambda: now[0], query=None)
+        self.assertIn(self.jobs[0], self.prompt_calls[0].args[1])
+        self.assertNotIn(self.jobs[1], self.prompt_calls[0].args[1])
+        self.assertIn("retained inspection output", " ".join(frames[-1].values()))
+        self.assertIn(self.jobs[0], " ".join(frames[-1].values()))
+
+    def test_picker_handoffs_keep_evicted_log_job_for_details_workbench_and_why(self):
+        from concurrent.futures import Future
+
+        original = Store.browser_rows
+        for target in (3, 12, 14):
+            now, hidden = [100], [False]
+            keys = iter([ord("l"), -1, ord("V"), ord("q")])
+
+            def rows(store, *args, **kwargs):
+                return [
+                    row
+                    for row in original(store, *args, **kwargs)
+                    if not hidden[0] or row["id"] != self.jobs[0]
+                ]
+
+            def key():
+                value = next(keys)
+                if value == -1:
+                    hidden[0], now[0] = True, 102
+                return value
+
+            with self.subTest(target=target), mock.patch.object(
+                Store, "browser_rows", rows
+            ), mock.patch(
+                "agent_builds.tui.choose_view", return_value=target
+            ), mock.patch(
+                "agent_builds.tui_reads.submit_read", return_value=Future()
+            ) as submit:
+                frames = self.dashboard(key, clock=lambda: now[0])
+            self.assertIn(self.jobs[0], " ".join(frames[-1].values()))
+            if target != 3:
+                self.assertEqual(submit.call_args.args[1][1], self.jobs[0])
+
+    def test_history_keeps_checkout_when_browser_selection_disappears(self):
+        from concurrent.futures import Future
+
+        other = self.root / "other-checkout"
+        other.mkdir()
+        self.store.db.execute(
+            "UPDATE jobs SET cwd=? WHERE id=?", (str(other), self.jobs[1])
+        )
+        original = Store.browser_rows
+        now, hidden = [100], [False]
+        keys = iter([ord("H"), -1, ord("q")])
+
+        def rows(store, *args, **kwargs):
+            return [
+                row
+                for row in original(store, *args, **kwargs)
+                if not hidden[0] or row["id"] != self.jobs[0]
+            ]
+
+        def key():
+            value = next(keys)
+            if value == -1:
+                hidden[0], now[0] = True, 102
+            return value
+
+        with mock.patch.object(Store, "browser_rows", rows), mock.patch(
+            "agent_builds.tui_history.submit_read", return_value=Future()
+        ) as submit:
+            frames = self.dashboard(key, clock=lambda: now[0])
+        self.assertEqual(submit.call_count, 1)
+        self.assertEqual(submit.call_args.args[1], str(self.root))
+        self.assertNotIn(str(other), " ".join(frames[-1].values()))
+
+    def test_why_paging_blocker_log_and_selected_job_handoffs_are_read_only(self):
+        from concurrent.futures import Future
+        from agent_builds.tui_inspect import inspect_report
+
+        self.store.db.execute(
+            "UPDATE jobs SET reason='repository already building', wait_context=? WHERE id=?",
+            (
+                json.dumps(dict(measured_at=0, blocking_job=dict(id=self.jobs[0]))),
+                self.jobs[1],
+            ),
+        )
+        self.store.log_path(self.jobs[0]).write_text("observed blocker output\n")
+        self.store.log_path(self.jobs[1]).write_text("selected waiting output\n")
+        report = inspect_report(self.store.root, ("why", self.jobs[1]))
+
+        def submit(loader, key):
+            future = Future()
+            self.assertEqual(key, ("why", self.jobs[1]))
+            future.set_result(report)
+            return future
+
+        for size in ((24, 120), (8, 20)):
+            for destination, marker in (
+                ("g", "observed blocker"),
+                ("l", "selected waiting"),
+                ("i", "DETAILS"),
+            ):
+                with self.subTest(size=size, destination=destination), mock.patch(
+                    "agent_builds.tui_reads.submit_read", side_effect=submit
+                ):
+                    frames = self.dashboard(
+                        [
+                            ord("j"),
+                            ord("w"),
+                            -1,
+                            curses.KEY_END,
+                            curses.KEY_HOME,
+                            ord("c"),
+                            ord("p"),
+                            ord(destination),
+                            ord("q"),
+                        ],
+                        size,
+                    )
+                self.assertIn(marker, " ".join(frames[-1].values()))
+                expected = self.jobs[0] if destination == "g" else self.jobs[1]
+                self.assertIn(expected, " ".join(frames[-1].values()))
+                self.assertEqual(self.prompt_calls, [])
+                self.assertIn("WHY", " ".join(frames[2].values()).upper())
+                self.assertNotEqual(frames[2], frames[3])
+                if size == (8, 20):
+                    self.assertIn("Runner reason:", " ".join(frames[3].values()))
+
     def test_full_only_views_show_resize_guidance_and_suspend_hidden_work(self):
         for number, title in (
             (1, "PROCESSES"),

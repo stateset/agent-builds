@@ -2,6 +2,13 @@
 
 ## 0.26.1 (unreleased)
 
+- Add a `w` wait inspector with observation freshness, reservation and disk
+  shortfalls, host RAM and recorded blocker chains. Keep job/checkout inspections
+  pinned through browser churn, including confirmation and log handoffs.
+  Move health and workbench reports onto a shared single-flight read-only worker;
+  cache and bound report wrapping, preserve scroll through hidden/loading states,
+  and allow navigation/exit while a report is pending.
+
 - Add a searchable `V` view picker with purpose descriptions, current-view and
   size/job requirements, keyboard paging, and resize-safe acceptance. Preserve
   following and held log state on cancellation. Selecting a view never dispatches

@@ -61,6 +61,12 @@ VIEWS = (
         "Inspect selected output; returning keeps held log position",
         job=True,
     ),
+    View(
+        14,
+        "Why waiting?",
+        "Diagnose the selected job's waits, capacity and blockers",
+        job=True,
+    ),
 )
 
 
@@ -218,7 +224,8 @@ def choose(screen, current, has_job, paint, has_log=False):
 
 
 _FULL_FOOTERS = {
-    0: "V views  F follow  R repo  C clear  Tab table  / find  f filter  l log  ? q",
+    14: "V views j/k PgUp/Dn Home/End w jobs i details l logs g blocker ? q",
+    0: "V views  F follow  w why  R repo  C clear  Tab table  / find  f filter  l log  ? q",
     3: "V views  PgUp/Dn Home/End  j/k job  i jobs  l logs  ? help  q quit",
     4: "V views  j/k scroll  PgUp/PgDn page  Home/End  H jobs  v views  ? help  q quit",
     7: "V views  o plan  c cancel plan  r resume  e export  PgUp/PgDn scroll  v next  q quit",
@@ -228,7 +235,8 @@ _FULL_FOOTERS = {
     13: "V views  / find  n/N match  End live  l jobs  ? help  q quit",
 }
 _MEDIUM_FOOTERS = {
-    0: "V views F follow R repo C clear Tab / f l ? q",
+    14: "V j/k PgUp/Dn Home/End w jobs i details l logs g ? q",
+    0: "V views F follow w why R repo C clear Tab / f l ? q",
     3: "V views PgUp/Dn Home/End j/k job i jobs l logs ? q",
     4: "V views j/k PgUp/Dn Home/End H jobs ? q",
     7: "V views o plan c cancel r resume e export PgUp/Dn ? q",
@@ -238,7 +246,8 @@ _MEDIUM_FOOTERS = {
     13: "V views / find n/N match End live l jobs ? q",
 }
 _COMPACT_FOOTERS = {
-    0: "V j/k / f l ? q",
+    14: "V j/k w i l g ? q",
+    0: "V j/k w / f l ? q",
     3: "V PgUp/Dn i/l ? q",
     4: "V j/k Pg H q",
     7: "V j/k v ? q",

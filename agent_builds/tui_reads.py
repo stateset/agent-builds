@@ -1,0 +1,78 @@
+"""One bounded in-flight inspection; never share a SQLite connection across threads."""
+
+from concurrent.futures import Future
+from threading import Thread
+
+
+def submit_read(loader, key):
+    """Run inspection on a disposable daemon; quitting never joins a slow read.
+
+    This worker is only for read-only inspection, never native jobs or mutations.
+    The loader owns and closes its connection. SnapshotRead permits one in flight.
+    """
+    future = Future()
+
+    def inspect():
+        if not future.set_running_or_notify_cancel():
+            return
+        try:
+            future.set_result(loader(key))
+        except BaseException as error:
+            future.set_exception(error)
+
+    Thread(target=inspect, name="buildr-inspection", daemon=True).start()
+    return future
+
+
+class SnapshotRead:
+    """Keep one in-flight read; never wait for it in the keyboard loop."""
+
+    def __init__(self, loader, interval=3, submit=None, label="inspection"):
+        self.label = label
+        self.loader, self.interval = loader, interval
+        self.submit = submit or submit_read
+        self.key = self.pending_key = None
+        self.future = self.report = None
+        self.error = None
+        self.observed = None
+        self.next_read = 0
+
+    def get(self, key, now):
+        if key != self.key:
+            self.key = key
+            self.report = self.error = self.observed = None
+            self.next_read = now
+        if self.future is not None and self.future.done():
+            try:
+                result = self.future.result()
+            except Exception as error:
+                if key is not None and key == self.pending_key:
+                    self.error = str(error) or type(error).__name__
+                    self.next_read = now + self.interval
+            else:
+                if key is not None and key == self.pending_key:
+                    self.report, self.error, self.observed = result, None, now
+                    self.next_read = now + self.interval
+            self.future = None
+        if key is not None and self.future is None and now >= self.next_read:
+            self.pending_key = key
+            try:
+                self.future = self.submit(self.loader, key)
+            except (RuntimeError, OSError) as error:
+                self.error = str(error) or type(error).__name__
+                self.next_read = now + self.interval
+        return self.report
+
+    def status(self, now):
+        if self.error:
+            return (
+                "Stale " + self.label + ": "
+                if self.report is not None
+                else self.label.capitalize() + " unavailable: "
+            ) + self.error
+        if self.report is None:
+            return "Loading " + self.label + "; navigation stays available"
+        return "Snapshot {:.0f}s ago{}".format(
+            max(0, now - self.observed),
+            "; refreshing" if self.future is not None else "",
+        )

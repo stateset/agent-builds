@@ -94,7 +94,7 @@ Read-only inspection does not initialize a missing queue.
    attached. Inspect it with `buildr show JOB --json` and `buildr logs JOB`.
 3. Put related checks in a batch, or dependencies in a verification plan. Use
    explicit resource keys/locks when different checkouts share build output.
-4. Use `buildr diagnose JOB` to understand a wait. Preflight projections reserve
+4. Use `buildr diagnose JOB` or `w` in the TUI to understand a wait. Preflight projections reserve
    nothing and cannot guarantee a start or prove a smaller RAM budget is safe.
 
 Commands run with your user's permissions. They are noninteractive and do not
