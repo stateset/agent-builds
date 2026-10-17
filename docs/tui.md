@@ -179,7 +179,9 @@ CLI reports. The remaining periodic tool views (processes, announcements, remote
 plans, advisor, groups and watches) also load only while visible, in background
 workers. Plans and watches distinguish unverified controller liveness from an
 observed stop. Read failures remain visible even for previously empty reports.
-Read-only disk scans run only on `d` and cannot delay interpreter exit. Explicit
+Read-only disk scans run only on `d` in an owned helper process. Closing the
+dashboard stops that helper and its `du` descendants without signalling queued
+builds. The helper uses a separate read-only connection and bounded output. Explicit
 action flows and bounded local log reads retain their own behavior.
 
 ## Command history

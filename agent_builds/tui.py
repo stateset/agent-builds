@@ -20,6 +20,7 @@ from .tui_history import HistoryRead, HistoryView, inspect_history
 from .tui_prompt import edit as edit_prompt, job_context, recipient_context
 from .tui_views import VIEWS, choose as choose_view, footer as view_footer
 from .tui_reads import SnapshotRead, submit_read
+from .tui_disk import DiskRead
 from .tui_data import LazyStore, browser as read_browser, selected as read_selected, summary as read_summary, tool as read_tool
 from .tui_inspect import InspectionFocus, inspect_report, HealthView, WorkbenchView, WhyView
 
@@ -216,6 +217,7 @@ def main(screen, cwd):
     inspection_views = {11:HealthView(),12:WorkbenchView(),14:WhyView()}
     disk_future = None
     disk_result = None
+    disk_reader = DiskRead(store.root)
     plan_rows = []
     plan_index = 0
     plan_id = None
@@ -229,15 +231,6 @@ def main(screen, cwd):
     group_id = None
     group_offset = 0
     watch_rows, watch_index, watch_id, watch_offset = [], 0, None, 0
-    def scan_disk(repository):
-        from .disk import inventory
-        reader = Store(store.root, read_only=True)
-        try:
-            if reader.db is not None:
-                reader.db.execute('PRAGMA busy_timeout=1000')
-            return inventory(reader, repository)
-        finally:
-            reader.close()
     try:
         while True:
             children = [child for child in children if child.poll() is None]
@@ -312,6 +305,14 @@ def main(screen, cwd):
                     watch_id=watch_rows[watch_index]['id'] if watch_rows else None
             elif view==8:
                 advice_result=tool_data
+            if disk_future is not None and disk_future.done():
+                try:
+                    disk_result = disk_future.result()
+                except Exception as error:
+                    message = 'Disk scan failed: ' + str(error)
+                finally:
+                    disk_reader.close()
+                disk_future = None
             active = [r for r in rows if r['state'] in ('running', 'cancelling')]
             screen.erase()
             height, width = screen.getmaxyx()
@@ -453,12 +454,6 @@ def main(screen, cwd):
                         paint(screen, log_top + index, 0, line)
                 elif view == 6:
                     paint(screen, log_top - 1, 0, 'DISK INVENTORY | d scans selected repo | caches are never deleted here', curses.A_BOLD)
-                    if disk_future is not None and disk_future.done():
-                        try:
-                            disk_result = disk_future.result()
-                        except Exception as error:
-                            message = 'Disk scan failed: ' + str(error)
-                        disk_future = None
                     lines = ['Scanning...' if disk_future else 'Press d to scan the selected repository.']
                     if disk_result:
                         lines += ['{} GiB | {}'.format('{:.2f}'.format(r['bytes']/1024**3) if r['bytes'] is not None else '?', r['path']) for r in disk_result['paths']]
@@ -976,7 +971,10 @@ def main(screen, cwd):
             elif key == ord('d'):
                 view = 6
                 if disk_future is None:
-                    disk_future = submit_read(scan_disk, context_row['cwd'] if context_row else cwd)
+                    try:
+                        disk_future = disk_reader.start(context_row['cwd'] if context_row else cwd)
+                    except (RuntimeError,ValueError,OSError) as error:
+                        message='Disk scan failed to start: '+str(error)
             elif key == ord('t') and height >= 15 and width >= 65:
                 from .profiles import tasks as saved_tasks, repository
                 try:
@@ -1109,7 +1107,10 @@ def main(screen, cwd):
                 except (ValueError, OSError, sqlite3.Error) as error:
                     message = str(error)
     finally:
-        store.close()
+        try:
+            disk_reader.close()
+        finally:
+            store.close()
 
 
 def launch(cwd):

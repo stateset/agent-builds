@@ -8,7 +8,8 @@
   snapshots, and show unknown totals instead of inferring global reservations
   from filtered rows. Keep monitoring read-only and initialize writable state
   only for deliberate actions; reload action-time configuration. Bound in-flight
-  reads, suspend hidden/help work and allow exit during a stalled disk scan.
+  reads, suspend hidden/help work and supervise disk scans so exit stops only the
+  owned scan worker and its descendants.
 
 - Add a `w` wait inspector with observation freshness, reservation and disk
   shortfalls, host RAM and recorded blocker chains. Keep job/checkout inspections

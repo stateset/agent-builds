@@ -563,74 +563,147 @@ class TuiRefreshTests(unittest.TestCase):
             sqlite3.OperationalError("fixture database unavailable"),
             RuntimeError("fixture inventory failure"),
         ):
+            failed = Future()
+            failed.set_exception(error)
             with self.subTest(error=type(error).__name__), mock.patch(
-                "agent_builds.disk.inventory", side_effect=error
-            ) as inventory:
+                "agent_builds.tui.DiskRead", autospec=True
+            ) as disk_read:
+                disk_read.return_value.start.return_value = failed
                 frames = self.fixture.dashboard([ord("d"), ord("q")], (24, 160))
-                self.assertEqual(inventory.call_count, 1)
+                disk_read.return_value.start.assert_called_once_with(str(self.root))
+                self.assertTrue(disk_read.return_value.close.called)
                 self.assertIn("Disk scan failed: " + str(error), frame_text(frames[-1]))
                 self.assertNotIn("Traceback", frame_text(frames[-1]))
                 self.assertEqual(self.fixture.prompt_calls, [])
 
     def test_interpreter_exits_with_a_stalled_dashboard_disk_scan(self):
-        script = textwrap.dedent(
+        metadata_path = self.root / "disk-worker.json"
+        worker_script = textwrap.dedent(
             """
-            from concurrent.futures import Future
+            import json
+            import os
             from pathlib import Path
+            import socket
+            import subprocess
             import sys
             from threading import Event
+
+            def identity(pid):
+                stat = Path('/proc/{}/stat'.format(pid)).read_text()
+                return dict(pid=pid, start=stat[stat.rfind(')') + 2:].split()[19])
+
+            descendant = subprocess.Popen(
+                [sys.executable, '-c', 'import time; time.sleep(300)'],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            metadata = dict(leader=identity(os.getpid()), descendant=identity(descendant.pid))
+            Path(sys.argv[1]).write_text(json.dumps(metadata))
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as ready:
+                ready.connect(sys.argv[2])
+                ready.sendall(b'ready')
+            Event().wait()
+            """
+        )
+        script = textwrap.dedent(
+            """
+            import json
+            from pathlib import Path
+            import socket
+            import sys
             from unittest import mock
 
             sys.path.insert(0, str(Path.cwd() / 'tests'))
             import test_tui_browser as fixtures
-            from agent_builds.tui_reads import submit_read
 
             fixture = fixtures.TuiBrowserTests()
             fixture.setUp()
-            started, blocked = Event(), Event()
-            scans = []
+            metadata_path = Path(sys.argv[1])
+            from threading import Event
+            import time
+            ready_path = fixture.root / 'disk-ready.sock'
+            ready = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            ready.bind(str(ready_path))
+            ready.listen(1)
+            ready.settimeout(3)
             keys = iter((ord('d'), ord('q')))
+            before = [tuple(row) for row in fixture.store.db.execute('SELECT * FROM jobs ORDER BY id')]
+            config_before = fixture.store.config_path.read_bytes()
 
-            def inventory(reader, repository):
-                assert reader.read_only
-                started.set()
-                blocked.wait()
-
-            def submit(loader, key):
-                if key == str(fixture.root):
-                    future = submit_read(loader, key)
-                    scans.append(future)
-                    return future
-                future = Future()
+            def alive(identity):
                 try:
-                    future.set_result(loader(key))
-                except Exception as error:
-                    future.set_exception(error)
-                return future
+                    stat = Path('/proc/{}/stat'.format(identity['pid'])).read_text()
+                except FileNotFoundError:
+                    return False
+                fields = stat[stat.rfind(')') + 2:].split()
+                return fields[19] == identity['start'] and fields[0] not in ('Z', 'X')
 
             def key():
                 value = next(keys)
                 if value == ord('q'):
-                    assert started.wait(timeout=3), 'disk scan never started'
+                    connection, _ = ready.accept()
+                    with connection:
+                        assert connection.recv(5) == b'ready'
+                    metadata = json.loads(metadata_path.read_text())
+                    assert all(alive(identity) for identity in metadata.values())
                 return value
 
             try:
-                with mock.patch('agent_builds.disk.inventory', side_effect=inventory):
-                    fixture.dashboard(key, background_submit=submit)
-                assert len(scans) == 1
-                assert not scans[0].done()
-                print('dashboard quit with disk scan pending', flush=True)
+                command = [sys.executable, '-c', sys.argv[2], str(metadata_path), str(ready_path)]
+                with mock.patch('agent_builds.tui_disk.worker_command', return_value=command) as worker_command:
+                    fixture.dashboard(key)
+                assert worker_command.call_count == 1
+                metadata = json.loads(metadata_path.read_text())
+                deadline=time.monotonic()+1
+                while any(alive(identity) for identity in metadata.values()) and time.monotonic()<deadline:
+                    Event().wait(.01)
+                assert not alive(metadata['leader']), 'disk worker still running after q'
+                assert not alive(metadata['descendant']), 'disk descendant still running after q'
+                after = [tuple(row) for row in fixture.store.db.execute('SELECT * FROM jobs ORDER BY id')]
+                assert before == after, 'disk inspection changed queue jobs'
+                assert config_before == fixture.store.config_path.read_bytes()
+                print('dashboard quit; owned disk processes stopped', flush=True)
             finally:
+                ready.close()
                 fixture.tearDown()
             """
         )
-        result = subprocess.run(
-            [sys.executable, "-c", script],
-            cwd=str(Path(__file__).resolve().parent.parent),
-            env=dict(os.environ),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            timeout=5,
-        )
-        self.assertEqual(result.returncode, 0, result.stderr.decode())
-        self.assertIn(b"dashboard quit with disk scan pending", result.stdout)
+
+        def alive(identity):
+            try:
+                stat = Path("/proc/{}/stat".format(identity["pid"])).read_text()
+            except FileNotFoundError:
+                return False
+            fields = stat[stat.rfind(")") + 2 :].split()
+            return fields[19] == identity["start"] and fields[0] not in ("Z", "X")
+
+        try:
+            result = subprocess.run(
+                [sys.executable, "-c", script, str(metadata_path), worker_script],
+                cwd=str(Path(__file__).resolve().parent.parent),
+                env=dict(os.environ),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=5,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr.decode())
+            self.assertIn(
+                b"dashboard quit; owned disk processes stopped", result.stdout
+            )
+            metadata = json.loads(metadata_path.read_text())
+            self.assertTrue(all(not alive(identity) for identity in metadata.values()))
+        finally:
+            # Clean up only fixture identities if the regression itself fails.
+            if metadata_path.exists():
+                import signal
+
+                metadata = json.loads(metadata_path.read_text())
+                group = metadata["leader"]["pid"]
+                for identity in metadata.values():
+                    if alive(identity):
+                        try:
+                            if os.getpgid(identity["pid"]) == group:
+                                os.killpg(group, signal.SIGKILL)
+                        except ProcessLookupError:
+                            pass
