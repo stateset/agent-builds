@@ -41,7 +41,7 @@ def report(command="cargo test", count=20):
 class HistoryReadTests(unittest.TestCase):
     def setUp(self):
         self.pool = ManualPool()
-        self.read = tui_history.HistoryRead(self.pool, lambda key: key)
+        self.read = tui_history.HistoryRead(lambda key: key, submit=self.pool.submit)
 
     def finish(self, result=None, error=None):
         future = self.pool.calls[-1][2]
@@ -49,6 +49,62 @@ class HistoryReadTests(unittest.TestCase):
             future.set_exception(error)
         else:
             future.set_result(result)
+
+    def test_worker_returns_values_and_exceptions(self):
+        self.assertEqual(
+            tui_history.submit_read(lambda key: key, "/repo").result(timeout=3), "/repo"
+        )
+
+        def fail(key):
+            raise OSError("read failed")
+
+        with self.assertRaisesRegex(OSError, "read failed"):
+            tui_history.submit_read(fail, "/repo").result(timeout=3)
+
+    def test_interpreter_exits_while_read_worker_is_stalled(self):
+        import os
+        import subprocess
+        import sys
+
+        script = """
+from threading import Event
+from agent_builds.tui_history import HistoryRead
+started, blocked = Event(), Event()
+def slow(key):
+    started.set()
+    blocked.wait()
+read = HistoryRead(slow)
+assert read.get('/fixture', 0) is None
+assert started.wait(timeout=3)
+assert not read.future.done()
+print('pending read abandoned at exit', flush=True)
+"""
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            cwd=str(Path(__file__).resolve().parent.parent),
+            env=dict(os.environ),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=5,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr.decode())
+        self.assertIn(b"pending read abandoned at exit", result.stdout)
+
+    def test_worker_start_failure_is_visible_and_retry_is_throttled(self):
+        with mock.patch.object(
+            self.read, "submit", side_effect=OSError("thread unavailable")
+        ) as submit:
+            self.assertIsNone(self.read.get("/a", 0))
+            self.assertIn(
+                "History unavailable: thread unavailable", self.read.status(0)
+            )
+            self.read.get("/a", 2)
+            self.assertEqual(submit.call_count, 1)
+        self.read.get("/a", 3)
+        data = report()
+        self.finish(data)
+        self.assertIs(self.read.get("/a", 4), data)
+        self.assertIsNone(self.read.error)
 
     def test_pending_read_never_waits_or_accumulates_backlog(self):
         for now in range(100):

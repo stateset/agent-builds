@@ -1,5 +1,8 @@
 """Bounded, asynchronous, read-only history for the dashboard."""
 
+from concurrent.futures import Future
+from threading import Thread
+
 from .tui_logs import clean_lines, wrap_line
 
 MAX_CHARS = 64 * 1024
@@ -19,11 +22,32 @@ def inspect_history(root, repository):
         reader.close()
 
 
+def submit_read(loader, key):
+    """Run inspection on a disposable daemon; quitting never joins a slow read.
+
+    This worker is only for read-only history, never native jobs or mutations.
+    The loader owns and closes its connection. HistoryRead permits one in flight.
+    """
+    future = Future()
+
+    def inspect():
+        if not future.set_running_or_notify_cancel():
+            return
+        try:
+            future.set_result(loader(key))
+        except BaseException as error:
+            future.set_exception(error)
+
+    Thread(target=inspect, name="buildr-history", daemon=True).start()
+    return future
+
+
 class HistoryRead:
     """Keep one in-flight read; never wait for it in the keyboard loop."""
 
-    def __init__(self, pool, loader, interval=3):
-        self.pool, self.loader, self.interval = pool, loader, interval
+    def __init__(self, loader, interval=3, submit=None):
+        self.loader, self.interval = loader, interval
+        self.submit = submit or submit_read
         self.key = self.pending_key = None
         self.future = self.report = None
         self.error = None
@@ -49,7 +73,11 @@ class HistoryRead:
             self.future = None
         if key is not None and self.future is None and now >= self.next_read:
             self.pending_key = key
-            self.future = self.pool.submit(self.loader, key)
+            try:
+                self.future = self.submit(self.loader, key)
+            except (RuntimeError, OSError) as error:
+                self.error = str(error) or type(error).__name__
+                self.next_read = now + self.interval
         return self.report
 
     def status(self, now):

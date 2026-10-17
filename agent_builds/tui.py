@@ -181,9 +181,8 @@ def main(screen, cwd):
     details_view = DetailsView()
     last_sample = 0
     disk_pool = ThreadPoolExecutor(max_workers=1)
-    history_pool = ThreadPoolExecutor(max_workers=1)
     history_read = HistoryRead(
-        history_pool, lambda repository: inspect_history(store.root, repository)
+        lambda repository: inspect_history(store.root, repository)
     )
     history_view = HistoryView()
     disk_future = None
@@ -998,7 +997,6 @@ def main(screen, cwd):
                 except (ValueError, OSError) as error:
                     message = str(error)
     finally:
-        history_pool.shutdown(wait=False)
         disk_pool.shutdown(wait=False)
         store.close()
 

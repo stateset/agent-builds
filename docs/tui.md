@@ -108,7 +108,8 @@ quit remain available while loading. Shared action keys are ignored in history.
 
 Reads run on a separate read-only connection, with at most one in flight and a
 three-second refresh interval after completion. Hidden history and help do not
-start refreshes. Changing checkouts discards the previous checkout's result.
+start refreshes. The history worker never delays process exit when quitting.
+Changing checkouts discards the previous checkout's result.
 Failed refreshes label retained results as stale; an initial failure displays
 an error. Formatting and wrapping are cached between observations. Oversized
 history text is capped at 64 Ki characters with an explicit clipping label;

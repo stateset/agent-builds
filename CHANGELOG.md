@@ -5,7 +5,8 @@
 - Read dashboard history asynchronously on a read-only connection, refreshing
   only while visible. Add `H`, wrapped checkout/command text, narrow-pane
   line/page/Home/End navigation, cached formatting, and visible loading/stale
-  errors. Keep shared action keys inactive in history.
+  errors. Keep shared action keys inactive in history and allow exit while a
+  history read is pending.
 
 - Build only the selected `run` command's argument definitions on common CLI
   launches; retain the same schema, help, validation and root command choices.

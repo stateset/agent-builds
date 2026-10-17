@@ -95,8 +95,8 @@ class TuiBrowserTests(unittest.TestCase):
         from concurrent.futures import Future
 
         future = Future()
-        with mock.patch("agent_builds.tui.ThreadPoolExecutor") as pool:
-            pool.return_value.submit.return_value = future
+        with mock.patch("agent_builds.tui_history.submit_read") as submit:
+            submit.return_value = future
             frames = self.dashboard(
                 [
                     ord("H"),
@@ -110,7 +110,7 @@ class TuiBrowserTests(unittest.TestCase):
                     ord("q"),
                 ]
             )
-        self.assertEqual(pool.return_value.submit.call_count, 1)
+        self.assertEqual(submit.call_count, 1)
         self.assertFalse(future.done())
         self.assertIn("Loading history", " ".join(frames[-1].values()))
         self.assertEqual(self.prompt_calls, [])
@@ -147,11 +147,11 @@ class TuiBrowserTests(unittest.TestCase):
         ]
         for dimensions in ((8, 20), (20, 100)):
             with self.subTest(dimensions=dimensions), mock.patch(
-                "agent_builds.tui.ThreadPoolExecutor"
-            ) as pool:
-                pool.return_value.submit.return_value = future
+                "agent_builds.tui_history.submit_read"
+            ) as submit:
+                submit.return_value = future
                 frames = self.dashboard(keys, dimensions=dimensions)
-                self.assertEqual(pool.return_value.submit.call_count, 2)
+                self.assertEqual(submit.call_count, 2)
                 self.assertIn(
                     "H q" if dimensions[1] < 65 else "H jobs",
                     frames[2][dimensions[0] - 1],
