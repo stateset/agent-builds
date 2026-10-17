@@ -17,6 +17,7 @@ from .store import Store, TERMINAL
 from .tui_browser import MODES, ORDERS, BrowserCache, SelectedJobRead, filter_rows, sort_rows, page_size, columns, job_line, label as browser_label, HELP
 from .tui_logs import LogView, TailCache, strip_escapes
 from .tui_details import DetailsView
+from .tui_history import HistoryRead, HistoryView, inspect_history
 from .tui_prompt import edit as edit_prompt, job_context, recipient_context
 
 
@@ -39,7 +40,7 @@ def paint(screen, y, x, text, attr=0):
         pass
 
 
-def compact_lines(rows, selected, plans, plan_index, view, config, height, width, watches=None, watch_index=0, health=None, health_offset=0, workbench=None, workbench_offset=0, queue_health=None, browser=None, tail_reader=None, details_view=None, detail_row=None, detail_error=None):
+def compact_lines(rows, selected, plans, plan_index, view, config, height, width, watches=None, watch_index=0, health=None, health_offset=0, workbench=None, workbench_offset=0, queue_health=None, browser=None, tail_reader=None, details_view=None, detail_row=None, detail_error=None, history_view=None, history_repository=None, history_report=None, history_status=""):
     """A monitor for narrow split panes; editing actions need the full view."""
     lines = ['BUILDR ' + __version__ + (' PAUSED' if config['paused'] else '')]
     if height < 8 or width < 20:
@@ -52,7 +53,11 @@ def compact_lines(rows, selected, plans, plan_index, view, config, height, width
         from .queue_health import banner
         lines += [banner(queue_health, compact=True)]
     selected_row = None
-    if view == 3:
+    if view == 4:
+        room=max(1,height-len(lines)-3)
+        page=history_view.page(history_repository,history_report,max(1,width-1),room) if history_view else []
+        lines += ["HISTORY " + (history_view.position() if history_view else ""),history_status]+page
+    elif view == 3:
         room=max(1,height-len(lines)-2)
         if details_view is not None and detail_row is not None:
             page=details_view.page(detail_row,max(1,width-1),room)
@@ -119,7 +124,7 @@ def compact_lines(rows, selected, plans, plan_index, view, config, height, width
             lines += (tail_reader or tail)(Path(selected_row['log_path']), max(1, height-len(lines)-2))
         else:
             lines += ['No matching jobs' if browser and (browser['query'] or browser['mode']!='all' or browser.get('repository') is not None) else 'No jobs yet']
-    footer = 'PgUp/Dn i/l ? q' if view==3 else 'j/k scroll r back q' if view==12 else 'j/k scroll u back q' if view==11 else 'F R C Tab / f l ? q' if browser and view==0 else 'j/k move v views q'
+    footer = 'j/k PgUp/Dn H back q' if view==4 else 'PgUp/Dn i/l ? q' if view==3 else 'j/k scroll r back q' if view==12 else 'j/k scroll u back q' if view==11 else 'F R C Tab / f l ? q' if browser and view==0 else 'j/k move v views q'
     return lines[:height-1] + [footer]
 
 
@@ -176,6 +181,11 @@ def main(screen, cwd):
     details_view = DetailsView()
     last_sample = 0
     disk_pool = ThreadPoolExecutor(max_workers=1)
+    history_pool = ThreadPoolExecutor(max_workers=1)
+    history_read = HistoryRead(
+        history_pool, lambda repository: inspect_history(store.root, repository)
+    )
+    history_view = HistoryView()
     disk_future = None
     disk_result = None
     plan_rows = []
@@ -239,6 +249,13 @@ def main(screen, cwd):
             if view == 1 and not help_active and process_height>=15 and process_width>=65 and time.monotonic() - last_sample >= 1:
                 processes = sampler.sample()
                 last_sample = time.monotonic()
+            history_repository = rows[selected]['cwd'] if rows else str(cwd)
+            history_visible = (view == 4 and not help_active
+                               and process_height >= 8 and process_width >= 20)
+            history_report = history_read.get(
+                history_repository if history_visible else None, time.monotonic()
+            )
+            history_status = history_read.status(time.monotonic())
             config = store.config()
             if queue_health_result is None or time.monotonic()-last_queue_health >= 2:
                 from .queue_health import report as queue_report
@@ -312,7 +329,7 @@ def main(screen, cwd):
                 paint(screen,height-1,0,'/ find  n/N match  End live  l jobs  ? help  q quit')
             elif compact:
                 browser=dict(mode=browser_mode,query=browser_query,loaded=len(loaded_rows),order=browser_order,expanded=jobs_expanded,repository=browser_repository,follow=follow_head)
-                for index, line in enumerate(compact_lines(rows, selected, plan_rows, plan_index, view, config, height, width, watch_rows, watch_index, health_result, health_offset,workbench_result,workbench_offset,queue_health_result,browser,read_tail,details_view,detail_row,detail_read.error)):
+                for index, line in enumerate(compact_lines(rows, selected, plan_rows, plan_index, view, config, height, width, watch_rows, watch_index, health_result, health_offset,workbench_result,workbench_offset,queue_health_result,browser,read_tail,details_view,detail_row,detail_read.error,history_view,history_repository,history_report,history_status)):
                     paint(screen, index, 0, line)
             else:
                 context = ' | Herdr ' + os.environ.get('HERDR_PANE_ID', '') if os.environ.get('HERDR_ENV') == '1' else ''
@@ -394,12 +411,11 @@ def main(screen, cwd):
                     paint(screen,log_top-1,0,'JOB DETAILS | i returns to jobs',curses.A_BOLD)
                     paint(screen,log_top,0,'Details unavailable: '+(detail_read.error or 'No job selected'))
                 elif view == 4:
-                    from .telemetry import statistics
-                    report = statistics(store, rows[selected]['cwd'] if rows else cwd)
-                    paint(screen, log_top - 1, 0, 'HISTORY | selected repository | memory suggestions never apply automatically', curses.A_BOLD)
-                    for index, entry in enumerate(report['groups'][:max(1, height - log_top - 3)]):
-                        paint(screen, log_top + index, 0, '{} jobs | p95 wait {:.1f}s | runtime {:.1f}s | {}'.format(
-                            entry['jobs'], entry['wait_p95_seconds'], entry['average_runtime_seconds'], entry['command_display']))
+                    page=history_view.page(history_repository,history_report,max(1,width-1),max(1,height-log_top-4))
+                    paint(screen,log_top-1,0,'HISTORY | read only | '+history_view.position(),curses.A_BOLD)
+                    paint(screen,log_top,0,history_status)
+                    for index,line in enumerate(page):
+                        paint(screen,log_top+1+index,0,line)
                 elif view == 5:
                     from .remote import dispatches
                     from .profiles import load
@@ -511,7 +527,9 @@ def main(screen, cwd):
                         paint(screen, log_top + offset + index, 0, line)
                 paint(screen, height - 2, 0, message)
                 paint(screen, height - 1, 0, 'F follow  R repo  C clear  Tab table  / find  f filter  l log  ? q' if view==0 else 'PgUp/Dn Home/End  j/k job  i jobs  l logs  ? help  q quit' if view==3 else '? help  / search  f filter  s sort  l logs  i details  v views  q quit' if view!=7 else 'o plan  c cancel plan  r resume  e export  PgUp/PgDn scroll  v views  q quit')
-                if view==10:
+                if view==4:
+                    paint(screen,height-1,0,'j/k scroll  PgUp/PgDn page  Home/End  H jobs  v views  ? help  q quit')
+                elif view==10:
                     paint(screen,height-1,0,'c stop observation  r resume controller  e export  Enter probe log  v views  q quit')
                 elif view==11:
                     paint(screen,height-1,0,'j/k scroll  PgUp/PgDn page  u jobs  v views  q quit | read only')
@@ -549,6 +567,19 @@ def main(screen, cwd):
                 if follow_head and key not in (-1,curses.KEY_RESIZE,9):
                     follow_head=False
                     message='Selection pinned; F follows the first matching row.'
+            if key==ord('H') and height>=8 and width>=20:
+                view=0 if view==4 else 4
+                continue
+            if view==4:
+                if key in (ord('j'),curses.KEY_DOWN,ord('k'),curses.KEY_UP,curses.KEY_NPAGE,curses.KEY_PPAGE):
+                    history_view.scroll(1 if key in (ord('j'),curses.KEY_DOWN,curses.KEY_NPAGE) else -1,key in (curses.KEY_NPAGE,curses.KEY_PPAGE))
+                elif key==curses.KEY_HOME:
+                    history_view.home()
+                elif key==curses.KEY_END:
+                    history_view.end()
+                elif key==ord('v'):
+                    view=0 if compact else 5
+                continue
             if view==13:
                 if key in (ord('l'),ord('v')):
                     view=0
@@ -967,6 +998,7 @@ def main(screen, cwd):
                 except (ValueError, OSError) as error:
                     message = str(error)
     finally:
+        history_pool.shutdown(wait=False)
         disk_pool.shutdown(wait=False)
         store.close()
 

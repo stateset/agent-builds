@@ -33,6 +33,7 @@ workbench retain their own inspection behavior.
 | Enter or `i` | Toggle the selected job’s details in full or narrow panes |
 | `g` | Jump to the selected job's recorded blocker |
 | `l` | Focus the selected job’s log; `l` returns to jobs |
+| `H` | Selected-checkout history; `H` returns to jobs |
 | `u` | Queue health |
 | `r` | Selected-job workbench |
 | `v` | Cycle views |
@@ -92,6 +93,26 @@ help, full-view controls include `p` for shared new-start pause, `n` for a new
 job and `c` for cancellation with a typed confirmation. Budgets, plan submission,
 saved tasks and explicitly selected idle-recipient announcements remain available
 through their existing deliberate flows. Read help before taking a shared action.
+
+## Command history
+
+`H` opens history for the selected job's checkout (or the dashboard checkout if
+no job matches). It inspects the latest 1,000 matching jobs and groups completed
+jobs by command and reservations, showing p95 queue wait and average runtime.
+The complete checkout path wraps with the results. Global reservations remain
+visible; suggestions never change configuration automatically.
+
+History supports narrow panes: j/k or arrows scroll lines, PgUp/PgDn page,
+Home/End select the beginning/end, and `H` returns to the pinned job. Help and
+quit remain available while loading. Shared action keys are ignored in history.
+
+Reads run on a separate read-only connection, with at most one in flight and a
+three-second refresh interval after completion. Hidden history and help do not
+start refreshes. Changing checkouts discards the previous checkout's result.
+Failed refreshes label retained results as stale; an initial failure displays
+an error. Formatting and wrapping are cached between observations. Oversized
+history text is capped at 64 Ki characters with an explicit clipping label;
+`buildr stats --cwd PATH` provides the full result.
 
 ## Input prompts
 

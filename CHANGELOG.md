@@ -2,6 +2,15 @@
 
 ## 0.26.1 (unreleased)
 
+- Read dashboard history asynchronously on a read-only connection, refreshing
+  only while visible. Add `H`, wrapped checkout/command text, narrow-pane
+  line/page/Home/End navigation, cached formatting, and visible loading/stale
+  errors. Keep shared action keys inactive in history.
+
+- Build only the selected `run` command's argument definitions on common CLI
+  launches; retain the same schema, help, validation and root command choices.
+  Defer runner imports until arguments have been parsed.
+
 - Add paired before/after runner studies using one frozen package/test workload,
   a pinned pre-telemetry runner and common controller instrumentation. Preserve
   native results, setup cost, CPU/RSS observations and interrupted evidence;

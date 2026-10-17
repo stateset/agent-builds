@@ -10,9 +10,6 @@ import subprocess
 import time
 
 from . import __version__
-from .metrics import ProcessSampler, snapshot
-from .runner import cancel_job, execute
-from .store import DEFAULTS, Store
 
 
 def preflight_options(command, batch=False):
@@ -35,6 +32,7 @@ def preflight_options(command, batch=False):
 
 
 def preflight_command(args):
+    from .store import Store
     from .preflight import report, lines
     fields=('cwd','lane','backend','jobs','memory_gb','timeout','image','resource_key','locks',
             'min_free_gb','scratch_gb','compare_jobs','compare_memory_gb')
@@ -60,10 +58,13 @@ def preflight_command(args):
     return 0
 
 
-def parser():
+def parser(run_only=False):
     root = argparse.ArgumentParser(description='Buildr: shared build queue and TUI for Ghostty and Herdr')
     root.add_argument('--version', action='version', version=__version__)
     sub = root.add_subparsers(dest='action')
+    if run_only:
+        from .cli_parsing import SelectedParsers
+        sub = SelectedParsers(sub, 'run')
     tui = sub.add_parser('tui', help='Open the terminal dashboard (default)')
     tui.add_argument('--cwd', default=os.getcwd())
     workbench=sub.add_parser('workbench',help='Inspect bottlenecks, CPU/RAM comparisons and reviewed trials for one job')
@@ -392,7 +393,10 @@ def main():
         args = parser().parse_args(arguments[:boundary])
         args.command = arguments[boundary + 1:]
     else:
-        args = parser().parse_args(arguments)
+        args = parser(run_only=arguments[:1] == ['run']).parse_args(arguments)
+    from .metrics import ProcessSampler, snapshot
+    from .runner import cancel_job, execute
+    from .store import DEFAULTS, Store
     try:
         if args.action=='workbench':
             from .workbench import report,lines
@@ -425,7 +429,7 @@ def main():
                 raise ValueError('Batch manifest exceeds 32 KiB')
             definition=batch.validate(json.loads(raw))
             batch.worker_slots(definition, args.jobs)
-            run_args=parser().parse_args(['run','--','placeholder'])
+            run_args=parser(run_only=True).parse_args(['run','--','placeholder'])
             for key in ('cwd','jobs','memory_gb','timeout','resource_key','locks','input_files','detach','events_json'):
                 setattr(run_args,key,getattr(args,key))
             run_args.lane='quick'
@@ -437,7 +441,7 @@ def main():
             control(args.watch)
             return 0
         if args.action == 'watch-probe-worker':
-            return execute(parser().parse_args(['run', '--', 'true']), external_probe=(args.job, args.token))
+            return execute(parser(run_only=True).parse_args(['run', '--', 'true']), external_probe=(args.job, args.token))
         if args.action == 'watch':
             from . import external
             if args.watch_action=='start':
@@ -529,7 +533,7 @@ def main():
             print(json.dumps(dict(result, output=args.output, note=optimize.NOTE), indent=2))
             return 2 if result['status'] == 'model_rejected' else 0
         if args.action == 'stage-worker':
-            return execute(parser().parse_args(['run', '--', 'true']), prepared=(args.job, args.token))
+            return execute(parser(run_only=True).parse_args(['run', '--', 'true']), prepared=(args.job, args.token))
         if args.action == 'plan-worker':
             from .plans import control
             control(args.plan)
