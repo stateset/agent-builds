@@ -124,7 +124,7 @@ def compact_lines(rows, selected, plans, plan_index, view, config, height, width
             lines += (tail_reader or tail)(Path(selected_row['log_path']), max(1, height-len(lines)-2))
         else:
             lines += ['No matching jobs' if browser and (browser['query'] or browser['mode']!='all' or browser.get('repository') is not None) else 'No jobs yet']
-    footer = 'j/k PgUp/Dn H back q' if view==4 else 'PgUp/Dn i/l ? q' if view==3 else 'j/k scroll r back q' if view==12 else 'j/k scroll u back q' if view==11 else 'F R C Tab / f l ? q' if browser and view==0 else 'j/k move v views q'
+    footer = 'j/k PgUp/Dn H q' if view==4 else 'PgUp/Dn i/l ? q' if view==3 else 'j/k scroll r back q' if view==12 else 'j/k scroll u back q' if view==11 else 'F R C Tab / f l ? q' if browser and view==0 else 'j/k move v views q'
     return lines[:height-1] + [footer]
 
 

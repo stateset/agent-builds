@@ -105,7 +105,7 @@ class HistoryView:
             ),
             "Memory suggestions never apply automatically.",
         ]
-        remaining = MAX_CHARS
+        remaining = max(0, MAX_CHARS - sum(len(line) + 1 for line in lines))
         for entry in report["groups"]:
             line = "{} jobs | p95 wait {:.1f}s | runtime {:.1f}s | {}".format(
                 entry["jobs"],
