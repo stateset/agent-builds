@@ -118,7 +118,8 @@ class TuiBrowserTests(unittest.TestCase):
         ), mock.patch(
             "agent_builds.tui.cancel_job", side_effect=AssertionError("job cancelled")
         ), mock.patch(
-            "agent_builds.tui.spawn", side_effect=AssertionError("job launched")
+            "agent_builds.tui.SubmissionTracker.start",
+            side_effect=AssertionError("job launched"),
         ), mock.patch(
             "agent_builds.tui.prompt", return_value=query, side_effect=answers
         ) as prompt:

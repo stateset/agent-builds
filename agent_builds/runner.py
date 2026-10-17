@@ -141,15 +141,47 @@ def detach(args):
     return 0
 
 
+def validate_receipt(store, filename):
+    """Validate a new queue-private receipt before submitting any work."""
+    receipt = Path(filename).expanduser()
+    if (receipt.parent != store.root or not receipt.name.startswith('receipt-')
+            or receipt.exists() or receipt.is_symlink()):
+        raise ValueError('Receipt must be a new private queue path')
+    return receipt
+
+
+def publish_receipt(store, filename, value):
+    """Publish complete private JSON without replacing an existing receipt."""
+    receipt = validate_receipt(store, filename)
+    temporary = store.root / ('receipt-publish-' + uuid.uuid4().hex + '.tmp')
+    descriptor = os.open(str(temporary), os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    try:
+        with os.fdopen(descriptor, 'w', closefd=False) as output:
+            json.dump(value, output)
+            output.flush()
+            os.fsync(descriptor)
+        # Linking a complete file is atomic and refuses an intervening file or
+        # symlink. A receipt is an immutable submission handle, never a replace.
+        os.link(str(temporary), str(receipt))
+    finally:
+        os.close(descriptor)
+        temporary.unlink()
+
+
 def submit_detached(args, receipt=None, retain_receipt=False):
     """Submit one detached runner and return its receipt without printing."""
     if os.environ.get('AGENT_BUILDS_JOB_ID'):
         raise ValueError('Already inside a queued job; nested submissions are not allowed')
     store = Store()
-    receipt = Path(receipt) if receipt is not None else store.root / ('receipt-' + uuid.uuid4().hex + '.json')
-    if receipt.parent != store.root or not receipt.name.startswith('receipt-') or receipt.exists() or receipt.is_symlink():
+    explicit_receipt = getattr(args, 'receipt_file', None)
+    receipt = receipt if receipt is not None else explicit_receipt
+    receipt = receipt if receipt is not None else store.root / ('receipt-' + uuid.uuid4().hex + '.json')
+    try:
+        receipt = validate_receipt(store, receipt)
+    except BaseException:
         store.close()
-        raise ValueError('Detached receipt must be a new private queue path')
+        raise
+    retain_receipt = retain_receipt or bool(explicit_receipt)
     transcript = store.root / 'logs' / (receipt.stem + '.log')
     env = os.environ.copy()
     root = str(Path(__file__).resolve().parent.parent)
@@ -217,6 +249,11 @@ def execute(args, prepared=None, external_probe=None):
     if args.detach:
         return detach(args)
     store = Store()
+    try:
+        receipt = validate_receipt(store, args.receipt_file) if args.receipt_file else None
+    except BaseException:
+        store.close()
+        raise
     job = None
     if prepared is not None:
         from .plans import attach_job
@@ -244,16 +281,12 @@ def execute(args, prepared=None, external_probe=None):
         job = store.submit(cwd, command, args.backend, args.lane, slots, memory,
                            args.resource_key or resource_key(cwd), image, timeout,
                            min_free_gb=args.min_free_gb, scratch_gb=args.scratch_gb, locks=getattr(args, 'locks', []), source=source)
-    if args.receipt_file:
-        receipt = Path(args.receipt_file)
-        if receipt.parent != store.root or not receipt.name.startswith('receipt-'):
-            store.finish(job, 'failed', 2, 'invalid receipt path')
+    if receipt is not None:
+        try:
+            publish_receipt(store, receipt, dict(job_id=job, log_path=str(store.log_path(job)), cwd=str(cwd)))
+        except BaseException:
             store.close()
-            raise ValueError('Receipt must be in the private queue directory')
-        temporary = receipt.with_suffix('.tmp')
-        temporary.write_text(json.dumps(dict(job_id=job, log_path=str(store.log_path(job)), cwd=str(cwd))))
-        os.chmod(str(temporary), 0o600)
-        temporary.replace(receipt)
+            raise
     from .output import OutputRelay
     output = OutputRelay()
     def event(state, text, **extra):

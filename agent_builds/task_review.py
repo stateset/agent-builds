@@ -201,10 +201,14 @@ def promote(store,filename,plan_id):
 
 
 def run_saved(store,args):
+    from .runner import publish_receipt, validate_receipt
+    receipt=validate_receipt(store,args.receipt_file) if getattr(args,'receipt_file',None) else None
     task=vars(args)
     manifest=plans.validate(dict(name='Reviewed task',source_policy='require_unchanged',input_files=task['input_files'],
         stages=[dict({key:task[key] for key in FIELDS if key!='input_files'},name='task')]),task['cwd'],store.config())
     handle=plans.create(store,manifest,expected_source=task['review']['source'])
+    if receipt is not None:
+        publish_receipt(store,receipt,dict(plan_id=handle,cwd=manifest['cwd'],state='created',reviewed_task=True))
     print(json.dumps(dict(plan_id=handle,state='created',reviewed_task=True)),flush=True)
     child=plans.spawn(store,handle)
     if task['detach']:

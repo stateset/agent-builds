@@ -215,6 +215,7 @@ def parser(run_only=False):
     task_run.add_argument('--cwd', default=os.getcwd())
     task_run.add_argument('--detach', action='store_true')
     task_run.add_argument('--events-json', action='store_true')
+    task_run.add_argument('--receipt-file', help=argparse.SUPPRESS)
     workers = sub.add_parser('worker', help='Explicit dedicated build worker profiles; never connects automatically')
     worker_sub = workers.add_subparsers(dest='worker_action', required=True)
     worker_sub.add_parser('list')

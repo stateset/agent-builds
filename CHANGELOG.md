@@ -2,6 +2,13 @@
 
 ## 0.26.1 (unreleased)
 
+- Confirm new-job and saved-task submissions from private receipts and read-only
+  queue evidence instead of reporting success immediately after launch. Keep
+  pending and uncertain attempts visible, retain diagnostics in a scrollable `U`
+  submissions view, and never retry or cancel work when confirmation is missing.
+  Preserve explicit detached receipts; publish reviewed-task plan handles before
+  controller startup so a startup error does not hide the created plan.
+
 - Move focused and inline log metadata/content reads into one bounded background
   channel. Keep navigation, resize, help and exit responsive during slow reads;
   discard results across selection, visibility and hold/search changes. Preserve

@@ -9,8 +9,8 @@ from agent_builds.tui_views import VIEWS, ViewPicker, choose, unavailable, foote
 
 class ViewPickerModelTests(unittest.TestCase):
     def test_catalog_covers_every_existing_view_once(self):
-        self.assertEqual([view.number for view in VIEWS], list(range(15)))
-        self.assertEqual(len({view.name for view in VIEWS}), 15)
+        self.assertEqual([view.number for view in VIEWS], list(range(16)))
+        self.assertEqual(len({view.name for view in VIEWS}), 16)
 
     def test_literal_token_search_matches_names_and_descriptions_without_actions(self):
         picker = ViewPicker(0)
@@ -22,7 +22,7 @@ class ViewPickerModelTests(unittest.TestCase):
         picker.move(100)
         self.assertEqual(picker.page(3), [])
         picker.search("")
-        self.assertEqual(len(picker.matches), 15)
+        self.assertEqual(len(picker.matches), 16)
         picker.search("x" * 300)
         self.assertEqual(len(picker.query), 256)
 
@@ -168,9 +168,9 @@ class ViewPickerTerminalTests(unittest.TestCase):
             ],
             (8, 20),
         )
-        self.assertEqual(result, 14)
-        self.assertIn("15/15", frames[-1][2])
-        self.assertIn("Why waiting?", " ".join(frames[-1].values()))
+        self.assertEqual(result, 15)
+        self.assertIn("16/16", frames[-1][2])
+        self.assertIn("Submissions", " ".join(frames[-1].values()))
 
     def test_idle_resize_and_permanent_terminal_errors_are_distinct(self):
         result, unused = self.picker([curses.error("no input"), "\x1b"])

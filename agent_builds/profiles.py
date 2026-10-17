@@ -92,7 +92,8 @@ def task_args(store, args):
     values = dict(task)
     values.pop('name', None)
     values.setdefault('resource_key', None)
-    values.update(detach=args.detach, events_json=args.events_json, notify=False, receipt_file=None)
+    values.update(detach=args.detach, events_json=args.events_json, notify=False,
+                  receipt_file=getattr(args, 'receipt_file', None))
     return Namespace(**values)
 
 
