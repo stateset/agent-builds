@@ -238,11 +238,11 @@ _MEDIUM_FOOTERS = {
     13: "V views / find n/N match End live l jobs ? q",
 }
 _COMPACT_FOOTERS = {
-    0: "V / f l ? q",
+    0: "V j/k / f l ? q",
     3: "V PgUp/Dn i/l ? q",
     4: "V j/k Pg H q",
     7: "V j/k v ? q",
-    10: "V j/k v ? q",
+    10: "V views j/k v q",
     11: "V j/k u ? q",
     12: "V j/k r ? q",
     13: "V / n End l ? q",

@@ -51,6 +51,8 @@ class ViewPickerModelTests(unittest.TestCase):
                         self.assertLessEqual(len(text), width - 1)
                         self.assertIn("V", text)
                         self.assertIn("q", text)
+        self.assertIn("j/k", footer(0, 20, compact=True))
+        self.assertIn("V views", footer(10, 20, compact=True))
         self.assertNotIn("cancel", footer(7, 100, compact=True))
         self.assertNotIn("trial", footer(12, 100, compact=True))
         self.assertIn("cancel", footer(7, 65))

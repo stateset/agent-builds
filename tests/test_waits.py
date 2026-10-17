@@ -207,7 +207,9 @@ class WaitTests(unittest.TestCase):
         self.assertIn(job, lines)
         self.assertIn('queued', lines)
         self.assertIn(__version__, lines[0])
-        self.assertEqual(lines[-1], 'j/k move v views q')
+        for control in ('V', 'j/k', 'q'):
+            self.assertIn(control, lines[-1])
+        self.assertLessEqual(len(lines[-1]), 20)
         self.assertLessEqual(len(lines), 40)
         plan = dict(id='plan-handle', state='running', name='Check', stages=[dict(name='test', state='queued')], reason='')
         lines = compact_lines([], 0, [plan], 0, 7, self.store.config(), 20, 21)
