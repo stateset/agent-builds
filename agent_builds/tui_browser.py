@@ -175,6 +175,11 @@ def label(
 
 
 HELP = (
+    "FIND A VIEW",
+    "V: searchable view picker in full/narrow panes; type to filter names and descriptions",
+    "In picker: arrows/Tab or PgUp/PgDn select; Home/End first/last; Enter opens; Esc returns",
+    "Backspace edits the query; Ctrl+U clears. ! marks a size/job requirement; * is current.",
+    "Picker consumes action keys as search text. Cancelling preserves following and inspection.",
     "BROWSE JOBS",
     "j/k or arrows: select a job",
     "F: follow the first matching displayed job as snapshots refresh; F again pins it",

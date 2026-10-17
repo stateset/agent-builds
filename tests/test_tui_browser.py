@@ -91,6 +91,71 @@ class TuiBrowserTests(unittest.TestCase):
             self.prompt_calls = prompt.call_args_list
         return frames
 
+    def test_full_only_views_show_resize_guidance_and_suspend_hidden_work(self):
+        for number, title in (
+            (1, "PROCESSES"),
+            (2, "ANNOUNCEMENTS"),
+            (5, "REMOTE WORKERS"),
+            (6, "DISK INVENTORY"),
+            (8, "ADVISOR"),
+            (9, "GROUPS"),
+        ):
+
+            def accept(screen, *args, **kwargs):
+                screen.getmaxyx.return_value = (8, 20)
+                return number
+
+            with self.subTest(view=number), mock.patch(
+                "agent_builds.tui.choose_view", side_effect=accept
+            ), mock.patch(
+                "agent_builds.groups.listing",
+                side_effect=AssertionError("hidden group read"),
+            ):
+                frames = self.dashboard([ord("V"), ord("j"), ord("v"), ord("q")])
+                text = " ".join(frames[-2].values())
+                self.assertIn(title, text)
+                self.assertIn("Resize to 65x15", text)
+                self.assertIn("V", frames[-2][7])
+                self.assertIn("q", frames[-2][7])
+                self.assertIn(self.jobs[0], " ".join(frames[-1].values()))
+                self.assertEqual(self.process_samples, 0)
+                self.assertEqual(self.prompt_calls, [])
+
+    def test_view_picker_cancel_preserves_follow_and_accepting_inspection_pins(self):
+        with mock.patch("agent_builds.tui.choose_view", return_value=None) as choose:
+            frames = self.dashboard([ord("F"), ord("V"), ord("q")])
+        self.assertIn("JOBS FOLLOW", " ".join(frames[-1].values()))
+        self.assertEqual(choose.call_args.args[1:3], (0, True))
+        with mock.patch("agent_builds.tui.choose_view", return_value=3):
+            frames = self.dashboard([ord("F"), ord("V"), ord("i"), ord("q")])
+        self.assertIn("JOB DETAILS", " ".join(frames[2].values()))
+        self.assertNotIn("JOBS FOLLOW", " ".join(frames[-1].values()))
+        self.assertIn("Selection pinned", " ".join(frames[-1].values()))
+
+    def test_view_picker_can_open_logs_and_cancel_without_losing_hold_or_selection(
+        self,
+    ):
+        self.store.log_path(self.jobs[0]).write_text("fixture log line\n")
+        with mock.patch(
+            "agent_builds.tui.choose_view", side_effect=[13, None]
+        ) as choose:
+            frames = self.dashboard([ord("V"), ord(" "), ord("V"), ord("q")])
+        self.assertIn("LOG HELD", " ".join(frames[-1].values()))
+        self.assertIn(self.jobs[0], " ".join(frames[-1].values()))
+        self.assertEqual(choose.call_args.args[1], 13)
+        self.assertTrue(choose.call_args.kwargs["has_log"])
+        self.assertEqual(self.prompt_calls, [])
+
+    def test_view_picker_narrow_acceptance_and_help_consumption(self):
+        with mock.patch("agent_builds.tui.choose_view", return_value=3) as choose:
+            frames = self.dashboard(
+                [ord("V"), ord("i"), ord("?"), ord("V"), ord("q"), ord("q")],
+                dimensions=(8, 20),
+            )
+        self.assertEqual(choose.call_count, 1)
+        self.assertIn("DETAILS", " ".join(frames[1].values()))
+        self.assertIn("HELP", " ".join(frames[4].values()))
+
     def test_history_pending_read_keeps_navigation_and_quit_responsive(self):
         from concurrent.futures import Future
 

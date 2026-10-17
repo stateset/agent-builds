@@ -2,6 +2,12 @@
 
 ## 0.26.1 (unreleased)
 
+- Add a searchable `V` view picker with purpose descriptions, current-view and
+  size/job requirements, keyboard paging, and resize-safe acceptance. Preserve
+  following and held log state on cancellation. Selecting a view never dispatches
+  actions; small panes show explicit requirements for full-pane tools. Fit
+  footer hints to pane width so navigation and quit controls stay visible.
+
 - Read dashboard history asynchronously on a read-only connection, refreshing
   only while visible. Add `H`, wrapped checkout/command text, narrow-pane
   line/page/Home/End navigation, cached formatting, and visible loading/stale
