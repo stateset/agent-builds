@@ -14,12 +14,14 @@ from . import __version__
 from .runner import cancel_job
 from .store import Store, TERMINAL
 from .tui_browser import MODES, ORDERS, BrowserCache, SelectedJobRead, filter_rows, sort_rows, page_size, columns, job_line, label as browser_label, HELP
-from .tui_logs import LogView, TailCache, strip_escapes
+from .tui_logs import LogView, TailCache, TAIL_RECHECK_SECONDS, strip_escapes
 from .tui_details import DetailsView
 from .tui_history import HistoryRead, HistoryView, inspect_history
 from .tui_prompt import edit as edit_prompt, job_context, recipient_context
 from .tui_views import VIEWS, choose as choose_view, footer as view_footer
 from .tui_reads import SnapshotRead, submit_read
+from .tui_reads import submit_read as submit_log_read
+from .tui_log_reads import LogReads
 from .tui_disk import DiskRead
 from .tui_data import LazyStore, browser as read_browser, selected as read_selected, summary as read_summary, tool as read_tool
 from .tui_inspect import InspectionFocus, inspect_report, HealthView, WorkbenchView, WhyView
@@ -136,7 +138,9 @@ def compact_lines(rows, selected, plans, plan_index, view, config, height, width
                 lines += textwrap.wrap(selected_row['reason'], width-1)
             lines += [Path(selected_row['cwd']).name,
                       'Wait {:.1f}s run {:.1f}s'.format(selected_row['wait_seconds'], selected_row['elapsed_seconds'])]
-            lines += (tail_reader or tail)(Path(selected_row['log_path']), max(1, height-len(lines)-2))
+            room=height-len(lines)-2
+            if room>0:
+                lines += (tail_reader or tail)(Path(selected_row['log_path']),room)
         else:
             lines += ['No matching jobs' if browser and (browser['query'] or browser['mode']!='all' or browser.get('repository') is not None) else 'No jobs yet']
     footer = view_footer(view, width, compact=True)
@@ -196,8 +200,29 @@ def main(screen, cwd):
     summary_read=SnapshotRead(lambda key: read_summary(store.root),interval=2,submit=submit_read,label='queue summary')
     log_view, log_job = LogView(),None
     inline_tail, browser_cache = TailCache(), BrowserCache()
+    log_reads=LogReads(submit=submit_log_read)
+    log_visible=False
+    def refresh_log(mode, job, path, cache, now, force=False):
+        key=(mode,job,str(path))
+        result=log_reads.get(key,cache.signature,force,now)
+        if result is None and log_reads.future is not None and log_reads.future.done():
+            result=log_reads.get(key,cache.signature,force,now)
+        if result is not None:
+            cache.apply(result,now)
     def read_tail(path, lines):
-        return inline_tail.read(path, lines, time.monotonic())
+        nonlocal log_visible
+        if lines<=0:
+            return []
+        log_visible=True
+        inline_tail.select(selected_id,path)
+        now=time.monotonic()
+        refresh_log('inline',selected_id,path,inline_tail,now,now-inline_tail.last_content_read>=TAIL_RECHECK_SECONDS)
+        status=inline_tail.error
+        if status is None and inline_tail.signature is None:
+            status='Loading log; navigation stays available'
+        elif status is None and now-inline_tail.last_poll>1:
+            status='STALE log; refreshing'
+        return ([status]+inline_tail.page(lines-1)) if status else inline_tail.page(lines)
     detail_read=SnapshotRead(lambda handle: read_selected(store.root,('details',handle)),interval=1,submit=submit_read,label='job details')
     context_read=SnapshotRead(lambda handle: read_selected(store.root,('context',handle)),interval=1,submit=submit_read,label='wait details')
     children = []
@@ -317,6 +342,7 @@ def main(screen, cwd):
             screen.erase()
             height, width = screen.getmaxyx()
             compact = height < 15 or width < 65
+            log_visible=False
             if help_active:
                 pass  # Only the help overlay below is visible.
             elif browser_report is None:
@@ -328,12 +354,19 @@ def main(screen, cwd):
             elif view == 13:
                 if log_job:
                     log_job=next((row for row in loaded_rows if row['id']==log_job['id']),log_job)
-                log_view.poll(time.monotonic())
+                if log_view.follow and log_job and height>=8 and width>=20:
+                    log_visible=True
+                    refresh_log('focused',log_job['id'],log_view.path,log_view,time.monotonic())
                 log_page=log_view.page(max(1,width-1),max(1,height-4))
                 mode='LIVE' if log_view.follow else 'HELD (output only)'
                 paint(screen,0,0,'LOG '+mode+' | '+log_view.position(max(1,height-4)),curses.A_BOLD | curses.color_pair(1 if log_view.follow else 3))
                 paint(screen,1,0,log_job['id']+' '+log_job['state'] if log_job else 'No job selected')
                 note=log_view.error or (log_view.search_label() if log_view.query else 'Space hold/resume | / find | End live')
+                if log_view.follow and log_view.error is None:
+                    if log_view.signature is None:
+                        note='Loading log; navigation stays available'
+                    elif log_view.observed is not None and time.monotonic()-log_view.observed>1:
+                        note='STALE log; refreshing | '+note
                 if log_view.clipped:
                     note='Recent 256 KiB only | '+note
                 paint(screen,2,0,note)
@@ -556,6 +589,8 @@ def main(screen, cwd):
                 for index,line in enumerate(content[help_offset:help_offset+room]):
                     paint(screen,index+1,0,line)
                 paint(screen,height-1,0,'Esc/?/q back | j/k scroll')
+            if not log_visible:
+                log_reads.get(None,None,False,time.monotonic())
             screen.refresh()
             key = screen.getch()
             if help_active:
@@ -653,18 +688,24 @@ def main(screen, cwd):
                 if key in (ord('l'),ord('v')):
                     view=0
                 elif key==ord(' '):
+                    log_reads.invalidate()
                     log_view.toggle()
                 elif key==ord('/') and height>=8 and width>=20:
+                    log_reads.invalidate()
                     query=prompt(screen,'Find in loaded log (blank clears)',log_view.query)
                     if query is not None:
                         log_view.search(query,max(1,width-1),max(1,height-4))
                 elif key in (ord('n'),ord('N')):
+                    log_reads.invalidate()
                     log_view.next_match(1 if key==ord('n') else -1,max(1,width-1),max(1,height-4))
                 elif key==curses.KEY_HOME:
+                    log_reads.invalidate()
                     log_view.home()
                 elif key==curses.KEY_END:
+                    log_reads.invalidate()
                     log_view.end()
                 elif key in (ord('j'),curses.KEY_DOWN,ord('k'),curses.KEY_UP,curses.KEY_NPAGE,curses.KEY_PPAGE):
+                    log_reads.invalidate()
                     amount=max(1,height-4) if key in (curses.KEY_NPAGE,curses.KEY_PPAGE) else 1
                     direction=1 if key in (ord('j'),curses.KEY_DOWN,curses.KEY_NPAGE) else -1
                     log_view.scroll(direction*amount,max(1,width-1),max(1,height-4))

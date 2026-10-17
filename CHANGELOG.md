@@ -2,6 +2,13 @@
 
 ## 0.26.1 (unreleased)
 
+- Move focused and inline log metadata/content reads into one bounded background
+  channel. Keep navigation, resize, help and exit responsive during slow reads;
+  discard results across selection, visibility and hold/search changes. Preserve
+  cached output, literal search, rotation/truncation handling and the 64/256 KiB
+  limits. Show loading/read errors and stale refreshes; skip inline reads when no
+  output rows fit in the pane.
+
 - Read jobs/settings, host metrics and global queue summaries independently in
   background workers; move selected evidence and remaining periodic tool reads
   off the keyboard loop. Paint during initial load, retain labelled stale

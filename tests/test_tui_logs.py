@@ -361,6 +361,7 @@ class TuiLogTests(unittest.TestCase):
                 wait_for(b"LOG LIVE")
                 resize(20, 100)
                 wait_for(b"l jobs  ? help  q quit")
+                wait_for(b"LAST needle")
                 os.write(master, b"/")
                 wait_for(b"Find in loaded log")
                 os.write(master, b"needle\n")

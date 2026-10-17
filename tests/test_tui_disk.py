@@ -52,7 +52,7 @@ LEADER = textwrap.dedent("""\
 def live_identity(record):
     try:
         raw = Path("/proc/{}/stat".format(record["pid"])).read_text()
-    except FileNotFoundError:
+    except (FileNotFoundError, ProcessLookupError):
         return False
     fields = raw[raw.rfind(")") + 2 :].split()
     return fields[19] == record["start"] and fields[0] not in ("Z", "X")
