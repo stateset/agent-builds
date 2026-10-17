@@ -238,6 +238,7 @@ class TuiLogTests(unittest.TestCase):
         import termios
         import time
         from agent_builds.store import Store
+        from tui_terminal import TerminalScreen
 
         root = Path(self.temp.name)
         store = Store(root / "state")
@@ -257,6 +258,15 @@ class TuiLogTests(unittest.TestCase):
             child = None
             selector = selectors.DefaultSelector()
             selector.register(master, selectors.EVENT_READ)
+            terminal = TerminalScreen(20, 100)
+
+            def resize(height, width):
+                terminal.resize(height, width)
+                fcntl.ioctl(
+                    master, termios.TIOCSWINSZ, struct.pack("HHHH", height, width, 0, 0)
+                )
+                os.kill(child.pid, signal.SIGWINCH)
+
             try:
                 child = subprocess.Popen(
                     [sys.executable, "-m", "agent_builds", "tui", "--cwd", str(root)],
@@ -274,8 +284,10 @@ class TuiLogTests(unittest.TestCase):
                     deadline = time.monotonic() + 10
                     while time.monotonic() < deadline:
                         for unused, events in selector.select(0.1):
-                            output += os.read(master, 65536)
-                        if needle in output:
+                            chunk = os.read(master, 65536)
+                            output += chunk
+                            terminal.feed(chunk)
+                        if needle.decode("utf-8") in terminal.text():
                             return
                         if child.poll() is not None:
                             break
@@ -283,7 +295,9 @@ class TuiLogTests(unittest.TestCase):
                         "Missing terminal output: "
                         + repr(needle)
                         + " in "
-                        + repr(output[-4000:])
+                        + repr(terminal.text())
+                        + " raw="
+                        + repr(output[-2000:])
                     )
 
                 wait_for(b"BUILDR")
@@ -315,10 +329,7 @@ class TuiLogTests(unittest.TestCase):
                 wait_for(b"Browsing filters cleared")
                 os.write(master, b"i")
                 wait_for(b"JOB DETAILS |")
-                fcntl.ioctl(
-                    master, termios.TIOCSWINSZ, struct.pack("HHHH", 8, 40, 0, 0)
-                )
-                os.kill(child.pid, signal.SIGWINCH)
+                resize(8, 40)
                 wait_for(b"DETAILS 1-")
                 os.write(master, b"w")
                 wait_for(b"WHY " + job.encode())
@@ -332,38 +343,23 @@ class TuiLogTests(unittest.TestCase):
                 wait_for(b"DETAILS 1-")
                 os.write(master, b"i")
                 wait_for(b"JOBS")
-                fcntl.ioctl(
-                    master, termios.TIOCSWINSZ, struct.pack("HHHH", 20, 100, 0, 0)
-                )
-                os.kill(child.pid, signal.SIGWINCH)
+                resize(20, 100)
                 os.write(master, b"H")
                 wait_for(b"No completed jobs")
-                fcntl.ioctl(
-                    master, termios.TIOCSWINSZ, struct.pack("HHHH", 8, 40, 0, 0)
-                )
-                os.kill(child.pid, signal.SIGWINCH)
+                resize(8, 40)
                 wait_for(b"HISTORY")
                 os.write(master, b"H")
                 wait_for(b"JOBS")
-                fcntl.ioctl(
-                    master, termios.TIOCSWINSZ, struct.pack("HHHH", 20, 100, 0, 0)
-                )
-                os.kill(child.pid, signal.SIGWINCH)
+                resize(20, 100)
                 os.write(master, b"l")
                 wait_for(b"LOG LIVE")
                 os.write(master, b"/")
                 wait_for(b"Find in loaded log")
-                fcntl.ioctl(
-                    master, termios.TIOCSWINSZ, struct.pack("HHHH", 8, 18, 0, 0)
-                )
-                os.kill(child.pid, signal.SIGWINCH)
+                resize(8, 18)
                 wait_for(b"Resize to edit")
                 os.write(master, b"\x1b")
                 wait_for(b"LOG LIVE")
-                fcntl.ioctl(
-                    master, termios.TIOCSWINSZ, struct.pack("HHHH", 20, 100, 0, 0)
-                )
-                os.kill(child.pid, signal.SIGWINCH)
+                resize(20, 100)
                 wait_for(b"l jobs  ? help  q quit")
                 os.write(master, b"/")
                 wait_for(b"Find in loaded log")

@@ -1,6 +1,7 @@
 """Dashboard browsing is local to the view and preserves shared reservations."""
 
 import copy
+from concurrent.futures import Future
 import curses
 import os
 import json
@@ -46,7 +47,17 @@ class TuiBrowserTests(unittest.TestCase):
         self.store.close()
         self.temp.cleanup()
 
-    def dashboard(self, keys, dimensions=(20, 100), query="", clock=None, answers=None):
+    def dashboard(
+        self,
+        keys,
+        dimensions=(20, 100),
+        query="",
+        clock=None,
+        answers=None,
+        background_submit=None,
+        state_path=None,
+        on_update=None,
+    ):
         screen = mock.Mock()
         screen.getmaxyx.return_value = dimensions
         screen.getch.side_effect = keys
@@ -66,8 +77,19 @@ class TuiBrowserTests(unittest.TestCase):
             memory_pressure=0,
             io_pressure=0,
         )
-        with mock.patch.dict(
-            os.environ, AGENT_BUILDS_STATE=str(self.store.root)
+
+        def completed(loader, key):
+            future = Future()
+            try:
+                future.set_result(loader(key))
+            except Exception as error:
+                future.set_exception(error)
+            return future
+
+        with mock.patch(
+            "agent_builds.tui.submit_read", side_effect=background_submit or completed
+        ), mock.patch.dict(
+            os.environ, AGENT_BUILDS_STATE=str(state_path or self.store.root)
         ), mock.patch(
             "agent_builds.tui.time.monotonic", side_effect=clock or (lambda: 100)
         ), mock.patch("agent_builds.tui.curses.curs_set"), mock.patch(
@@ -77,7 +99,10 @@ class TuiBrowserTests(unittest.TestCase):
         ), mock.patch("agent_builds.tui.ProcessSampler") as sampler, mock.patch.object(
             Store, "recover_if_due", return_value=False
         ), mock.patch.object(
-            Store, "update_config", side_effect=AssertionError("settings changed")
+            Store,
+            "update_config",
+            autospec=True,
+            side_effect=on_update or AssertionError("settings changed"),
         ), mock.patch(
             "agent_builds.tui.cancel_job", side_effect=AssertionError("job cancelled")
         ), mock.patch(
