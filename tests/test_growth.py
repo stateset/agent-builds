@@ -359,7 +359,9 @@ class GrowthTests(unittest.TestCase):
         import selectors
         import struct
         import termios
-        self.seed()
+        from tui_terminal import TerminalScreen
+
+        job=self.seed()
         master,slave=pty.openpty()
         fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',24,100,0,0))
         env=dict(self.env,TERM='xterm-256color')
@@ -369,21 +371,31 @@ class GrowthTests(unittest.TestCase):
         os.close(slave)
         selector=selectors.DefaultSelector()
         selector.register(master,selectors.EVENT_READ)
+        terminal=TerminalScreen(24,100)
         output=b''
         try:
-            sent=False
-            deadline=time.monotonic()+10
-            while time.monotonic()<deadline:
-                for unused,events in selector.select(.1):
-                    output+=os.read(master,65536)
-                if not sent and b'BUILDR' in output:
-                    os.write(master,b'r')
-                    sent=True
-                if b'WORKBENCH' in output and b'Future-run' in output:
-                    break
-            self.assertIn(b'Future-run',output[-200000:])
+            def wait_for(*needles):
+                nonlocal output
+                deadline=time.monotonic()+10
+                while time.monotonic()<deadline:
+                    for unused,events in selector.select(.1):
+                        chunk=os.read(master,65536)
+                        output=(output+chunk)[-200000:]
+                        terminal.feed(chunk)
+                    if all(needle in terminal.text() for needle in needles):
+                        return
+                    if child.poll() is not None:
+                        break
+                self.fail('Missing rendered terminal content: '+repr(needles)+
+                    ' in '+repr(terminal.text())+' raw='+repr(output[-2000:]))
+
+            wait_for('JOBS',job)
+            os.write(master,b'r')
+            wait_for('WORKBENCH','Future-run')
             os.write(master,b'q')
             self.assertEqual(child.wait(timeout=3),0)
+            self.assertEqual([row['id'] for row in self.store.rows()],[job])
+            self.assertEqual(self.store.get(job)['state'],'succeeded')
         finally:
             selector.close()
             os.close(master)

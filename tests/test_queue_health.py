@@ -265,7 +265,7 @@ class QueueHealthTests(unittest.TestCase):
             self.assertEqual(result["queue_health"]["status"], "disk_blocked")
             self.assertFalse(result["queue_health"]["changes_applied"])
 
-    def test_full_dashboard_renders_shortfall_and_uses_opportunistic_recovery(self):
+    def test_full_dashboard_renders_shortfall_without_monitor_recovery(self):
         job = self.job()
         screen = mock.Mock()
         screen.getmaxyx.return_value = (20, 80)
@@ -280,7 +280,19 @@ class QueueHealthTests(unittest.TestCase):
             memory_pressure=0,
             io_pressure=0,
         )
-        with self.free(6.7), mock.patch.dict(
+        from concurrent.futures import Future
+
+        def completed(loader, key):
+            future = Future()
+            try:
+                future.set_result(loader(key))
+            except Exception as error:
+                future.set_exception(error)
+            return future
+
+        with mock.patch(
+            "agent_builds.tui.submit_read", side_effect=completed
+        ), self.free(6.7), mock.patch.dict(
             os.environ, AGENT_BUILDS_STATE=str(self.store.root)
         ), mock.patch("agent_builds.tui.curses.curs_set"), mock.patch(
             "agent_builds.tui.curses.has_colors", return_value=False
@@ -291,7 +303,7 @@ class QueueHealthTests(unittest.TestCase):
         ), mock.patch.object(Store, "recover_if_due", return_value=False) as recovery:
             sampler.return_value.sample.return_value = []
             tui.main(screen, self.root)
-        recovery.assert_called_once()
+        recovery.assert_not_called()
         header = [
             call.args[2] for call in screen.addnstr.call_args_list if call.args[0] == 4
         ]
