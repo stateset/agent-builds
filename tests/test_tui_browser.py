@@ -152,7 +152,10 @@ class TuiBrowserTests(unittest.TestCase):
                 pool.return_value.submit.return_value = future
                 frames = self.dashboard(keys, dimensions=dimensions)
                 self.assertEqual(pool.return_value.submit.call_count, 2)
-                self.assertIn("H q", frames[2][dimensions[0] - 1])
+                self.assertIn(
+                    "H q" if dimensions[1] < 65 else "H jobs",
+                    frames[2][dimensions[0] - 1],
+                )
                 self.assertIn("Checkout:", " ".join(frames[2].values()))
                 self.assertIn("check", " ".join(frames[3].values()))
                 self.assertNotEqual(frames[2], frames[3])
