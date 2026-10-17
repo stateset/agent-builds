@@ -2,6 +2,10 @@
 
 ## 0.26.1 (unreleased)
 
+- Show snapshot age and pending refreshes consistently in process and tool
+  views, with a stale label when a retained snapshot ages beyond two refresh
+  intervals, including supported narrow views.
+
 - Open related plan-stage, group, watch-probe and blocker logs directly through
   a read-only lookup, independent of browser filters and its 200-row window.
   Keep the originating selection while loading, show failures without retrying,

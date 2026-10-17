@@ -103,23 +103,27 @@ def compact_lines(rows, selected, plans, plan_index, view, config, height, width
         lines += [title,inspection['status']]+page
     elif view == 10:
         watches=watches or []
-        lines+=['EXTERNAL | {} shown'.format(len(watches))]
-        if browser and browser.get('tool_status'):
-            lines+=textwrap.wrap(browser['tool_status'],max(1,width-1))[:max(1,height-len(lines)-2)]
+        lines+=[browser.get('tool_heading') if browser and browser.get('tool_heading') else 'EXTERNAL | {} shown'.format(len(watches))]
         if watches:
             row=watches[watch_index]
-            lines += [row['id'],row['state'],row['definition']['external_ref'],
+            lines += [row['id'],row['state']]
+        if browser and browser.get('tool_status') and (not watches or height>=10):
+            lines+=textwrap.wrap(browser['tool_status'],max(1,width-1))[:max(1,height-len(lines)-2)]
+        if watches:
+            lines += [row['definition']['external_ref'],
                       '{} probes | idle {:.1f}s'.format(row['probe_count'],row['external_idle_seconds'])]
             lines += textwrap.wrap(row['reason'],max(1,width-1))
         else:
             lines+=['No external watches']
     elif view == 7:
-        lines += ['PLANS | {} shown'.format(len(plans))]
-        if browser and browser.get('tool_status'):
-            lines+=textwrap.wrap(browser['tool_status'],max(1,width-1))[:max(1,height-len(lines)-2)]
+        lines += [browser.get('tool_heading') if browser and browser.get('tool_heading') else 'PLANS | {} shown'.format(len(plans))]
         if plans:
             selected_row = plans[plan_index]
-            lines += [selected_row['id'], selected_row['state'], selected_row['name']]
+            lines += [selected_row['id'], selected_row['state']]
+        if browser and browser.get('tool_status') and (not plans or height>=10):
+            lines+=textwrap.wrap(browser['tool_status'],max(1,width-1))[:max(1,height-len(lines)-2)]
+        if plans:
+            lines += [selected_row['name']]
             lines += ['{} {}'.format(s['name'], s['state']) for s in selected_row['stages']]
             if selected_row['reason']:
                 lines += textwrap.wrap(selected_row['reason'], width-1)
@@ -411,7 +415,7 @@ def main(screen, cwd):
                     paint(screen,index+3,0,line,curses.A_REVERSE if match==2 else curses.color_pair(3) if match else 0)
                 paint(screen,height-1,0,view_footer(13,width))
             elif compact:
-                browser=dict(mode=browser_mode,query=browser_query,loaded=len(loaded_rows),order=browser_order,expanded=jobs_expanded,repository=browser_repository,follow=follow_head,initialized=browser_report['initialized'],queue_error=browser_stale,queue_age=browser_read.status(time.monotonic()),summary_status=summary_read.status(time.monotonic()),summary_error=summary_stale,tool_status=tool_status if view in (7,10) and (tool_data is None or tool_read.error) else '')
+                browser=dict(mode=browser_mode,query=browser_query,loaded=len(loaded_rows),order=browser_order,expanded=jobs_expanded,repository=browser_repository,follow=follow_head,initialized=browser_report['initialized'],queue_error=browser_stale,queue_age=browser_read.status(time.monotonic()),summary_status=summary_read.status(time.monotonic()),summary_error=summary_stale,tool_status=tool_status if view in (7,10) and (tool_data is None or tool_read.error) else '',tool_heading=tool_read.status(time.monotonic(),short_label='PLANS' if view==7 else 'EXTERNAL') if view in (7,10) else '')
                 if submission_rows:
                     browser['submission_notice']=compact_notice(submission_rows[-1])
                 for index, line in enumerate(compact_lines(rows, selected, plan_rows, plan_index, view, config, height, width, watch_rows, watch_index, None,0,workbench_result,0,queue_health_result,browser,read_tail,details_view,detail_row,detail_read.error or (detail_read.status(time.monotonic()) if inspection_row else None),history_view,history_repository,history_report,history_status,inspection)):
@@ -486,10 +490,11 @@ def main(screen, cwd):
                         paint(screen,log_top+1+index,0,line)
                 elif view == 1:
                     paint(screen, log_top - 1, 0, 'SYSTEM PROCESSES (your user; read only; 100% CPU = one logical core)', curses.A_BOLD)
-                    paint(screen, log_top, 0, process_read.status(time.monotonic()) if process_read.report is None or process_read.error else 'PID     CPU%   RSS MiB  PROCESS / DIRECTORY')
-                    for index, process in enumerate(processes[:max(1, height - log_top - 4)]):
+                    paint(screen, log_top, 0, process_read.status(time.monotonic()))
+                    paint(screen, log_top + 1, 0, 'PID     CPU%   RSS MiB  PROCESS / DIRECTORY')
+                    for index, process in enumerate(processes[:max(1, height - log_top - 5)]):
                         cpu = 'warmup' if process['cpu'] is None else '{:.0f}'.format(process['cpu'])
-                        paint(screen, log_top + 1 + index, 0, '{:<7} {:>6} {:>8.0f}  {} / {}'.format(
+                        paint(screen, log_top + 2 + index, 0, '{:<7} {:>6} {:>8.0f}  {} / {}'.format(
                             process['pid'], cpu, process['rss_mb'], process['name'], process['cwd']))
                 elif view == 2:
                     paint(screen, log_top - 1, 0, 'ANNOUNCEMENTS | submitted means input sent; adoption is not yet confirmed', curses.A_BOLD)
@@ -533,47 +538,51 @@ def main(screen, cwd):
                         paint(screen, log_top + index, 0, line)
                 elif view == 9:
                     paint(screen,log_top-1,0,'EXISTING JOB GROUPS | arrows select | Enter opens a job log | e exports evidence',curses.A_BOLD)
-                    lines=[tool_status] if tool_data is None or tool_read.error else ['Create with: agent-builds group create JOB... --name NAME']
+                    paint(screen,log_top,0,tool_status)
+                    lines=['Create with: agent-builds group create JOB... --name NAME'] if tool_data is not None else []
                     if group_rows:
                         group=group_rows[group_index]
-                        lines=([tool_status] if tool_read.error else [])+['{} {} | {}'.format(group['id'],group['state'],group['name']),
+                        lines=['{} {} | {}'.format(group['id'],group['state'],group['name']),
                                'Native job outcomes only; grouping never resubmits work or imposes dependencies.']
                         lines += ['{} {} | exit {} | waited {:.1f}s | ran {:.1f}s'.format(j['id'],j['state'],j['exit_code'],j['wait_seconds'],j['elapsed_seconds']) for j in group['jobs']]
-                    visible=max(1,height-log_top-3)
+                    visible=max(1,height-log_top-4)
                     group_offset=min(max(0,group_offset),max(0,len(lines)-visible))
                     for index,line in enumerate(lines[group_offset:group_offset+visible]):
-                        paint(screen,log_top+index,0,line)
+                        paint(screen,log_top+1+index,0,line)
                 elif view == 10:
                     from .external import lines as watch_lines
                     paint(screen,log_top-1,0,'EXTERNAL COMPLETION | idle watches hold no build reservations',curses.A_BOLD)
-                    lines=[tool_status] if tool_data is None or tool_read.error else ['No external watches. Use buildr watch start or MCP buildr_watch_submit.']
+                    paint(screen,log_top,0,tool_status)
+                    lines=['No external watches. Use buildr watch start or MCP buildr_watch_submit.'] if tool_data is not None else []
                     if watch_rows:
                         watch=watch_rows[watch_index]
-                        lines=([tool_status] if tool_read.error else [])+watch_lines(watch)
+                        lines=watch_lines(watch)
                         if not watch['complete'] and watch['controller_alive'] is False:
                             lines+=['Controller stopped; r resumes observation of existing probe handles.']
                         elif not watch['complete'] and watch['controller_alive'] is None:
                             lines+=['Controller liveness is not verified by read-only inspection.']
                     lines=[part for line in lines for part in (textwrap.wrap(line,max(1,width-1)) or [''])]
-                    visible=max(1,height-log_top-3)
+                    visible=max(1,height-log_top-4)
                     watch_offset=min(max(0,watch_offset),max(0,len(lines)-visible))
                     for index,line in enumerate(lines[watch_offset:watch_offset+visible]):
-                        paint(screen,log_top+index,0,line)
+                        paint(screen,log_top+1+index,0,line)
                 elif view == 8:
                     from .advice import lines as advice_lines
-                    content=([tool_status] if tool_read.error else [])+list(advice_lines(advice_result)) if advice_result is not None else [tool_status]
+                    content=list(advice_lines(advice_result)) if advice_result is not None else []
                     lines=[part for line in content for part in (textwrap.wrap(line,max(1,width-1)) or [''])]
                     paint(screen, log_top-1, 0, 'QUEUE ADVISOR | global | scroll with arrows / PgUp / PgDn | h returns to logs', curses.A_BOLD)
-                    visible = max(1, height-log_top-3)
+                    paint(screen,log_top,0,tool_status)
+                    visible = max(1, height-log_top-4)
                     advice_offset = min(max(0, advice_offset), max(0, len(lines)-visible))
                     for index, line in enumerate(lines[advice_offset:advice_offset+visible]):
-                        paint(screen, log_top+index, 0, line)
+                        paint(screen, log_top+1+index, 0, line)
                 elif view == 7:
                     paint(screen, log_top-1, 0, 'VERIFICATION PLANS | arrows select | Enter opens a stage log', curses.A_BOLD)
-                    lines = [tool_status] if tool_data is None or tool_read.error else ['No plans yet. Press o to submit a JSON verification plan.']
+                    paint(screen,log_top,0,tool_status)
+                    lines = ['No plans yet. Press o to submit a JSON verification plan.'] if tool_data is not None else []
                     if plan_rows:
                         plan = plan_rows[plan_index]
-                        lines = ([tool_status] if tool_read.error else [])+['{} | {} | {}'.format(plan['id'], plan['state'], plan['name']),
+                        lines = ['{} | {} | {}'.format(plan['id'], plan['state'], plan['name']),
                                  'Stages: {} succeeded / {} total | elapsed {:.1f}s'.format(
                                      sum(s['state']=='succeeded' for s in plan['stages']), len(plan['stages']), plan['elapsed_seconds'])]
                         if plan['state'] not in ('succeeded', 'failed', 'cancelled') and plan['controller_alive'] is False:
@@ -592,10 +601,10 @@ def main(screen, cwd):
                                     lines += ['  Source changes observed; inspect plan evidence before relying on the result.']
                                 elif job['started'] and job['source'].get('start', {}).get('status') != 'captured':
                                     lines += ['  Source identity unavailable or not yet captured.']
-                    visible = max(1, height-log_top-3)
+                    visible = max(1, height-log_top-4)
                     plan_offset = min(max(0, plan_offset), max(0, len(lines)-visible))
                     for index, line in enumerate(lines[plan_offset:plan_offset+visible]):
-                        paint(screen, log_top+index, 0, line)
+                        paint(screen, log_top+1+index, 0, line)
                 elif rows:
                     row = rows[selected]
                     paint(screen, log_top - 1, 0, '{} | {} | {}'.format(row['id'], row['cwd'], row['reason'] or 'live output'), curses.A_BOLD)
