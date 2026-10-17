@@ -348,6 +348,8 @@ def main(screen, cwd):
                     color = 4 if queue_health_result['status']=='disk_blocked' else 3 if queue_health_result['waiting_jobs'] else 2
                     paint(screen, 4, 0, banner(queue_health_result), curses.A_BOLD | curses.color_pair(color))
                 heading = 'DETAILS / TOOLS | arrows select jobs | ? help' if view >= 3 else browser_label(browser_mode,browser_query,len(rows),len(loaded_rows),browser_order,repository=browser_repository,follow=follow_head)+' | Tab table s sort'
+                if view==4:
+                    heading='HISTORY | selected checkout | j/k scroll | ? help'
                 if view==3 and browser_repository is not None:
                     heading='DETAILS | repo: '+browser_repository
                 paint(screen, 5, 0, heading, curses.A_BOLD)

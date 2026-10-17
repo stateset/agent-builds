@@ -156,6 +156,9 @@ class TuiBrowserTests(unittest.TestCase):
                     "H q" if dimensions[1] < 65 else "H jobs",
                     frames[2][dimensions[0] - 1],
                 )
+                if dimensions[1] >= 65:
+                    self.assertIn("j/k scroll", frames[2][5])
+                    self.assertNotIn("select jobs", frames[2][5])
                 self.assertIn("Checkout:", " ".join(frames[2].values()))
                 self.assertIn("check", " ".join(frames[3].values()))
                 self.assertNotEqual(frames[2], frames[3])
