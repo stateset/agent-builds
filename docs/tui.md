@@ -266,10 +266,19 @@ to jobs; `q` closes the dashboard. Shared action keys are ignored in log focus.
 The viewer loads at most the recent 256 KiB and labels omitted earlier output.
 Use `buildr logs JOB_ID` or the job’s log file for the full history. Changed logs
 refresh at most twice a second; unchanged logs are not reread. Held snapshots
-perform no log-file reads. Following handles file replacement, truncation and
+do not start new log-file reads. Following handles file replacement, truncation and
 missing files. Lines wrap to the pane width; ANSI control sequences are removed
 and carriage-return progress uses the last segment of each line. This is a text
 viewer, not a complete terminal emulator.
+
+Focused and inline logs share one background reader. Metadata checks, opening,
+reading and decoding happen in that worker; keyboard input and rendering use
+only accepted snapshots. A pending read never starts a backlog or delays quit.
+Loading, unavailable output and stale refreshes are labelled. Help, hidden logs,
+expanded job tables and panes without room for inline output do not start reads.
+An already pending read may finish, but changing job, view, visibility, hold or
+search intent discards its result and error. End resumes from a new observation.
+Resizing rewraps the loaded snapshot without reading the file again.
 
 In log focus, `/` searches literal text, ignoring case, across the loaded logical
 lines (including text spanning a visual wrap). Enter accepts, Esc leaves the

@@ -347,13 +347,26 @@ class ExternalWatchTests(unittest.TestCase):
         self.assertLessEqual(len(result[-1]),23)
 
     def test_empty_watch_view_cannot_cancel_or_mutate_an_unrelated_job(self):
+        from concurrent.futures import Future
         import curses
         from agent_builds import tui
+
+        def completed(loader,key):
+            future=Future()
+            try:
+                future.set_result(loader(key))
+            except Exception as error:
+                future.set_exception(error)
+            return future
+
         job=self.store.submit(self.root,['true'],'local','quick',1,.25,'foreign-output','',10)
         screen=mock.Mock()
         screen.getmaxyx.return_value=(32,100)
         screen.getch.side_effect=[ord('v')]*10+[ord(key) for key in 'crenpboa']+[10,ord('q')]
         with mock.patch.dict(os.environ,self.env,clear=True), \
+                mock.patch('agent_builds.tui.submit_read',side_effect=completed), \
+                mock.patch('agent_builds.tui.submit_log_read',side_effect=completed), \
+                mock.patch('agent_builds.tui_reads.submit_read',side_effect=completed), \
                 mock.patch('curses.curs_set'),mock.patch('curses.has_colors',return_value=False), \
                 mock.patch('curses.color_pair',return_value=0), \
                 mock.patch('agent_builds.tui.ProcessSampler') as sampler, \
@@ -362,5 +375,6 @@ class ExternalWatchTests(unittest.TestCase):
                 mock.patch('agent_builds.tui.cancel_job',side_effect=AssertionError('must not cancel unrelated job')):
             sampler.return_value.sample.return_value=[]
             tui.main(screen,self.root)
+        self.assertTrue(any('EXTERNAL COMPLETION' in call.args[2] for call in screen.addnstr.call_args_list))
         self.assertFalse(self.store.get(job)['cancel_requested'])
         self.assertEqual(external.listing(self.store),[])

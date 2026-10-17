@@ -55,11 +55,15 @@ class TuiBrowserTests(unittest.TestCase):
         clock=None,
         answers=None,
         background_submit=None,
+        log_submit=None,
         state_path=None,
         on_update=None,
     ):
         screen = mock.Mock()
-        screen.getmaxyx.return_value = dimensions
+        if callable(dimensions):
+            screen.getmaxyx.side_effect = dimensions
+        else:
+            screen.getmaxyx.return_value = dimensions
         screen.getch.side_effect = keys
         frame, frames = {}, []
         screen.erase.side_effect = frame.clear
@@ -86,8 +90,16 @@ class TuiBrowserTests(unittest.TestCase):
                 future.set_exception(error)
             return future
 
+        self.log_requests = []
+
+        def logs(loader, request):
+            self.log_requests.append(request)
+            return (log_submit or completed)(loader, request)
+
         with mock.patch(
             "agent_builds.tui.submit_read", side_effect=background_submit or completed
+        ), mock.patch(
+            "agent_builds.tui.submit_log_read", side_effect=logs
         ), mock.patch.dict(
             os.environ, AGENT_BUILDS_STATE=str(state_path or self.store.root)
         ), mock.patch(
@@ -794,16 +806,12 @@ class TuiBrowserTests(unittest.TestCase):
 
     def test_expanded_table_does_not_read_inline_logs_and_is_safe_when_empty(self):
         keys = iter([9, -1, ord("q")])
-        original_tail = tui.TailCache.read
-        reads = []
-
-        def tail(*args):
-            reads.append(len(reads))
-            return original_tail(*args)
-
-        with mock.patch.object(tui.TailCache, "read", tail):
+        with mock.patch.object(
+            tui.TailCache, "read", side_effect=AssertionError("foreground log read")
+        ):
             self.dashboard(keys)
-        self.assertEqual(len(reads), 1)
+        self.assertEqual(len(self.log_requests), 1)
+        self.assertEqual(self.log_requests[0].key[0], "inline")
         for size in ((20, 100), (8, 20)):
             frames = self.dashboard(
                 [9, ord("/"), ord("s"), curses.KEY_END, 9, ord("q")], size, "absent job"
@@ -979,22 +987,22 @@ class TuiBrowserTests(unittest.TestCase):
         self.assertEqual(rows, before)
 
     def test_help_skips_inline_rendering_without_changing_selection(self):
-        with mock.patch.object(tui.TailCache, "read", return_value=[]) as tail:
+        with mock.patch.object(
+            tui.TailCache, "read", side_effect=AssertionError("foreground log read")
+        ):
             frames = self.dashboard([ord("?"), -1, ord("q"), ord("q")])
-        self.assertEqual(tail.call_count, 2)  # before and after help only
+        self.assertEqual(len(self.log_requests), 2)  # before and after help only
         self.assertIn("HELP", frames[1][0])
         self.assertIn(self.jobs[0], "\n".join(frames[-1].values()))
 
     def test_help_over_focused_logs_does_not_poll_the_hidden_snapshot(self):
-        polls, original = [], tui.LogView.poll
-
-        def poll(view, now):
-            polls.append(now)
-            return original(view, now)
-
-        with mock.patch.object(tui.LogView, "poll", poll):
+        with mock.patch.object(
+            tui.LogView, "poll", side_effect=AssertionError("foreground log read")
+        ):
             self.dashboard([ord("l"), ord("?"), -1, ord("?"), ord("q")])
-        self.assertEqual(len(polls), 2)
+        self.assertEqual(
+            sum(request.key[0] == "focused" for request in self.log_requests), 2
+        )
 
     def test_paint_removes_ansi_decoration_without_printing_control_fragments(self):
         screen = mock.Mock()
@@ -1161,10 +1169,14 @@ class TuiBrowserTests(unittest.TestCase):
             with mock.patch.object(
                 Store, "get", autospec=True, side_effect=original
             ) as get:
-                with mock.patch.object(tui.TailCache, "read", return_value=[]) as tail:
+                with mock.patch.object(
+                    tui.TailCache,
+                    "read",
+                    side_effect=AssertionError("foreground log read"),
+                ):
                     frames = self.dashboard([10, -1, ord("i"), ord("q")], size)
             self.assertEqual(get.call_count, 1)
-            self.assertEqual(tail.call_count, 2)  # jobs before and after details
+            self.assertEqual(len(self.log_requests), 2 if size[1] >= 65 else 0)
             self.assertIn("DETAILS", "\n".join(frames[1].values()))
             self.assertIn(self.jobs[0], "\n".join(frames[1].values()))
             self.assertIn("JOBS", "\n".join(frames[-1].values()))

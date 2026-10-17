@@ -22,48 +22,77 @@ def signature(stat):
 def read_recent(path, limit):
     """Never block on a FIFO or let a growing file turn a tail into a full read."""
     descriptor = os.open(str(path), os.O_RDONLY | os.O_NONBLOCK)
-    with os.fdopen(descriptor, "rb") as handle:
-        stat = os.fstat(handle.fileno())
-        if not S_ISREG(stat.st_mode):
-            raise NonRegularLog()
-        start = max(0, stat.st_size - limit)
-        handle.seek(start)
-        return handle.read(limit), signature(stat), bool(start)
+    try:
+        # Keep ownership of the descriptor even if fdopen fails before a
+        # context manager exists, for example when the path is a directory.
+        with os.fdopen(descriptor, "rb", closefd=False) as handle:
+            stat = os.fstat(handle.fileno())
+            if not S_ISREG(stat.st_mode):
+                raise NonRegularLog()
+            start = max(0, stat.st_size - limit)
+            handle.seek(start)
+            return handle.read(limit), signature(stat), bool(start)
+    finally:
+        os.close(descriptor)
 
 
 class TailCache:
-    """One selected inline log, polled at most twice a second."""
+    """UI-owned inline output, with a synchronous convenience reader."""
 
     def __init__(self):
-        self.path, self.signature = None, None
+        self.key = None
+        self.select(None, None)
+
+    def select(self, job, path):
+        key = (job, str(path) if path is not None else None)
+        if key == self.key:
+            return
+        self.key = key
+        self.path = Path(path) if path is not None else None
+        self.signature = None
         self.last_poll = float("-inf")
         self.last_content_read = float("-inf")
         self.lines = []
+        self.error = None
+        self.loaded = False
+        self.clipped = False
+
+    def apply(self, result, now):
+        """Adopt an accepted immutable result without filesystem access."""
+        if result.request.key != ("inline",) + self.key:
+            return False
+        self.last_poll, self.signature, self.error = now, result.signature, result.error
+        if result.lines is not None:
+            self.lines = list(result.lines)
+            self.clipped = result.clipped
+            self.loaded = result.error is None
+            if not result.error:
+                self.last_content_read = now
+        return True
+
+    def page(self, lines):
+        return self.lines[-lines:] if lines > 0 else []
 
     def read(self, path, lines, now):
         if lines <= 0:
             return []
-        path = Path(path)
-        if path != self.path:
-            self.path, self.signature, self.lines = path, None, []
-            self.last_poll = float("-inf")
-            self.last_content_read = float("-inf")
+        from .tui_log_reads import LogRequest, load_log
+
+        self.select(None, path)
         if now - self.last_poll >= 0.5:
             self.last_poll = now
-            try:
-                current = signature(path.stat())
-                if (
-                    current != self.signature
-                    or now - self.last_content_read >= TAIL_RECHECK_SECONDS
-                ):
-                    data, self.signature, _ = read_recent(path, TAIL_BYTES)
-                    self.last_content_read = now
-                    # Preserve inline tail line semantics; ANSI cleaning is
-                    # done only for visible rows when painted.
-                    self.lines = data.decode("utf-8", errors="replace").splitlines()
-            except OSError:
-                self.signature, self.lines = None, []
-        return self.lines[-lines:]
+            self.apply(
+                load_log(
+                    LogRequest(
+                        0,
+                        ("inline",) + self.key,
+                        self.signature,
+                        now - self.last_content_read >= TAIL_RECHECK_SECONDS,
+                    )
+                ),
+                now,
+            )
+        return self.page(lines)
 
 
 def strip_escapes(text):
@@ -148,36 +177,39 @@ class LogView:
         self.last_read = float("-inf")
         self.clipped = False
         self.error = None
+        self.loaded = False
+        self.observed = None
 
     def poll(self, now):
         if self.path is None or not self.follow or now - self.last_read < 0.5:
             return
+        from .tui_log_reads import LogRequest, load_log
+
         self.last_read = now
-        try:
-            stat = self.path.stat()
-            current = signature(stat)
-            if current == self.signature:
-                return
-            data, self.signature, clipped = read_recent(self.path, MAX_BYTES)
-            if clipped and b"\n" in data:
-                data = data.split(b"\n", 1)[1]
-            self.lines = clean_lines(data)
-            self.clipped, self.error = clipped, None
-        except OSError as error:
-            self.lines = []
-            self.signature = None
-            self.clipped = False
-            self.error = (
-                "Log is not a regular file"
-                if isinstance(error, NonRegularLog)
-                else (
-                    "Log not available yet"
-                    if isinstance(error, FileNotFoundError)
-                    else "Cannot read log (" + type(error).__name__ + ")"
+        self.apply(
+            load_log(
+                LogRequest(
+                    0,
+                    ("focused",) + self.key,
+                    self.signature,
                 )
-            )
-        self._find_matches()
-        self.width = None
+            ),
+            now,
+        )
+
+    def apply(self, result, now):
+        """Apply a current live snapshot; held/search state remains UI-owned."""
+        if not self.follow or result.request.key != ("focused",) + self.key:
+            return False
+        self.last_read, self.signature, self.error = now, result.signature, result.error
+        self.observed = now
+        if result.lines is not None:
+            self.lines = list(result.lines)
+            self.clipped = result.clipped
+            self.loaded = result.error is None
+            self._find_matches()
+            self.width = None
+        return True
 
     def _find_matches(self):
         needle = self.query.casefold()
