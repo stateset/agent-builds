@@ -96,12 +96,23 @@ def browser(root):
 
 
 def selected(root, key):
-    """Load one selected job's control metadata or evidence on its worker."""
+    """Load selected or linked job display metadata or evidence on its worker."""
     kind, job = key
-    if kind not in ("control", "details", "context"):
+    if kind not in ("control", "details", "context", "browser", "blocker"):
         raise ValueError("Unknown selected-job read: " + str(kind))
     with _reader(root) as reader:
         with reader.read_snapshot():
+            if kind == "blocker":
+                blocker = reader.get_wait_context(job).get("blocking_job")
+                if (
+                    not isinstance(blocker, dict)
+                    or not isinstance(blocker.get("id"), str)
+                    or not blocker["id"]
+                ):
+                    raise ValueError("No recorded blocker for job: " + job)
+                return reader.browser_row(blocker["id"])
+            if kind == "browser":
+                return reader.browser_row(job)
             if kind == "control":
                 control = reader.get_control(job)
                 return dict(

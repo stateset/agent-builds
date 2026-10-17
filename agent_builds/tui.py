@@ -23,6 +23,8 @@ from .tui_reads import SnapshotRead, submit_read
 from .tui_reads import submit_read as submit_log_read
 from .tui_reads import submit_read as submit_log_status_read
 from .tui_log_reads import LogReads
+from .tui_links import LogLinks
+from .tui_reads import submit_read as submit_link_read
 from .tui_submissions import SubmissionTracker
 from .tui_reads import submit_read as submit_submission_read
 from .tui_submission_view import SubmissionView, notice as submission_notice, compact_notice
@@ -219,6 +221,7 @@ def main(screen, cwd):
     detail_read=SnapshotRead(lambda handle: read_selected(store.root,('details',handle)),interval=1,submit=submit_read,label='job details')
     context_read=SnapshotRead(lambda handle: read_selected(store.root,('context',handle)),interval=1,submit=submit_read,label='wait details')
     log_status_read=SnapshotRead(lambda handle: read_selected(store.root,('control',handle)),interval=1,submit=submit_log_status_read,label='job state')
+    log_links=LogLinks(lambda key: read_selected(store.root,key),submit=submit_link_read)
     children = []
     submissions=SubmissionTracker(store.root,submit=submit_submission_read)
     submission_view,submission_rows=SubmissionView(),()
@@ -346,6 +349,14 @@ def main(screen, cwd):
                     watch_id=watch_rows[watch_index]['id'] if watch_rows else None
             elif view==8:
                 advice_result=tool_data
+            link_origin=(view,watch_id if view==10 else group_id if view==9 else plan_id if view==7 else context_row['id'] if context_row else None)
+            linked_job=log_links.poll(link_origin,readable and (not VIEWS[view].full or full_view),time.monotonic())
+            if linked_job is not None:
+                log_job=context_row=linked_job
+                log_view.select(log_job['id'],log_job['log_path'])
+                view=13
+                follow_head=False
+                state_note='State loading'
             if disk_future is not None and disk_future.done():
                 try:
                     disk_result = disk_future.result()
@@ -616,6 +627,8 @@ def main(screen, cwd):
                 for index,line in enumerate(content[help_offset:help_offset+room]):
                     paint(screen,index+1,0,line)
                 paint(screen,height-1,0,'Esc/?/q back | j/k scroll')
+            elif log_links.status and height>=8 and width>=20:
+                paint(screen,height-2,0,log_links.status)
             if not log_visible:
                 log_reads.get(None,None,False,time.monotonic())
             screen.refresh()
@@ -631,6 +644,8 @@ def main(screen, cwd):
             if key==ord('?'):
                 help_active,help_offset=True,0
                 continue
+            if key not in (-1,curses.KEY_RESIZE):
+                log_links.cancel()
             if key in (ord('q'), 27):
                 break
             if key==ord('V'):
@@ -719,12 +734,10 @@ def main(screen, cwd):
                     log_job=inspection_row
                     log_view.select(log_job['id'] if log_job else None,log_job['log_path'] if log_job else None)
                     view=13
-                elif key==ord('g') and inspection_data and inspection_data['jobs']:
-                    links=inspection_data['jobs'][0]['blocker_chain']['jobs']
-                    if len(links)>1:
-                        log_job=links[1]
-                        log_view.select(log_job['id'],log_job['log_path'])
-                        view=13
+                elif key==ord('g') and inspection_row:
+                    links=inspection_data['jobs'][0]['blocker_chain']['jobs'] if inspection_data and inspection_data['jobs'] else []
+                    log_links.open('browser' if len(links)>1 else 'blocker',links[1]['id'] if len(links)>1 else inspection_row['id'],link_origin,time.monotonic())
+                    follow_head=False
                 continue
             if view==13:
                 if key in (ord('l'),ord('v')):
@@ -757,6 +770,30 @@ def main(screen, cwd):
                 log_view.select(log_job['id'] if log_job else None,log_job['log_path'] if log_job else None)
                 view=13
                 continue
+            if height>=8 and width>=20:
+                link_handle=None
+                if view in (0,3) and key==ord('g') and context_row:
+                    log_links.open('blocker',context_row['id'],link_origin,time.monotonic())
+                    follow_head=False
+                    continue
+                if key in (10,13,curses.KEY_ENTER):
+                    if view==10 and watch_rows:
+                        probes=watch_rows[watch_index]['probes']
+                        link_handle=probes[-1]['job_id'] if probes else None
+                    elif view==9 and group_rows and not compact:
+                        jobs=group_rows[group_index]['jobs']
+                        targets=[job for job in jobs if job['state'] not in TERMINAL]+[job for job in jobs if job['state'] in ('failed','lost')]+list(reversed(jobs))
+                        link_handle=targets[0]['id'] if targets else None
+                    elif view==7 and plan_rows:
+                        stages=plan_rows[plan_index]['stages']
+                        targets=[stage for stage in stages if stage['job'] and stage['job']['state'] not in TERMINAL]
+                        targets += [stage for stage in stages if stage['state'] in ('failed','lost') and stage['job']]
+                        targets += list(reversed([stage for stage in stages if stage['job']]))
+                        link_handle=targets[0]['job_id'] if targets else None
+                    if link_handle:
+                        log_links.open('browser',link_handle,link_origin,time.monotonic())
+                        follow_head=False
+                        continue
             if view in (0,3) and key==ord('R'):
                 focus.select(None)
                 if browser_repository is not None:
@@ -974,15 +1011,6 @@ def main(screen, cwd):
                     tool_read.next_read=0
                 except (ValueError,OSError,sqlite3.Error) as error:
                     message='Watch action failed: '+str(error)
-            elif view == 10 and watch_rows and key in (10,13,curses.KEY_ENTER):
-                probes=watch_rows[watch_index]['probes']
-                if probes and probes[-1]['job_id']:
-                    handle=probes[-1]['job_id']
-                    target=next((i for i,row in enumerate(rows) if row['id']==handle),None)
-                    if target is None:
-                        message='Probe log: buildr logs '+handle
-                    else:
-                        selected,selected_id,view=target,handle,0
             elif view == 9 and group_rows and key==ord('e'):
                 from .groups import export
                 from .plans import write_export
@@ -993,15 +1021,6 @@ def main(screen, cwd):
                         message='Group evidence exported to '+path
                 except (ValueError,OSError,sqlite3.Error) as error:
                     message='Group export failed: '+str(error)
-            elif view == 9 and group_rows and key in (10,13,curses.KEY_ENTER):
-                jobs=group_rows[group_index]['jobs']
-                targets=[j for j in jobs if j['state'] not in TERMINAL]+[j for j in jobs if j['state'] in ('failed','lost')]+list(reversed(jobs))
-                if targets:
-                    target=next((i for i,row in enumerate(rows) if row['id']==targets[0]['id']),None)
-                    if target is not None:
-                        selected,selected_id,view=target,targets[0]['id'],0
-                    else:
-                        message='Job log: agent-builds logs '+targets[0]['id']
             elif key == ord('o') and height >= 15 and width >= 65:
                 try:
                     from .plans import create, read_manifest, spawn as spawn_plan
@@ -1040,17 +1059,6 @@ def main(screen, cwd):
                     tool_read.next_read=0
                 except (ValueError, OSError, sqlite3.Error) as error:
                     message = 'Plan action failed: '+str(error)
-            elif view == 7 and plan_rows and key in (10, 13, curses.KEY_ENTER):
-                stages = plan_rows[plan_index]['stages']
-                targets = [s for s in stages if s['job'] and s['job']['state'] not in TERMINAL]
-                targets += [s for s in stages if s['state'] in ('failed', 'lost') and s['job']]
-                targets += list(reversed([s for s in stages if s['job']]))
-                if targets:
-                    target = next((i for i, row in enumerate(rows) if row['id'] == targets[0]['job_id']), None)
-                    if target is not None:
-                        selected, selected_id, view = target, targets[0]['job_id'], 0
-                    else:
-                        message = 'Stage log: agent-builds logs '+targets[0]['job_id']
             elif key == ord('d'):
                 view = 6
                 if disk_future is None:
@@ -1080,20 +1088,6 @@ def main(screen, cwd):
             elif key == ord('i'):
                 view = 0 if view == 3 else 3
                 details_view.home()
-            elif key == ord('g') and context_row:
-                try:
-                    blocker = store.get_wait_context(context_row['id']).get('blocking_job')
-                except (ValueError,OSError,sqlite3.Error) as error:
-                    message='Blocker unavailable: '+str(error)
-                    continue
-                if blocker:
-                    target = next((index for index, row in enumerate(rows) if row['id'] == blocker['id']), None)
-                    if target is not None:
-                        selected = target
-                        selected_id = rows[selected]['id']
-                        view = 0
-                    else:
-                        message = 'Blocker details: agent-builds show ' + blocker['id']
             elif key == ord('a') and height >= 15 and width >= 65:
                 try:
                     from .announce import create, preview, select, spawn_worker
