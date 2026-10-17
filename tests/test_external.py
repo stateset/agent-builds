@@ -277,21 +277,39 @@ class ExternalWatchTests(unittest.TestCase):
         self.assertEqual(external.get(self.store,handle)['state'],'timed_out')
 
     def test_mcp_watch_start_is_idempotent_and_exposes_read_only_observation(self):
-        self.ready.touch()
         args=dict(self.spec(),request_key='watch-mcp-fixture-001')
-        with mock.patch.dict(os.environ,self.env,clear=True):
-            first=mcp.call('buildr_watch_submit',args)
-            handle=first['result']['watch_id']
-            self.handles.append(handle)
-            repeated=mcp.call('buildr_watch_submit',args)
-            self.assertEqual(repeated['result']['watch_id'],handle)
-            observed=mcp.call('buildr_watch',dict(watch_id=handle),read_only=True)
-            self.assertEqual(observed['id'],handle)
-            self.assertIn(handle,[r['id'] for r in mcp.call('buildr_watches',{},read_only=True)['watches']])
-            with self.assertRaises(ValueError):
-                mcp.call('buildr_watch_cancel',dict(watch_id=handle),read_only=True)
-        result=self.observe(handle,{'succeeded'})
-        self.assertEqual(result['probe_count'],1)
+        # Check the durable MCP contract independently of process admission.
+        # Native controller/probe completion is covered by the integration tests
+        # above; a busy host must not impose an eight-second startup assertion here.
+        with mock.patch.dict(os.environ,self.env,clear=True), \
+                mock.patch('agent_builds.external.spawn',return_value=None) as spawn:
+            handle=None
+            try:
+                first=mcp.call('buildr_watch_submit',args)
+                handle=first['result']['watch_id']
+                self.handles.append(handle)
+                repeated=mcp.call('buildr_watch_submit',args)
+                self.assertEqual(first['submission_state'],'submitted')
+                self.assertEqual(repeated,first)
+                spawn.assert_called_once_with(mock.ANY,handle)
+                before=external.raw(self.store,handle)
+                observed=mcp.call('buildr_watch',dict(watch_id=handle),read_only=True)
+                self.assertEqual(observed['id'],handle)
+                self.assertEqual(observed['state'],'queued')
+                self.assertEqual(observed['probe_count'],0)
+                self.assertEqual([handle],[r['id'] for r in mcp.call('buildr_watches',{},read_only=True)['watches']])
+                with self.assertRaises(ValueError):
+                    mcp.call('buildr_watch_cancel',dict(watch_id=handle),read_only=True)
+                self.assertEqual(external.raw(self.store,handle),before)
+                self.assertEqual(self.store.rows(),[])
+                spawn.assert_called_once_with(mock.ANY,handle)
+            finally:
+                if handle is not None:
+                    # Settle only this deliberately unlaunched fixture while the
+                    # spawn mock is still active, even if a contract assertion fails.
+                    external.cancel(self.store,handle)
+                    external.step(self.store,handle)
+            self.assertEqual(external.get(self.store,handle)['state'],'cancelled')
 
     def test_cli_receipt_and_wait_use_one_durable_watch_handle(self):
         self.ready.touch()
