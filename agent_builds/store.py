@@ -464,17 +464,31 @@ class Store:
         now = time.time()
         rows = []
         for stored in self.db.execute('SELECT '+BROWSER_COLUMNS+' FROM jobs'+JOB_ORDER+' LIMIT ?', (limit,)):
-            row = dict(stored)
-            row['storage_state'] = row['state']
-            if row['state']=='held':
-                row['state']='queued'
-            row['command_display'] = shlex.join(json.loads(row['command']))
-            row['origin'] = json.loads(row.pop('herdr') or '{}')
-            row['log_path'] = str(self.log_path(row['id']))
-            row['wait_seconds'] = max(0,(row['started'] or row['finished'] or now)-row['created'])
-            row['elapsed_seconds'] = max(0,(row['finished'] or now)-row['started']) if row['started'] else 0
-            rows.append(row)
+            rows.append(self._browser_row(stored, now))
         return rows
+
+    def browser_row(self, job):
+        """One exact display row, independent of browser limits and filters.
+
+        This limits row count, not bytes in the command or origin fields.
+        Detailed evidence is never selected or decoded.
+        """
+        stored = self.db.execute('SELECT '+BROWSER_COLUMNS+' FROM jobs WHERE id=?', (job,)).fetchone() if self.db else None
+        if stored is None:
+            raise ValueError('Unknown job: ' + job)
+        return self._browser_row(stored, time.time())
+
+    def _browser_row(self, stored, now):
+        row = dict(stored)
+        row['storage_state'] = row['state']
+        if row['state']=='held':
+            row['state']='queued'
+        row['command_display'] = shlex.join(json.loads(row['command']))
+        row['origin'] = json.loads(row.pop('herdr') or '{}')
+        row['log_path'] = str(self.log_path(row['id']))
+        row['wait_seconds'] = max(0,(row['started'] or row['finished'] or now)-row['created'])
+        row['elapsed_seconds'] = max(0,(row['finished'] or now)-row['started']) if row['started'] else 0
+        return row
 
     def describe(self, row):
         row['storage_state'] = row['state']

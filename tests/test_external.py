@@ -114,8 +114,10 @@ class ExternalWatchTests(unittest.TestCase):
             external.spawn(self.store,handle)
 
     def test_pending_probe_limit_stops_with_pending_native_result(self):
-        handle=self.create(self.spec(max_probes=2),start=True)
-        result=self.observe(handle,{'exhausted'})
+        # Assert the durable probe limit; host contention is not the deadline
+        # behavior under test (covered separately below).
+        handle=self.create(self.spec(max_probes=2,timeout=30),start=True)
+        result=self.observe(handle,{'exhausted'},timeout=30)
         self.assertEqual((result['probe_count'],result['exit_code']),(2,75))
         self.assertEqual(result['external_outcome'],'pending_reported')
         self.assertEqual(self.store.counts(active=True)['running'],0)

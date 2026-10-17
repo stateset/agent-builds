@@ -2,6 +2,11 @@
 
 ## 0.26.1 (unreleased)
 
+- Open related plan-stage, group, watch-probe and blocker logs directly through
+  a read-only lookup, independent of browser filters and its 200-row window.
+  Keep the originating selection while loading, show failures without retrying,
+  and discard abandoned navigation intents so late replies cannot steal focus.
+
 - Refresh a focused log's job state independently of the bounded browser and
   held output, retaining labelled last-known state during slow or failed reads.
   Discard obsolete inspection results and errors across navigation or reopening

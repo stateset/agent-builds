@@ -280,6 +280,20 @@ bounds wrapping work, not the underlying selected database payload. Use
 
 ## Focused log inspection
 
+Enter in plans, groups or external watches opens the relevant stage, member or
+latest probe log. `g` from jobs/details opens the recorded blocker's log; the
+wait inspector also exposes `g`. These links resolve exact job handles in the
+background, including jobs hidden by browser filters or outside the 200-row
+window. Opening a linked log leaves browser filters and selection unchanged.
+
+While a link is loading, its originating view stays visible with an opening
+notice. Navigation and quitting remain available. Leaving the originating view
+or changing its selected item abandons the pending handoff; a late result cannot
+switch you back. Help defers the handoff until it closes. A failed lookup shows
+an error and stays in the originating view; it is not retried automatically.
+Plans, watches and blocker links work in narrow panes; groups retain their
+existing full-pane size requirement. `l` returns from the log to jobs.
+
 Focused logs refresh the pinned job's state on a separate read-only connection,
 including after it leaves the 200-row browser. Holding or searching output does
 not hold the job's status. The header retains its last-known state while showing
