@@ -32,6 +32,7 @@ class SnapshotRead:
         self.loader, self.interval = loader, interval
         self.submit = submit or submit_read
         self.key = self.pending_key = None
+        self.epoch, self.pending_epoch = 0, None
         self.future = self.report = None
         self.error = None
         self.observed = None
@@ -40,22 +41,30 @@ class SnapshotRead:
     def get(self, key, now):
         if key != self.key:
             self.key = key
+            # A -> B -> A and hide -> reopen are distinct visits to the same key.
+            self.epoch += 1
             self.report = self.error = self.observed = None
             self.next_read = now
         if self.future is not None and self.future.done():
+            current = (
+                key is not None
+                and key == self.pending_key
+                and self.epoch == self.pending_epoch
+            )
             try:
                 result = self.future.result()
             except Exception as error:
-                if key is not None and key == self.pending_key:
+                if current:
                     self.error = str(error) or type(error).__name__
                     self.next_read = now + self.interval
             else:
-                if key is not None and key == self.pending_key:
+                if current:
                     self.report, self.error, self.observed = result, None, now
                     self.next_read = now + self.interval
             self.future = None
         if key is not None and self.future is None and now >= self.next_read:
             self.pending_key = key
+            self.pending_epoch = self.epoch
             try:
                 self.future = self.submit(self.loader, key)
             except (RuntimeError, OSError) as error:

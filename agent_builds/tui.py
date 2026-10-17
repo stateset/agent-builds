@@ -21,6 +21,7 @@ from .tui_prompt import edit as edit_prompt, job_context, recipient_context
 from .tui_views import VIEWS, choose as choose_view, footer as view_footer
 from .tui_reads import SnapshotRead, submit_read
 from .tui_reads import submit_read as submit_log_read
+from .tui_reads import submit_read as submit_log_status_read
 from .tui_log_reads import LogReads
 from .tui_submissions import SubmissionTracker
 from .tui_reads import submit_read as submit_submission_read
@@ -217,6 +218,7 @@ def main(screen, cwd):
         return ([status]+inline_tail.page(lines-1)) if status else inline_tail.page(lines)
     detail_read=SnapshotRead(lambda handle: read_selected(store.root,('details',handle)),interval=1,submit=submit_read,label='job details')
     context_read=SnapshotRead(lambda handle: read_selected(store.root,('context',handle)),interval=1,submit=submit_read,label='wait details')
+    log_status_read=SnapshotRead(lambda handle: read_selected(store.root,('control',handle)),interval=1,submit=submit_log_status_read,label='job state')
     children = []
     submissions=SubmissionTracker(store.root,submit=submit_submission_read)
     submission_view,submission_rows=SubmissionView(),()
@@ -276,6 +278,22 @@ def main(screen, cwd):
             inspection_row=focus.get(view,browser_row,loaded_rows)
             context_row=log_job if view==13 else inspection_row or browser_row
             process_height,process_width=screen.getmaxyx()
+            log_status_key=log_job['id'] if log_job and view==13 and not help_active and process_height>=8 and process_width>=20 else None
+            log_status=poll_read(log_status_read,log_status_key,now)
+            state_note=''
+            if log_status_key:
+                valid_state=isinstance(log_status,dict) and log_status.get('id')==log_status_key and isinstance(log_status.get('state'),str)
+                if valid_state and log_status['state']!=log_job['state']:
+                    log_job=dict(log_job,state=log_status['state'])
+                    context_row=log_job
+                if log_status_read.error:
+                    state_note='STALE state: '+log_status_read.error
+                elif log_status is None:
+                    state_note='State loading'
+                elif not valid_state:
+                    state_note='STALE state: invalid reply'
+                elif now-log_status_read.observed>2*log_status_read.interval:
+                    state_note='STALE state; refreshing'
             full_view=process_height>=15 and process_width>=65
             detail_row=poll_read(detail_read,inspection_row['id'] if inspection_row and view==3 and process_height>=8 and process_width>=20 and not help_active else None,time.monotonic(),retain=False)
             if view!=3 or help_active or detail_row is None:
@@ -359,8 +377,6 @@ def main(screen, cwd):
                     paint(screen,index+1,0,line)
                 paint(screen,height-1,0,'V views ? help q quit' if width>=24 else 'V ? q')
             elif view == 13:
-                if log_job:
-                    log_job=next((row for row in loaded_rows if row['id']==log_job['id']),log_job)
                 if log_view.follow and log_job and height>=8 and width>=20:
                     log_visible=True
                     refresh_log('focused',log_job['id'],log_view.path,log_view,time.monotonic())
@@ -376,6 +392,8 @@ def main(screen, cwd):
                         note='STALE log; refreshing | '+note
                 if log_view.clipped:
                     note='Recent 256 KiB only | '+note
+                if state_note:
+                    note=state_note+' | '+note
                 paint(screen,2,0,note)
                 for index,line in enumerate(log_page):
                     match=log_view.match_kind(index)

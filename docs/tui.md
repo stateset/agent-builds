@@ -280,6 +280,15 @@ bounds wrapping work, not the underlying selected database payload. Use
 
 ## Focused log inspection
 
+Focused logs refresh the pinned job's state on a separate read-only connection,
+including after it leaves the 200-row browser. Holding or searching output does
+not hold the job's status. The header retains its last-known state while showing
+`State loading` or `STALE state` when confirmation is pending, old or unavailable.
+This state label is independent of log-content freshness. Metadata reads stop
+while the log is hidden, help is open, or the pane is smaller than 20x8.
+Changing views or selections discards earlier read generations, so reopening a
+view cannot label a pre-navigation result as a fresh inspection.
+
 Press `l` from jobs or details, including in a narrow pane. `j`/`k` and arrow keys
 scroll one wrapped row; PgUp/PgDn scroll a page. Home shows the oldest **loaded**
 output. Space holds a fixed output snapshot; End or Space resumes live output.

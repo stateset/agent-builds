@@ -96,12 +96,19 @@ def browser(root):
 
 
 def selected(root, key):
-    """Load evidence only for the selected job, on the calling worker thread."""
+    """Load one selected job's control metadata or evidence on its worker."""
     kind, job = key
-    if kind not in ("details", "context"):
+    if kind not in ("control", "details", "context"):
         raise ValueError("Unknown selected-job read: " + str(kind))
     with _reader(root) as reader:
         with reader.read_snapshot():
+            if kind == "control":
+                control = reader.get_control(job)
+                return dict(
+                    id=job,
+                    state="queued" if control["state"] == "held" else control["state"],
+                    cancel_requested=bool(control["cancel_requested"]),
+                )
             return (
                 reader.get(job) if kind == "details" else reader.get_wait_context(job)
             )

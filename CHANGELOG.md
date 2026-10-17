@@ -2,6 +2,11 @@
 
 ## 0.26.1 (unreleased)
 
+- Refresh a focused log's job state independently of the bounded browser and
+  held output, retaining labelled last-known state during slow or failed reads.
+  Discard obsolete inspection results and errors across navigation or reopening
+  a view, including A-to-B-to-A selections, without overlapping read workers.
+
 - Confirm new-job and saved-task submissions from private receipts and read-only
   queue evidence instead of reporting success immediately after launch. Keep
   pending and uncertain attempts visible, retain diagnostics in a scrollable `U`
