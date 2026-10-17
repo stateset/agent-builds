@@ -22,6 +22,9 @@ from .tui_views import VIEWS, choose as choose_view, footer as view_footer
 from .tui_reads import SnapshotRead, submit_read
 from .tui_reads import submit_read as submit_log_read
 from .tui_log_reads import LogReads
+from .tui_submissions import SubmissionTracker
+from .tui_reads import submit_read as submit_submission_read
+from .tui_submission_view import SubmissionView, notice as submission_notice, compact_notice
 from .tui_disk import DiskRead
 from .tui_data import LazyStore, browser as read_browser, selected as read_selected, summary as read_summary, tool as read_tool
 from .tui_inspect import InspectionFocus, inspect_report, HealthView, WorkbenchView, WhyView
@@ -119,9 +122,9 @@ def compact_lines(rows, selected, plans, plan_index, view, config, height, width
                 lines += textwrap.wrap(selected_row['reason'], width-1)
         else:
             lines += ['No plans yet']
-    elif view==0 and browser and browser.get('expanded'):
+    elif view==0 and browser and browser.get('expanded') and (not browser.get('submission_notice') or height>=9):
         lines += [browser_label(browser['mode'],browser['query'],len(rows),browser['loaded'],browser.get('order','queue'),short=True,repository=browser.get('repository'),follow=browser.get('follow',False)),' '+columns(width-1)]
-        count=max(1,height-len(lines)-1)
+        count=max(1,height-len(lines)-1-bool(browser.get('submission_notice')))
         start=max(0,selected-count+1)
         lines += [('>' if index==selected else ' ')+job_line(row,width-1) for index,row in enumerate(rows[start:start+count],start)]
         if not rows:
@@ -144,26 +147,15 @@ def compact_lines(rows, selected, plans, plan_index, view, config, height, width
         else:
             lines += ['No matching jobs' if browser and (browser['query'] or browser['mode']!='all' or browser.get('repository') is not None) else 'No jobs yet']
     footer = view_footer(view, width, compact=True)
+    notification=browser.get('submission_notice') if browser and view==0 else None
+    if notification:
+        body=lines[:height-2]
+        return body+['']*max(0,height-2-len(body))+[notification,footer]
     return lines[:height-1] + [footer]
 
 
 def prompt(screen, title, initial='', context=''):
     return edit_prompt(screen, title, initial, context, paint)
-
-
-def spawn(cwd, command, lane='heavy', backend='local', image=''):
-    env = os.environ.copy()
-    package_root = str(Path(__file__).resolve().parent.parent)
-    env['PYTHONPATH'] = package_root + os.pathsep + env.get('PYTHONPATH', '')
-    args = [sys.executable, '-m', 'agent_builds', 'run', '--cwd', str(cwd),
-            '--lane', lane, '--backend', backend, '--notify']
-    if image:
-        args += ['--image', image]
-    args += ['--'] + command
-    # Keep jobs alive when the dashboard closes; log output belongs to each job.
-    return subprocess.Popen(args, env=env, stdin=subprocess.DEVNULL,
-                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                            start_new_session=True)
 
 
 def poll_read(reader, key, now, retain=True):
@@ -226,6 +218,8 @@ def main(screen, cwd):
     detail_read=SnapshotRead(lambda handle: read_selected(store.root,('details',handle)),interval=1,submit=submit_read,label='job details')
     context_read=SnapshotRead(lambda handle: read_selected(store.root,('context',handle)),interval=1,submit=submit_read,label='wait details')
     children = []
+    submissions=SubmissionTracker(store.root,submit=submit_submission_read)
+    submission_view,submission_rows=SubmissionView(),()
     sampler = ProcessSampler()
     processes = []
     view = 0
@@ -260,6 +254,10 @@ def main(screen, cwd):
         while True:
             children = [child for child in children if child.poll() is None]
             now=time.monotonic()
+            submission_updates=submissions.poll(now)
+            if submission_updates:
+                submission_rows=submissions.statuses
+                message=submission_notice(submission_updates[0]) if len(submission_updates)==1 else '{} submission updates | U submissions'.format(len(submission_updates))
             browser_report=browser_read.report if help_active else poll_read(browser_read,'queue',now)
             loaded_rows=browser_report['rows'] if browser_report is not None else []
             config=browser_report['config'] if browser_report is not None else None
@@ -345,6 +343,15 @@ def main(screen, cwd):
             log_visible=False
             if help_active:
                 pass  # Only the help overlay below is visible.
+            elif view==15:
+                if height<8 or width<20:
+                    paint(screen,1,0,'Resize: 20x8 min')
+                else:
+                    page=submission_view.page(None,submission_rows,max(1,width-1),max(1,height-3))
+                    for index,line in enumerate(page):
+                        paint(screen,index+1,0,line)
+                paint(screen,0,0,'SUBMISSIONS | '+submission_view.position(),curses.A_BOLD)
+                paint(screen,height-1,0,view_footer(15,width))
             elif browser_report is None:
                 paint(screen,0,0,'BUILDR '+__version__,curses.A_BOLD)
                 pending=browser_read.status(time.monotonic())
@@ -376,6 +383,8 @@ def main(screen, cwd):
                 paint(screen,height-1,0,view_footer(13,width))
             elif compact:
                 browser=dict(mode=browser_mode,query=browser_query,loaded=len(loaded_rows),order=browser_order,expanded=jobs_expanded,repository=browser_repository,follow=follow_head,initialized=browser_report['initialized'],queue_error=browser_stale,queue_age=browser_read.status(time.monotonic()),summary_status=summary_read.status(time.monotonic()),summary_error=summary_stale,tool_status=tool_status if view in (7,10) and (tool_data is None or tool_read.error) else '')
+                if submission_rows:
+                    browser['submission_notice']=compact_notice(submission_rows[-1])
                 for index, line in enumerate(compact_lines(rows, selected, plan_rows, plan_index, view, config, height, width, watch_rows, watch_index, None,0,workbench_result,0,queue_health_result,browser,read_tail,details_view,detail_row,detail_read.error or (detail_read.status(time.monotonic()) if inspection_row else None),history_view,history_repository,history_report,history_status,inspection)):
                     paint(screen, index, 0, line)
             else:
@@ -623,6 +632,21 @@ def main(screen, cwd):
                             follow_head=False
                             message='Selection pinned; F follows the first matching row.'
                         view=target
+                continue
+            if key==ord('U') and height>=8 and width>=20:
+                if view!=15:
+                    follow_head=False
+                view=0 if view==15 else 15
+                continue
+            if view==15:
+                if key in (ord('j'),curses.KEY_DOWN,ord('k'),curses.KEY_UP,curses.KEY_NPAGE,curses.KEY_PPAGE):
+                    submission_view.scroll(1 if key in (ord('j'),curses.KEY_DOWN,curses.KEY_NPAGE) else -1,key in (curses.KEY_NPAGE,curses.KEY_PPAGE))
+                elif key==curses.KEY_HOME:
+                    submission_view.home()
+                elif key==curses.KEY_END:
+                    submission_view.end()
+                elif key==ord('v'):
+                    view=0
                 continue
             if browser_report is None:
                 continue
@@ -1030,13 +1054,10 @@ def main(screen, cwd):
                     task = prompt(screen, 'Task: ' + ', '.join(tasks), tasks[0])
                     if task not in tasks:
                         continue
-                    env = os.environ.copy()
-                    env['PYTHONPATH'] = str(Path(__file__).resolve().parent.parent) + os.pathsep + env.get('PYTHONPATH', '')
-                    children.append(subprocess.Popen([sys.executable, '-m', 'agent_builds', 'task', 'run', task,
-                        '--cwd', location, '--detach'], env=env, stdin=subprocess.DEVNULL,
-                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True))
-                    message = 'Submitted task ' + task
-                except (ValueError, OSError, sqlite3.Error) as error:
+                    attempt=submissions.start(['task','run',task,'--cwd',location], 'task '+task,time.monotonic())
+                    submission_rows=submissions.statuses
+                    message=submission_notice(submissions.get(attempt))
+                except (ValueError, OSError, RuntimeError, sqlite3.Error) as error:
                     message = 'Task failed: ' + str(error)
             elif key == ord('i'):
                 view = 0 if view == 3 else 3
@@ -1142,10 +1163,14 @@ def main(screen, cwd):
                         raise ValueError('Check directory, command, lane and backend')
                     if backend == 'docker' and not image:
                         raise ValueError('A Docker image is required')
-                    children.append(spawn(location, command, lane, backend, image))
-                    message = 'Submitted ' + shlex.join(command)
+                    arguments=['run','--cwd',str(location),'--lane',lane,'--backend',backend,'--notify']
+                    if image:
+                        arguments+=['--image',image]
+                    attempt=submissions.start(arguments+['--']+command,shlex.join(command),time.monotonic())
+                    submission_rows=submissions.statuses
+                    message=submission_notice(submissions.get(attempt))
                     selected = 0
-                except (ValueError, OSError, sqlite3.Error) as error:
+                except (ValueError, OSError, RuntimeError, sqlite3.Error) as error:
                     message = str(error)
     finally:
         try:

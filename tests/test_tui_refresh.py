@@ -634,7 +634,7 @@ class TuiRefreshTests(unittest.TestCase):
             def alive(identity):
                 try:
                     stat = Path('/proc/{}/stat'.format(identity['pid'])).read_text()
-                except FileNotFoundError:
+                except (FileNotFoundError, ProcessLookupError):
                     return False
                 fields = stat[stat.rfind(')') + 2:].split()
                 return fields[19] == identity['start'] and fields[0] not in ('Z', 'X')
@@ -673,7 +673,7 @@ class TuiRefreshTests(unittest.TestCase):
         def alive(identity):
             try:
                 stat = Path("/proc/{}/stat".format(identity["pid"])).read_text()
-            except FileNotFoundError:
+            except (FileNotFoundError, ProcessLookupError):
                 return False
             fields = stat[stat.rfind(")") + 2 :].split()
             return fields[19] == identity["start"] and fields[0] not in ("Z", "X")

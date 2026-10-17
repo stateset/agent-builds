@@ -218,6 +218,8 @@ HELP = (
     "PgUp/PgDn scroll detail views. Narrow panes support jobs, plans, watches, history, health and workbench.",
     "DELIBERATE ACTIONS (FULL VIEW)",
     "n: new job; o: submit plan; t: saved task",
+    "U: this dashboard's submission receipts; starting is not confirmed job creation.",
+    "Unconfirmed submissions are never retried automatically; inspect their receipt and transcript.",
     "c: request cancellation after typing yes",
     "Input prompts: Enter accepts, Esc cancels, Ctrl+U clears; resize preserves entered text.",
     "PgUp/PgDn pages prompt context without editing input; context is a snapshot.",

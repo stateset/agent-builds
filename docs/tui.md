@@ -59,6 +59,7 @@ history likewise keeps its checkout until you leave the view.
 | `l` | Focus the selected job’s log; `l` returns to jobs |
 | `H` | Selected-checkout history; `H` returns to jobs |
 | `u` | Queue health |
+| `U` | This dashboard's submission attempts and retained receipts; `U` returns to jobs |
 | `r` | Selected-job workbench |
 | `v` | Cycle views |
 
@@ -204,6 +205,29 @@ Failed refreshes label retained results as stale; an initial failure displays
 an error. Formatting and wrapping are cached between observations. Oversized
 history text is capped at 64 Ki characters with an explicit clipping label;
 `buildr stats --cwd PATH` provides the full result.
+
+## Submission confirmation
+
+In the full jobs view, `n` launches a new command and `t` launches a saved task.
+The first notice is **Starting**, not a claim that a job exists. A detached helper
+records the attempt and CLI transcript privately. The dashboard checks its
+receipt and matching queue row in the background before displaying **Submitted
+job ID** or **Created plan ID** for a reviewed task. Creation does not establish
+that a worker has attached, a command has started, or checks have passed.
+
+`U`, also available in the view picker, shows this dashboard's retained attempts,
+handles, details, receipt paths and transcript paths. Multiple simultaneous
+outcomes remain available there. It supports narrow panes, j/k, paging, Home/End,
+help and quitting. Shared action keys do nothing in this view. A compact notice
+in the jobs monitor points back to `U` after resizing.
+
+A helper exit or delayed confirmation without a verified receipt is **Outcome
+unconfirmed**. Inspect the retained receipt, transcript and queue before deciding
+what to do. Confirmation reads continue so a late receipt can resolve the attempt;
+the dashboard never resubmits it automatically. Closing the dashboard does not
+stop a helper, cancel a job, or wait for a stalled read. Private records remain
+in the queue state directory after closing; the view covers attempts made by the
+current dashboard session, rather than a complete historical submission index.
 
 ## Input prompts
 

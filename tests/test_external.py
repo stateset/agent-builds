@@ -260,21 +260,25 @@ class ExternalWatchTests(unittest.TestCase):
         self.assertFalse(missing.exists())
 
     def test_deadline_retains_a_live_unsettled_probe_reservation(self):
-        handle=self.create(self.spec(timeout=.2))
-        probe=external.prepare(self.store,handle)
-        self.store.db.execute("UPDATE jobs SET state='running',started=? WHERE id=?",(time.time(),probe['job_id']))
-        self.store.db.execute('UPDATE external_probes SET launch_attempted=1,attached=1 WHERE job_id=?',(probe['job_id'],))
-        self.store.db.execute('UPDATE external_watches SET created=? WHERE id=?',(time.time()-1,handle))
-        with mock.patch('agent_builds.runner.cancel_job',return_value=None):
+        # Drive the observation deadline explicitly: database setup must not
+        # consume a real 200 ms budget before the fixture probe even exists.
+        with mock.patch('agent_builds.external.time.time',return_value=100):
+            handle=self.create(self.spec(timeout=.2))
+            probe=external.prepare(self.store,handle)
+            self.assertIsNotNone(probe)
+            self.store.db.execute("UPDATE jobs SET state='running',started=? WHERE id=?",(100,probe['job_id']))
+            self.store.db.execute('UPDATE external_probes SET launch_attempted=1,attached=1 WHERE job_id=?',(probe['job_id'],))
+            self.store.db.execute('UPDATE external_watches SET created=? WHERE id=?',(99,handle))
+            with mock.patch('agent_builds.runner.cancel_job',return_value=None):
+                external.step(self.store,handle)
+            result=external.get(self.store,handle)
+            self.assertEqual(result['state'],'cancelling')
+            self.assertEqual(self.store.get(probe['job_id'])['state'],'running')
+            self.assertEqual(result['probes'][0]['reserved_cpu_slots'],1)
+            # This was a known in-process fixture reservation, never a live child.
+            self.store.finish(probe['job_id'],'cancelled',130,'fixture settled')
             external.step(self.store,handle)
-        result=external.get(self.store,handle)
-        self.assertEqual(result['state'],'cancelling')
-        self.assertEqual(self.store.get(probe['job_id'])['state'],'running')
-        self.assertEqual(result['probes'][0]['reserved_cpu_slots'],1)
-        # This was a known in-process fixture reservation, never a live child.
-        self.store.finish(probe['job_id'],'cancelled',130,'fixture settled')
-        external.step(self.store,handle)
-        self.assertEqual(external.get(self.store,handle)['state'],'timed_out')
+            self.assertEqual(external.get(self.store,handle)['state'],'timed_out')
 
     def test_mcp_watch_start_is_idempotent_and_exposes_read_only_observation(self):
         args=dict(self.spec(),request_key='watch-mcp-fixture-001')
