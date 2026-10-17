@@ -72,7 +72,26 @@ class SnapshotRead:
                 self.next_read = now + self.interval
         return self.report
 
-    def status(self, now):
+    def status(self, now, short_label=None):
+        """Describe the last accepted read; ``~`` marks a compact refresh."""
+        if short_label is not None:
+            if self.report is None:
+                return short_label + (" error" if self.error else " loading")
+            age = max(0, now - self.observed)
+            stale = bool(self.error or age > 2 * self.interval)
+            unit, seconds = next(
+                (unit, seconds)
+                for unit, seconds in (("d", 86400), ("h", 3600), ("m", 60), ("s", 1))
+                if age >= seconds or unit == "s"
+            )
+            amount = int(age / seconds)
+            short_age = ">9d" if unit == "d" and amount > 9 else str(amount) + unit
+            return "{}{} {}{}".format(
+                "STALE " if stale else "",
+                short_label,
+                short_age,
+                "~" if self.future is not None else "",
+            )
         if self.error:
             return (
                 "Stale " + self.label + ": "
@@ -81,7 +100,9 @@ class SnapshotRead:
             ) + self.error
         if self.report is None:
             return "Loading " + self.label + "; navigation stays available"
-        return "Snapshot {:.0f}s ago{}".format(
-            max(0, now - self.observed),
+        age = max(0, now - self.observed)
+        return "{}Snapshot {:.0f}s ago{}".format(
+            "STALE " if age > 2 * self.interval else "",
+            age,
             "; refreshing" if self.future is not None else "",
         )

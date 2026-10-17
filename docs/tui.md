@@ -17,6 +17,14 @@ Successful data remains visible after a failed refresh with a stale label;
 initial errors and unknown global reservations are explicit. Filtered or bounded
 browser rows are never used to estimate global reservation totals.
 
+Processes, plans, groups, external watches and advisor reports show the age of
+their accepted snapshot and whether a refresh is pending. A retained snapshot
+older than two refresh intervals is labelled stale even when the reader has
+not returned an error. A completed refresh clears the age warning. Supported
+narrow tool views retain this status without replacing the selected handle;
+their compact heading uses `~` for a pending refresh.
+These labels describe observations; they do not change job state or scheduling.
+
 Deliberate actions open separate writable access. Pause, budget editing, plan
 validation and new-job defaults reload configuration at action time, so a stale
 display does not determine a toggle or overwrite current defaults. Queue lifecycle
