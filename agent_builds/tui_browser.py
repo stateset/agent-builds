@@ -176,6 +176,8 @@ def label(
 
 HELP = (
     "FIND A VIEW",
+    "J: open a log by full job ID from any view (20x8 minimum); Esc/blank cancels",
+    "Job lookup ignores browser filters/history limits. Navigation abandons pending lookup; l returns to jobs.",
     "V: searchable view picker in full/narrow panes; type to filter names and descriptions",
     "In picker: arrows/Tab or PgUp/PgDn select; Home/End first/last; Enter opens; Esc returns",
     "Backspace edits the query; Ctrl+U clears. ! marks a size/job requirement; * is current.",

@@ -1,6 +1,7 @@
 import curses
 import json
 import os
+import re
 from pathlib import Path
 import shlex
 import sqlite3
@@ -226,6 +227,7 @@ def main(screen, cwd):
     context_read=SnapshotRead(lambda handle: read_selected(store.root,('context',handle)),interval=1,submit=submit_read,label='wait details')
     log_status_read=SnapshotRead(lambda handle: read_selected(store.root,('control',handle)),interval=1,submit=submit_log_status_read,label='job state')
     log_links=LogLinks(lambda key: read_selected(store.root,key),submit=submit_link_read)
+    direct_log_view=None
     children = []
     submissions=SubmissionTracker(store.root,submit=submit_submission_read)
     submission_view,submission_rows=SubmissionView(),()
@@ -354,8 +356,10 @@ def main(screen, cwd):
             elif view==8:
                 advice_result=tool_data
             link_origin=(view,watch_id if view==10 else group_id if view==9 else plan_id if view==7 else context_row['id'] if context_row else None)
-            linked_job=log_links.poll(link_origin,readable and (not VIEWS[view].full or full_view),time.monotonic())
+            direct_lookup=direct_log_view==view
+            linked_job=log_links.poll(('jump',view) if direct_lookup else link_origin,readable and (direct_lookup or not VIEWS[view].full or full_view),time.monotonic())
             if linked_job is not None:
+                direct_log_view=None
                 log_job=context_row=linked_job
                 log_view.select(log_job['id'],log_job['log_path'])
                 view=13
@@ -385,7 +389,7 @@ def main(screen, cwd):
                         paint(screen,index+1,0,line)
                 paint(screen,0,0,'SUBMISSIONS | '+submission_view.position(),curses.A_BOLD)
                 paint(screen,height-1,0,view_footer(15,width))
-            elif browser_report is None:
+            elif browser_report is None and view!=13:
                 paint(screen,0,0,'BUILDR '+__version__,curses.A_BOLD)
                 pending=browser_read.status(time.monotonic())
                 for index,line in enumerate(textwrap.wrap(pending,max(1,width-1))[:max(1,height-3)]):
@@ -655,8 +659,21 @@ def main(screen, cwd):
                 continue
             if key not in (-1,curses.KEY_RESIZE):
                 log_links.cancel()
+                direct_log_view=None
             if key in (ord('q'), 27):
                 break
+            if key==ord('J'):
+                if height>=8 and width>=20:
+                    handle=prompt(screen,'Open log: full job ID')
+                    if handle is not None and handle.strip():
+                        handle=handle.strip().lower()
+                        if re.fullmatch('[0-9a-f]{12}',handle) is None:
+                            log_links.error='Use the full 12-character job ID'
+                        else:
+                            direct_log_view=view
+                            log_links.open('browser',handle,('jump',view),time.monotonic())
+                            follow_head=False
+                continue
             if key==ord('V'):
                 if height>=8 and width>=20:
                     target=choose_view(screen,view,context_row is not None,paint,has_log=view==13 and log_job is not None)
@@ -690,7 +707,7 @@ def main(screen, cwd):
                 elif key==ord('v'):
                     view=0
                 continue
-            if browser_report is None:
+            if browser_report is None and view!=13:
                 continue
             if view==0:
                 if key==ord('F'):

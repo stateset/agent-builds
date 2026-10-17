@@ -2,6 +2,9 @@
 
 ## 0.26.1 (unreleased)
 
+- Open logs by full job ID with `J` from any supported pane, independently of
+  browser filters and history limits, with asynchronous lookup and visible errors.
+
 - Show snapshot age and pending refreshes consistently in process and tool
   views, with a stale label when a retained snapshot ages beyond two refresh
   intervals, including supported narrow views.
