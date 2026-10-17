@@ -91,6 +91,82 @@ class TuiBrowserTests(unittest.TestCase):
             self.prompt_calls = prompt.call_args_list
         return frames
 
+    def test_history_pending_read_keeps_navigation_and_quit_responsive(self):
+        from concurrent.futures import Future
+
+        future = Future()
+        with mock.patch("agent_builds.tui_history.submit_read") as submit:
+            submit.return_value = future
+            frames = self.dashboard(
+                [
+                    ord("H"),
+                    -1,
+                    ord("j"),
+                    curses.KEY_NPAGE,
+                    ord("p"),
+                    ord("n"),
+                    ord("c"),
+                    ord("a"),
+                    ord("q"),
+                ]
+            )
+        self.assertEqual(submit.call_count, 1)
+        self.assertFalse(future.done())
+        self.assertIn("Loading history", " ".join(frames[-1].values()))
+        self.assertEqual(self.prompt_calls, [])
+        self.assertFalse(self.store.config()["paused"])
+        self.assertEqual(self.store.counts()["queued"], 1)
+
+    def test_history_supports_narrow_paging_help_and_return_to_selected_job(self):
+        from concurrent.futures import Future
+
+        future = Future()
+        future.set_result(
+            dict(
+                history_limit=1000,
+                groups=[
+                    dict(
+                        jobs=1,
+                        wait_p95_seconds=2,
+                        average_runtime_seconds=3,
+                        command_display="check number " + str(i),
+                    )
+                    for i in range(20)
+                ],
+            )
+        )
+        keys = [
+            ord("H"),
+            -1,
+            curses.KEY_END,
+            curses.KEY_HOME,
+            ord("?"),
+            ord("q"),
+            ord("H"),
+            ord("q"),
+        ]
+        for dimensions in ((8, 20), (20, 100)):
+            with self.subTest(dimensions=dimensions), mock.patch(
+                "agent_builds.tui_history.submit_read"
+            ) as submit:
+                submit.return_value = future
+                frames = self.dashboard(keys, dimensions=dimensions)
+                self.assertEqual(submit.call_count, 2)
+                self.assertIn(
+                    "H q" if dimensions[1] < 65 else "H jobs",
+                    frames[2][dimensions[0] - 1],
+                )
+                if dimensions[1] >= 65:
+                    self.assertIn("j/k scroll", frames[2][5])
+                    self.assertNotIn("select jobs", frames[2][5])
+                self.assertIn("Checkout:", " ".join(frames[2].values()))
+                self.assertIn("check", " ".join(frames[3].values()))
+                self.assertNotEqual(frames[2], frames[3])
+                self.assertIn("Checkout:", " ".join(frames[4].values()))
+                self.assertIn("HELP", " ".join(frames[5].values()))
+                self.assertNotIn("HISTORY", " ".join(frames[-1].values()))
+                self.assertEqual(self.prompt_calls, [])
+
     def test_cancel_prompt_retains_selected_checkout_and_command_without_mutation(self):
         self.dashboard([ord("c"), ord("q")], query=None)
         call = self.prompt_calls[0]
