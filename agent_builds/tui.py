@@ -20,6 +20,8 @@ from .tui_details import DetailsView
 from .tui_history import HistoryRead, HistoryView, inspect_history
 from .tui_prompt import edit as edit_prompt, job_context, recipient_context
 from .tui_views import VIEWS, choose as choose_view, footer as view_footer
+from .tui_reads import SnapshotRead
+from .tui_inspect import InspectionFocus, inspect_report, HealthView, WorkbenchView, WhyView
 
 
 def tail(path, lines):
@@ -41,7 +43,7 @@ def paint(screen, y, x, text, attr=0):
         pass
 
 
-def compact_lines(rows, selected, plans, plan_index, view, config, height, width, watches=None, watch_index=0, health=None, health_offset=0, workbench=None, workbench_offset=0, queue_health=None, browser=None, tail_reader=None, details_view=None, detail_row=None, detail_error=None, history_view=None, history_repository=None, history_report=None, history_status=""):
+def compact_lines(rows, selected, plans, plan_index, view, config, height, width, watches=None, watch_index=0, health=None, health_offset=0, workbench=None, workbench_offset=0, queue_health=None, browser=None, tail_reader=None, details_view=None, detail_row=None, detail_error=None, history_view=None, history_repository=None, history_report=None, history_status="", inspection=None):
     """A monitor for narrow split panes; editing actions need the full view."""
     lines = ['BUILDR ' + __version__ + (' PAUSED' if config['paused'] else '')]
     if height < 8 or width < 20:
@@ -68,23 +70,19 @@ def compact_lines(rows, selected, plans, plan_index, view, config, height, width
         else:
             lines+=['DETAILS unavailable']
             lines+=textwrap.wrap(detail_error or 'No job selected',max(1,width-1))[:room]
-    elif view == 12:
-        from .workbench import lines as workbench_lines
-        content=list(workbench_lines(workbench)) if workbench and 'error' not in workbench else [workbench.get('error','Loading workbench') if workbench else 'Loading workbench']
-        wrapped=[part for line in content for part in textwrap.wrap(line,max(1,width-1))]
-        room=max(1,height-len(lines)-1)
-        workbench_offset=min(max(0,workbench_offset),max(0,len(wrapped)-room))
-        lines+=wrapped[workbench_offset:workbench_offset+room]
-    elif view == 11:
-        from .diagnostics import lines as health_lines
-        lines += ['HEALTH (read only)']
-        if health:
-            wrapped=[part for line in health_lines(health) for part in textwrap.wrap(line,max(1,width-1))]
-            room=max(1,height-len(lines)-1)
-            health_offset=min(max(0,health_offset),max(0,len(wrapped)-room))
-            lines += wrapped[health_offset:health_offset+room]
-        else:
-            lines += ['Loading diagnostics']
+    elif view in (11,12,14):
+        legacy_offset=(health_offset if view==11 else workbench_offset) if inspection is None else 0
+        if inspection is None:
+            widget=HealthView() if view==11 else WorkbenchView() if view==12 else WhyView()
+            inspection=dict(widget=widget,scope='global' if view==11 else (None,0),report=health if view==11 else workbench,status='Read only',error=None,job=None)
+        widget=inspection['widget']
+        room=max(1,height-len(lines)-3)
+        page=widget.page(inspection['scope'],inspection['report'],max(1,width-1),room,inspection['error'])
+        if legacy_offset:
+            widget.offset=legacy_offset
+            page=widget.page(inspection['scope'],inspection['report'],max(1,width-1),room,inspection['error'])
+        title=('WHY ' if view==14 else 'WORK ')+inspection['job']['id'] if view in (12,14) and inspection['job'] else VIEWS[view].name.upper()+' '+widget.position()
+        lines += [title,inspection['status']]+page
     elif view == 10:
         watches=watches or []
         lines+=['EXTERNAL | {} shown'.format(len(watches))]
@@ -160,6 +158,7 @@ def main(screen, cwd):
     screen.timeout(200)
     store = Store()
     selected = 0
+    focus = InspectionFocus()
     message = 'V views | ? help | / search | f filter | l logs | q quit (jobs continue)'
     browser_mode, browser_query = 'all',''
     browser_repository = None
@@ -188,6 +187,9 @@ def main(screen, cwd):
         lambda repository: inspect_history(store.root, repository)
     )
     history_view = HistoryView()
+    history_scope = None
+    inspection_read = SnapshotRead(lambda key: inspect_report(store.root,key))
+    inspection_views = {11:HealthView(),12:WorkbenchView(),14:WhyView()}
     disk_future = None
     disk_result = None
     plan_rows = []
@@ -198,10 +200,8 @@ def main(screen, cwd):
     advice_result = None
     advice_offset = 0
     last_advice = 0
-    health_result, health_offset, last_health = None, 0, 0
     queue_health_result, last_queue_health = None, 0
-    workbench_result,workbench_future,workbench_job = None,None,None
-    workbench_offset,workbench_candidate,last_workbench = 0,0,0
+    workbench_result,workbench_candidate = None,0
     group_rows = []
     group_index = 0
     group_id = None
@@ -213,15 +213,6 @@ def main(screen, cwd):
         reader = Store(store.root, read_only=True)
         try:
             return inventory(reader, repository)
-        finally:
-            reader.close()
-    def inspect_job(handle):
-        from .workbench import report
-        reader=Store(store.root,read_only=True)
-        try:
-            return report(reader,handle)
-        except (ValueError,OSError) as error:
-            return dict(error=str(error))
         finally:
             reader.close()
     try:
@@ -242,16 +233,23 @@ def main(screen, cwd):
                 selected = next((index for index, row in enumerate(rows) if row['id'] == selected_id), selected)
             selected = min(selected, max(0, len(rows) - 1))
             selected_id = rows[selected]['id'] if rows else None
+            browser_row=rows[selected] if rows else None
+            inspection_row=focus.get(view,browser_row,loaded_rows)
+            context_row=log_job if view==13 else inspection_row or browser_row
             process_height,process_width=screen.getmaxyx()
             full_view=process_height>=15 and process_width>=65
-            detail_row=detail_read.get(selected_id if view==3 and process_height>=8 and process_width>=20 and not help_active else None,time.monotonic())
+            detail_row=detail_read.get(inspection_row['id'] if inspection_row and view==3 and process_height>=8 and process_width>=20 and not help_active else None,time.monotonic())
             if view!=3 or help_active or detail_row is None:
                 details_view.clear()
             inline_context=context_read.get(selected_id if view==0 and full_view and not jobs_expanded and not help_active else None,time.monotonic())
             if view == 1 and not help_active and process_height>=15 and process_width>=65 and time.monotonic() - last_sample >= 1:
                 processes = sampler.sample()
                 last_sample = time.monotonic()
-            history_repository = rows[selected]['cwd'] if rows else str(cwd)
+            if view!=4:
+                history_scope=None
+            elif history_scope is None:
+                history_scope=context_row['cwd'] if context_row else str(cwd)
+            history_repository=history_scope
             history_visible = (view == 4 and not help_active
                                and process_height >= 8 and process_width >= 20)
             history_report = history_read.get(
@@ -267,26 +265,18 @@ def main(screen, cwd):
                 finally:
                     reader.close()
                 last_queue_health = time.monotonic()
-            if view==12 and rows:
-                desired=rows[selected]['id']
-                if workbench_future is not None and workbench_future.done():
-                    observed=workbench_future.result()
-                    workbench_result=observed if workbench_job==desired else None
-                    workbench_future=None
-                if workbench_job!=desired:
-                    workbench_result=None
-                if workbench_future is None and (workbench_job!=desired or time.monotonic()-last_workbench>=3):
-                    workbench_job=desired
-                    workbench_future=disk_pool.submit(inspect_job,desired)
-                    last_workbench=time.monotonic()
-            if view == 11 and time.monotonic()-last_health >= 2:
-                from .diagnostics import report
-                reader = Store(store.root, read_only=True)
-                try:
-                    health_result = report(reader)
-                finally:
-                    reader.close()
-                last_health = time.monotonic()
+            readable=not help_active and process_height>=8 and process_width>=20
+            kind={11:'health',12:'workbench',14:'why'}.get(view)
+            inspection_read.label={'health':'diagnostics','workbench':'workbench','why':'job diagnosis'}.get(kind,'inspection')
+            inspection_read.interval=3 if kind=='workbench' else 2
+            inspect_key=(kind,inspection_row['id'] if inspection_row else None) if kind and readable and (kind=='health' or inspection_row) else None
+            inspection_data=inspection_read.get(inspect_key,time.monotonic())
+            inspection_status=inspection_read.status(time.monotonic()) if kind=='health' or inspection_row else 'No job selected'
+            workbench_result=inspection_data if kind=='workbench' else None
+            inspection=None
+            if kind:
+                scope=(inspection_row['id'] if inspection_row else None,workbench_candidate) if kind=='workbench' else 'global' if kind=='health' else inspection_row['id'] if inspection_row else None
+                inspection=dict(widget=inspection_views[view],scope=scope,report=inspection_data,status=inspection_status,error=inspection_read.error,job=inspection_row)
             if view == 7 and time.monotonic()-last_plans >= 1:
                 from .plans import listing
                 plan_rows = listing(store, limit=20)
@@ -331,7 +321,7 @@ def main(screen, cwd):
                 paint(screen,height-1,0,view_footer(13,width))
             elif compact:
                 browser=dict(mode=browser_mode,query=browser_query,loaded=len(loaded_rows),order=browser_order,expanded=jobs_expanded,repository=browser_repository,follow=follow_head)
-                for index, line in enumerate(compact_lines(rows, selected, plan_rows, plan_index, view, config, height, width, watch_rows, watch_index, health_result, health_offset,workbench_result,workbench_offset,queue_health_result,browser,read_tail,details_view,detail_row,detail_read.error,history_view,history_repository,history_report,history_status)):
+                for index, line in enumerate(compact_lines(rows, selected, plan_rows, plan_index, view, config, height, width, watch_rows, watch_index, None,0,workbench_result,0,queue_health_result,browser,read_tail,details_view,detail_row,detail_read.error,history_view,history_repository,history_report,history_status,inspection)):
                     paint(screen, index, 0, line)
             else:
                 context = ' | Herdr ' + os.environ.get('HERDR_PANE_ID', '') if os.environ.get('HERDR_ENV') == '1' else ''
@@ -351,6 +341,10 @@ def main(screen, cwd):
                     color = 4 if queue_health_result['status']=='disk_blocked' else 3 if queue_health_result['waiting_jobs'] else 2
                     paint(screen, 4, 0, banner(queue_health_result), curses.A_BOLD | curses.color_pair(color))
                 heading = 'DETAILS / TOOLS | arrows select jobs | ? help' if view >= 3 else browser_label(browser_mode,browser_query,len(rows),len(loaded_rows),browser_order,repository=browser_repository,follow=follow_head)+' | Tab table s sort'
+                if view in (11,12,14):
+                    heading=VIEWS[view].name.upper()+' | j/k scroll | ? help'
+                if inspection_row and view in (3,12,14):
+                    heading+=' | '+inspection_row['id']
                 if view==4:
                     heading='HISTORY | selected checkout | j/k scroll | ? help'
                 if view==3 and browser_repository is not None:
@@ -375,23 +369,13 @@ def main(screen, cwd):
                     if rows:
                         row=rows[selected]
                         paint(screen,height-3,0,'Selected {}/{} {} | {}'.format(selected+1,len(rows),row['id'],row['reason'] or row['cwd']))
-                elif view == 12:
-                    from .workbench import lines as workbench_lines
-                    content=list(workbench_lines(workbench_result,workbench_candidate)) if workbench_result and 'error' not in workbench_result else [workbench_result.get('error','Loading workbench') if workbench_result else 'Loading workbench']
-                    wrapped=[part for line in content for part in textwrap.wrap(line,max(1,width-1))]
-                    visible=max(1,height-log_top-3)
-                    workbench_offset=min(max(0,workbench_offset),max(0,len(wrapped)-visible))
-                    paint(screen,log_top-1,0,'WORKBENCH | future runs, measurements and reviewed profiles',curses.A_BOLD)
-                    for index,line in enumerate(wrapped[workbench_offset:workbench_offset+visible]):
-                        paint(screen,log_top+index,0,line)
-                elif view == 11:
-                    from .diagnostics import lines as health_lines
-                    lines = [part for line in health_lines(health_result) for part in (textwrap.wrap(line,max(1,width-2)) or [''])] if health_result else ['Loading diagnostics']
-                    room = max(1,height-log_top-3)
-                    health_offset = min(max(0,health_offset),max(0,len(lines)-room))
-                    paint(screen,log_top-1,0,'HEALTH | read only | u returns to jobs | j/k or PgUp/PgDn scroll',curses.A_BOLD)
-                    for index,line in enumerate(lines[health_offset:health_offset+room]):
-                        paint(screen,log_top+index,0,line)
+                elif view in (11,12,14):
+                    widget=inspection['widget']
+                    page=widget.page(inspection['scope'],inspection_data,max(1,width-1),max(1,height-log_top-4),inspection_read.error)
+                    paint(screen,log_top-1,0,VIEWS[view].name.upper()+' | '+widget.position(),curses.A_BOLD)
+                    paint(screen,log_top,0,inspection_status)
+                    for index,line in enumerate(page):
+                        paint(screen,log_top+1+index,0,line)
                 elif view == 1:
                     paint(screen, log_top - 1, 0, 'SYSTEM PROCESSES (your user; read only; 100% CPU = one logical core)', curses.A_BOLD)
                     paint(screen, log_top, 0, 'PID     CPU%   RSS MiB  PROCESS / DIRECTORY')
@@ -405,7 +389,7 @@ def main(screen, cwd):
                     for index, delivery in enumerate(deliveries(store)[:max(1, height - log_top - 3)]):
                         paint(screen, log_top + index, 0, '{} {:10} {} | {}'.format(
                             delivery['pane'], delivery['state'], Path(delivery['repository']).name, delivery['detail']))
-                elif view == 3 and rows and detail_row is not None:
+                elif view == 3 and detail_row is not None:
                     row = detail_row
                     page=details_view.page(row,max(1,width-1),max(1,height-log_top-3))
                     paint(screen,log_top-1,0,'JOB DETAILS | '+details_view.position()+' | i jobs',curses.A_BOLD)
@@ -529,7 +513,7 @@ def main(screen, cwd):
                             offset += 1
                     for index, line in enumerate(read_tail(store.log_path(row['id']), max(1, height - log_top - offset - 3))):
                         paint(screen, log_top + offset + index, 0, line)
-                paint(screen, height - 2, 0, message)
+                paint(screen, height - 2, 0, 'Read only | runner observations are not an ETA or a new admission decision.' if view==14 else message)
                 paint(screen, height - 1, 0, view_footer(view, width))
             if help_active:
                 screen.erase()
@@ -557,11 +541,15 @@ def main(screen, cwd):
                 break
             if key==ord('V'):
                 if height>=8 and width>=20:
-                    target=choose_view(screen,view,bool(rows),paint,has_log=view==13 and log_job is not None)
+                    target=choose_view(screen,view,context_row is not None,paint,has_log=view==13 and log_job is not None)
                     if target is not None:
                         if target==13 and view!=13:
-                            log_job=rows[selected] if rows else None
+                            log_job=context_row
                             log_view.select(log_job['id'] if log_job else None,log_job['log_path'] if log_job else None)
+                        if target in (3,12,14):
+                            focus.select(context_row)
+                        if target==4 and view!=4:
+                            history_scope=context_row['cwd'] if context_row else str(cwd)
                         if target==3 and view!=3:
                             details_view.home()
                         if target!=0 and follow_head:
@@ -578,6 +566,8 @@ def main(screen, cwd):
                     follow_head=False
                     message='Selection pinned; F follows the first matching row.'
             if key==ord('H') and height>=8 and width>=20:
+                if view!=4:
+                    history_scope=context_row['cwd'] if context_row else str(cwd)
                 view=0 if view==4 else 4
                 continue
             if compact and VIEWS[view].full:
@@ -593,6 +583,37 @@ def main(screen, cwd):
                     history_view.end()
                 elif key==ord('v'):
                     view=0 if compact else 5
+                continue
+            if key==ord('w') and view in (0,3,14) and height>=8 and width>=20:
+                if view==14:
+                    view=0
+                else:
+                    focus.select(context_row)
+                    view=14
+                continue
+            if view==14:
+                widget=inspection_views[14]
+                if key in (ord('j'),curses.KEY_DOWN,ord('k'),curses.KEY_UP,curses.KEY_NPAGE,curses.KEY_PPAGE):
+                    widget.scroll(1 if key in (ord('j'),curses.KEY_DOWN,curses.KEY_NPAGE) else -1,key in (curses.KEY_NPAGE,curses.KEY_PPAGE))
+                elif key==curses.KEY_HOME:
+                    widget.home()
+                elif key==curses.KEY_END:
+                    widget.end()
+                elif key in (ord('v'),):
+                    view=0
+                elif key==ord('i'):
+                    view=3
+                    details_view.home()
+                elif key==ord('l'):
+                    log_job=inspection_row
+                    log_view.select(log_job['id'] if log_job else None,log_job['log_path'] if log_job else None)
+                    view=13
+                elif key==ord('g') and inspection_data and inspection_data['jobs']:
+                    links=inspection_data['jobs'][0]['blocker_chain']['jobs']
+                    if len(links)>1:
+                        log_job=links[1]
+                        log_view.select(log_job['id'],log_job['log_path'])
+                        view=13
                 continue
             if view==13:
                 if key in (ord('l'),ord('v')):
@@ -615,25 +636,28 @@ def main(screen, cwd):
                     log_view.scroll(direction*amount,max(1,width-1),max(1,height-4))
                 continue
             if view in (0,3) and key==ord('l'):
-                log_job=rows[selected] if rows else None
+                log_job=context_row
                 log_view.select(log_job['id'] if log_job else None,log_job['log_path'] if log_job else None)
                 view=13
                 continue
             if view in (0,3) and key==ord('R'):
+                focus.select(None)
                 if browser_repository is not None:
                     browser_repository=None
                     message='Repository focus cleared; other filters stay active. C clears all filters.'
-                elif rows:
-                    browser_repository=rows[selected]['cwd']
+                elif context_row:
+                    browser_repository=context_row['cwd']
                     message='Repository focus: '+browser_repository+' | R removes; C clears all filters'
                 else:
                     message='No job selected. C clears filters before choosing a repository.'
                 continue
             if view in (0,3) and key==ord('C'):
+                focus.select(None)
                 browser_mode,browser_query,browser_repository='all','',None
                 message='Browsing filters cleared; display order and selected job retained.'
                 continue
             if view in (0,3) and key==ord('f'):
+                focus.select(None)
                 browser_mode=MODES[(MODES.index(browser_mode)+1)%len(MODES)]
                 selected,selected_id=0,None
                 continue
@@ -646,6 +670,7 @@ def main(screen, cwd):
             if view in (0,3) and key==ord('/') and height>=8 and width>=20:
                 query=prompt(screen,'Search (blank clears)',browser_query)
                 if query is not None:
+                    focus.select(None)
                     browser_query=query[:256]
                     selected,selected_id=0,None
                 continue
@@ -661,6 +686,8 @@ def main(screen, cwd):
                 selected_id=rows[selected]['id'] if rows else None
                 continue
             if view in (0,3) and key in (ord('i'),10,13,curses.KEY_ENTER) and height>=8 and width>=20:
+                if view==0:
+                    focus.select(context_row)
                 view=0 if view==3 else 3
                 if view==3:
                     details_view.home()
@@ -673,22 +700,29 @@ def main(screen, cwd):
                 else:
                     details_view.scroll(1 if key==curses.KEY_NPAGE else -1)
                 continue
-            if compact and key not in (ord('j'), ord('k'), curses.KEY_DOWN, curses.KEY_UP, ord('v'), ord('u'),ord('r')):
+            if compact and key not in (ord('j'), ord('k'), curses.KEY_DOWN, curses.KEY_UP, ord('v'), ord('u'),ord('r'),curses.KEY_HOME,curses.KEY_END,curses.KEY_NPAGE,curses.KEY_PPAGE):
                 continue
             if key==ord('r') and view in (0,3,12):
+                if view!=12:
+                    focus.select(context_row)
                 view=0 if view==12 else 12
-                workbench_offset,workbench_candidate,last_workbench=0,0,0
+                workbench_candidate=0
+                inspection_views[12].home()
                 continue
             if view==12:
                 if key in (ord('j'),curses.KEY_DOWN,curses.KEY_NPAGE):
-                    workbench_offset+=max(1,height-10) if key==curses.KEY_NPAGE else 1
+                    inspection_views[12].scroll(1,key==curses.KEY_NPAGE)
                 elif key in (ord('k'),curses.KEY_UP,curses.KEY_PPAGE):
-                    workbench_offset=max(0,workbench_offset-(max(1,height-10) if key==curses.KEY_PPAGE else 1))
+                    inspection_views[12].scroll(-1,key==curses.KEY_PPAGE)
+                elif key==curses.KEY_HOME:
+                    inspection_views[12].home()
+                elif key==curses.KEY_END:
+                    inspection_views[12].end()
                 elif key==ord('v'):
                     view=0
                 elif not compact and key==ord('f') and workbench_result and workbench_result.get('candidates'):
                     workbench_candidate=(workbench_candidate+1)%len(workbench_result['candidates'])
-                    workbench_offset=0
+                    inspection_views[12].home()
                 elif not compact and key==ord('e') and workbench_result and workbench_result.get('candidates'):
                     candidates=workbench_result['candidates']
                     candidate=candidates[workbench_candidate%len(candidates)]
@@ -721,13 +755,17 @@ def main(screen, cwd):
                 continue
             if key == ord('u'):
                 view = 0 if view == 11 else 11
-                health_offset,last_health = 0,0
+                inspection_views[11].home()
                 continue
             if view == 11:
                 if key in (ord('j'),curses.KEY_DOWN,curses.KEY_NPAGE):
-                    health_offset += max(1,height-10) if key==curses.KEY_NPAGE else 1
+                    inspection_views[11].scroll(1,key==curses.KEY_NPAGE)
                 elif key in (ord('k'),curses.KEY_UP,curses.KEY_PPAGE):
-                    health_offset = max(0,health_offset-(max(1,height-10) if key==curses.KEY_PPAGE else 1))
+                    inspection_views[11].scroll(-1,key==curses.KEY_PPAGE)
+                elif key==curses.KEY_HOME:
+                    inspection_views[11].home()
+                elif key==curses.KEY_END:
+                    inspection_views[11].end()
                 elif key == ord('v'):
                     view = 0
                 continue
@@ -759,7 +797,7 @@ def main(screen, cwd):
                     plan_id = plan_rows[plan_index]['id'] if plan_rows else None
                     plan_offset = 0
                 else:
-                    selected = min(selected + 1, max(0, len(rows) - 1))
+                    selected = focus.move(rows,1) if view==3 else min(selected + 1, max(0, len(rows) - 1))
                     selected_id = rows[selected]['id'] if rows else None
             elif key in (ord('k'), curses.KEY_UP):
                 if view == 10:
@@ -777,9 +815,13 @@ def main(screen, cwd):
                     plan_id = plan_rows[plan_index]['id'] if plan_rows else None
                     plan_offset = 0
                 else:
-                    selected = max(0, selected - 1)
+                    selected = focus.move(rows,-1) if view==3 else max(0, selected - 1)
                     selected_id = rows[selected]['id'] if rows else None
             elif key == ord('v'):
+                if view==3:
+                    history_scope=context_row['cwd'] if context_row else str(cwd)
+                if view==11:
+                    focus.select(context_row)
                 view = ({0:7,7:10,10:11,11:12,12:0}.get(view,0)) if compact else (view + 1) % 13
             elif key == ord('h'):
                 view = 0 if view == 8 else 8
@@ -843,7 +885,7 @@ def main(screen, cwd):
             elif key == ord('o') and height >= 15 and width >= 65:
                 try:
                     from .plans import create, read_manifest, spawn as spawn_plan
-                    location = prompt(screen, 'Plan checkout', rows[selected]['cwd'] if rows else str(cwd))
+                    location = prompt(screen, 'Plan checkout', context_row['cwd'] if context_row else str(cwd))
                     if location is None:
                         continue
                     manifest = prompt(screen, 'Verification plan JSON path', str(Path(location)/'agent-builds-plan.json'))
@@ -891,11 +933,11 @@ def main(screen, cwd):
             elif key == ord('d'):
                 view = 6
                 if disk_future is None:
-                    disk_future = disk_pool.submit(scan_disk, rows[selected]['cwd'] if rows else cwd)
+                    disk_future = disk_pool.submit(scan_disk, context_row['cwd'] if context_row else cwd)
             elif key == ord('t') and height >= 15 and width >= 65:
                 from .profiles import tasks as saved_tasks, repository
                 try:
-                    location = prompt(screen, 'Task repository', rows[selected]['cwd'] if rows else str(cwd))
+                    location = prompt(screen, 'Task repository', context_row['cwd'] if context_row else str(cwd))
                     if location is None:
                         continue
                     prefix = repository(location) + ':'
@@ -917,9 +959,9 @@ def main(screen, cwd):
             elif key == ord('i'):
                 view = 0 if view == 3 else 3
                 details_view.home()
-            elif key == ord('g') and rows:
+            elif key == ord('g') and context_row:
                 try:
-                    blocker = store.get_wait_context(rows[selected]['id']).get('blocking_job')
+                    blocker = store.get_wait_context(context_row['id']).get('blocking_job')
                 except (ValueError,OSError,sqlite3.Error) as error:
                     message='Blocker unavailable: '+str(error)
                     continue
@@ -974,8 +1016,8 @@ def main(screen, cwd):
                         message = 'Budgets saved. Running jobs keep their original reservations.'
                 except (ValueError, OSError) as error:
                     message = 'Budget update rejected: ' + str(error)
-            elif key == ord('c') and rows and view != 7:
-                row = rows[selected]
+            elif key == ord('c') and context_row and view != 7:
+                row = context_row
                 if row['state'] not in TERMINAL:
                     answer = prompt(screen, 'Cancel {}? type yes'.format(row['id']), context=job_context(row))
                     if answer == 'yes':

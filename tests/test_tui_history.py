@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from unittest import mock
 
-from agent_builds import tui_history
+from agent_builds import tui_history, tui_text
 from agent_builds.store import Store
 
 
@@ -206,7 +206,7 @@ class HistoryViewTests(unittest.TestCase):
         with mock.patch.object(
             view, "lines", wraps=view.lines
         ) as formatted, mock.patch(
-            "agent_builds.tui_history.wrap_line", wraps=tui_history.wrap_line
+            "agent_builds.tui_text.wrap_line", wraps=tui_text.wrap_line
         ) as wrapped:
             first = view.page("/a", data, 19, 2)
             calls = wrapped.call_count
