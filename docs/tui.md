@@ -51,6 +51,7 @@ history likewise keeps its checkout until you leave the view.
 | Key | Action |
 | --- | --- |
 | `V` | Find and open a dashboard view; Esc returns |
+| `J` | Open a log by its full 12-character job ID, from any view |
 | `?` | Open scrollable help; Esc, `?` or `q` returns without taking an action |
 | `j` / `k`, arrows | Select a job |
 | `F` | Toggle following the first matching row in the jobs view |
@@ -287,6 +288,16 @@ bounds wrapping work, not the underlying selected database payload. Use
 `buildr show JOB_ID --json` for the complete evidence when the notice appears.
 
 ## Focused log inspection
+
+Press `J` to paste a full job ID from a CLI result or submission receipt. The
+lookup runs in the background and works outside the browser’s 200-row window
+and filters, including from an empty browser or a full-only view resized narrow.
+A delayed initial job-list read does not block direct log inspection.
+Uppercase hexadecimal IDs and surrounding whitespace are accepted; abbreviated
+IDs and command lines are rejected. Esc or a blank value preserves the current
+view and held log. While loading, help defers the handoff and navigation abandons
+it; passive browser refreshes do not change the requested target. A missing job
+shows an error without retrying. `l` returns to jobs with its filters preserved.
 
 Enter in plans, groups or external watches opens the relevant stage, member or
 latest probe log. `g` from jobs/details opens the recorded blocker's log; the

@@ -20,6 +20,12 @@ from agent_builds.store import Store
 @unittest.skipUnless(os.name == "posix", "requires a private pseudo-terminal")
 class LinkedLogTerminalTests(unittest.TestCase):
     def test_stalled_link_can_show_help_resize_cancel_and_quit_without_writes(self):
+        self.check_stalled_link("watch")
+
+    def test_stalled_direct_jump_keeps_prompt_help_resize_and_quit_usable(self):
+        self.check_stalled_link("jump")
+
+    def check_stalled_link(self, route):
         import fcntl
         import json
         import pty
@@ -173,12 +179,19 @@ class LinkedLogTerminalTests(unittest.TestCase):
                     wait_for(lambda screen: text in screen, repr(text))
 
                 see("BUILDR")
-                os.write(master, b"V")
-                see("BUILDR VIEWS")
-                os.write(master, b"External\n")
-                see("terminal-link-fixture")
-                self.assertFalse(started.exists())
-                os.write(master, b"\n")
+                if route == "jump":
+                    os.write(master, b"J")
+                    see("Open log: full job ID")
+                    self.assertFalse(started.exists())
+                    os.write(master, job_id.encode("ascii") + b"\n")
+                else:
+                    os.write(master, b"V")
+                    see("BUILDR VIEWS")
+                    os.write(master, b"External\n")
+                    see("terminal-link-fixture")
+                    self.assertFalse(started.exists())
+                    os.write(master, b"\n")
+                origin_heading = "JOBS" if route == "jump" else "EXTERNAL"
                 wait_for(
                     lambda screen: (
                         "Opening log " + job_id in screen and started.exists()
@@ -197,13 +210,15 @@ class LinkedLogTerminalTests(unittest.TestCase):
                 )
                 os.kill(child.pid, signal.SIGWINCH)
                 wait_for(
-                    lambda screen: "EXTERNAL" in screen and "Opening log" in screen,
+                    lambda screen: origin_heading in screen and "Opening log" in screen,
                     "compact watch view and pending notice after resize",
                 )
                 # Navigation cancels only the open intent, not its daemon read.
                 os.write(master, b"j")
                 wait_for(
-                    lambda screen: "EXTERNAL" in screen and "Opening log" not in screen,
+                    lambda screen: (
+                        origin_heading in screen and "Opening log" not in screen
+                    ),
                     "cancelled linked-log intent in the compact watch view",
                 )
                 os.write(master, b"q")
