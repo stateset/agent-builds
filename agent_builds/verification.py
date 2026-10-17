@@ -20,6 +20,21 @@ MAX_BYTES = 8 * 1024 * 1024
 STAGES = ("package", "browser_tests", "prompt_tests")
 
 
+def worker_command(work, identifier):
+    """Use the frozen workload even when its wrapper imports an older runner."""
+    return [
+        sys.executable,
+        "-I",
+        "-c",
+        "import sys; sys.path.insert(0,sys.argv[1]); "
+        "from agent_builds.verification import run_worker; "
+        "raise SystemExit(run_worker(sys.argv[2],sys.argv[3]))",
+        str(Path(work) / "checkout"),
+        str(work),
+        identifier,
+    ]
+
+
 def snapshot(root, destination):
     if (
         importlib.util.find_spec("build") is None

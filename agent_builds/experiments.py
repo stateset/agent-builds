@@ -83,7 +83,29 @@ def percentile(values):
     return sorted(values)[math.ceil(len(values) * 0.95) - 1] if values else None
 
 
-def arm(directory, scenario, mode, agents, cpus, cancelled, bundle=None):
+def arm(
+    directory,
+    scenario,
+    mode,
+    agents,
+    cpus,
+    cancelled,
+    bundle=None,
+    runner_package=None,
+    sampler_interval=0.02,
+):
+    if (
+        type(sampler_interval) not in (int, float)
+        or not math.isfinite(sampler_interval)
+        or not 0.02 <= sampler_interval <= 1
+    ):
+        raise ValueError("Sampler interval must be between 0.02 and 1 second")
+    if runner_package is not None and (
+        scenario != "buildr_verification" or mode != "queued"
+    ):
+        raise ValueError(
+            "Separate runner packages require the fixed queued Buildr workload"
+        )
     setup_started = time.monotonic()
     directory.mkdir(parents=True, mode=0o700)
     state = directory / "queue"
@@ -142,10 +164,12 @@ def arm(directory, scenario, mode, agents, cpus, cancelled, bundle=None):
     results = []
     sampler = JobSampler(os.getpid(), identity(os.getpid()))
     before = resource.getrusage(resource.RUSAGE_CHILDREN)
+    controller_cpu_started = time.process_time()
     wall_started = time.time()
     started = time.monotonic()
     deadline = started + (240 if scenario == "buildr_verification" else 120)
     last_tick = started
+    next_sample = started
     lag = []
     try:
         for index in range(1 if batched else agents):
@@ -175,9 +199,13 @@ def arm(directory, scenario, mode, agents, cpus, cancelled, bundle=None):
                 ]
             elif scenario == "buildr_verification":
                 command = workload_commands[index]
+                if runner_package is not None:
+                    from .verification import worker_command
+
+                    command = worker_command(work, identifier)
             env = dict(base_env)
             if scenario == "buildr_verification":
-                env["PYTHONPATH"] = str(work / "checkout")
+                env["PYTHONPATH"] = str(runner_package or work / "checkout")
             if mode == "queued":
                 # This is an explicit isolated scheduler experiment, not a
                 # nested submission to the production queue.
@@ -257,7 +285,9 @@ def arm(directory, scenario, mode, agents, cpus, cancelled, bundle=None):
             now = time.monotonic()
             lag.append(max(0, now - last_tick - 0.02))
             last_tick = now
-            sampler.sample()
+            if now >= next_sample:
+                sampler.sample()
+                next_sample = time.monotonic() + sampler_interval
             for item in list(processes):
                 code = item["child"].poll()
                 if code is None:
@@ -395,10 +425,13 @@ def arm(directory, scenario, mode, agents, cpus, cancelled, bundle=None):
             [r["completion_seconds"] for r in verified]
         ),
         sampled_process_tree_peak_rss_gb=sampler.peak / 1024**3,
+        sampler_interval_seconds=sampler_interval,
+        sampler_samples=sampler.samples,
         child_cpu_seconds=after.ru_utime
         + after.ru_stime
         - before.ru_utime
         - before.ru_stime,
+        controller_cpu_seconds=time.process_time() - controller_cpu_started,
         driver_loop_lag_p95_seconds=percentile(lag),
         results=sorted(results, key=lambda r: r["id"]),
     )

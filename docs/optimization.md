@@ -216,3 +216,37 @@ metadata never executes commands. The report preserves source identity and
 failures; timings measure this scanner workload rather than compiler throughput,
 terminal responsiveness or agent productivity. CI checks measurement parity
 without imposing a timing threshold on shared runners.
+
+### Before/after runner workload comparisons
+
+`verify_runner_cost.py` compares the current runner with the pinned, accepted
+commit immediately before the telemetry optimization (`c0aaabc`). Both runners
+execute exactly the same frozen copy of the current Buildr package/browser/prompt
+workload, with identical Python, queue limits, CPU affinity and worker hints. The
+controller uses the same candidate instrumentation for both engines, sampling
+at a recorded 100ms interval and reporting its own CPU cost. Sampled RSS may
+miss shorter peaks. This avoids
+comparing unrelated measurements taken in different sessions.
+
+Run from a clean committed checkout with the optional packaging tools installed:
+
+```sh
+buildr run --lane quick --jobs 2 --memory-gb 2 --timeout 1800 -- \
+  /path/to/developer/python tools/verify_runner_cost.py \
+    --pairs 4 --agents 4 --cpus 2 --output /tmp/new-runner-cost.json
+```
+
+The whole driver has one shared reservation. Inner queues, runner libraries and
+native build outputs belong to private fixtures. Four rounds alternate engine
+order; every logical agent builds a wheel/sdist and runs the browser and prompt
+suites once. Native workers import the frozen workload explicitly, even when
+launched by the older runner. No historical command is selected or retried.
+
+Reports retain native stage exits, artifact hashes, workload/archive identities,
+controller and child CPU observations, sampled RSS and execution/setup timings.
+Outer queue wait is excluded from execution time and remains in the outer job's
+record. Ratios require every expected job to verify and unchanged source; failures
+or interruptions preserve evidence and suppress conclusions. Existing report or
+progress paths cannot be reused. CPU/RSS are observations rather than cgroup
+limits. Host activity, caches and small samples affect timings; this measures
+Buildr's fixed verification workload, not broader agent coding productivity.
