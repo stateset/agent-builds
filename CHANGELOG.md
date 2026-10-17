@@ -2,6 +2,15 @@
 
 ## 0.26.1 (unreleased)
 
+- Read jobs/settings, host metrics and global queue summaries independently in
+  background workers; move selected evidence and remaining periodic tool reads
+  off the keyboard loop. Paint during initial load, retain labelled stale
+  snapshots, and show unknown totals instead of inferring global reservations
+  from filtered rows. Keep monitoring read-only and initialize writable state
+  only for deliberate actions; reload action-time configuration. Bound in-flight
+  reads, suspend hidden/help work and supervise disk scans so exit stops only the
+  owned scan worker and its descendants.
+
 - Add a `w` wait inspector with observation freshness, reservation and disk
   shortfalls, host RAM and recorded blocker chains. Keep job/checkout inspections
   pinned through browser churn, including confirmation and log handoffs.

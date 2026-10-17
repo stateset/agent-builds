@@ -2,16 +2,35 @@
 
 Run `buildr tui` in Ghostty, Herdr or another terminal. The dashboard adapts to
 split panes down to 20 columns by 8 rows. `q` closes it while jobs continue.
-Job snapshots and host metrics refresh once a second; keyboard input is checked
-every 200 ms. Queue health refreshes every two seconds. Displayed state can lag
-briefly; it is not an admission decision.
+Keyboard input is checked every 200 ms. Jobs/settings, host metrics and the global
+queue summary refresh independently in the background, at most once a second
+for jobs/metrics and every two seconds for the summary after a completed read.
+Each channel permits only one in-flight read. A slow metric or filesystem probe
+does not hold up job snapshots, navigation or quitting. Displayed state can lag;
+it is not an admission decision.
+
+Startup paints a loading screen while the first queue read is pending. Monitoring
+uses read-only connections and does not initialize/migrate an absent queue or run
+recovery sweeps. Missing state is labelled; explicit queue actions can initialize
+it. Each worker owns and closes its connection. Help suspends baseline refreshes.
+Successful data remains visible after a failed refresh with a stale label;
+initial errors and unknown global reservations are explicit. Filtered or bounded
+browser rows are never used to estimate global reservation totals.
+
+Deliberate actions open separate writable access. Pause, budget editing, plan
+validation and new-job defaults reload configuration at action time, so a stale
+display does not determine a toggle or overwrite current defaults. Queue lifecycle
+recovery stays with runners/controllers and the explicit recover command.
 
 The job browser reads lightweight rows rather than decoding full evidence for
 every loaded job. Full source, telemetry, batch results and wait history load
 only for the selected job while details are visible, including in narrow panes. Inline wait
 observations load separately for the selected job in the full split view;
 expanded tables, narrow monitors, help and focused logs do not request them.
-Selected reads refresh at most once a second and are released when hidden.
+Selected reads run in their own background channels, refresh at most once a
+second after completion and are released when hidden. Late evidence for a
+previous selection is discarded. A failed selected read clears its evidence and
+shows an error; an in-flight refresh can retain the previous accepted snapshot.
 Filtering and sorting reuse the same display snapshot until the jobs or local
 controls change. Selection and scrolling do not repeat that work.
 Unavailable details show a read error and retry on refresh, without displaying
@@ -156,7 +175,14 @@ views and undersized panes do not start reads. Failed refreshes label retained
 reports stale; initial errors wrap in the body. Report formatting/wrapping is
 cached and bounded at 64 Ki characters, with an explicit clipping notice.
 `buildr diagnose JOB`, `buildr diagnose`, and `buildr workbench JOB` provide
-CLI reports. Other dashboard reads retain their existing refresh behavior.
+CLI reports. The remaining periodic tool views (processes, announcements, remote records,
+plans, advisor, groups and watches) also load only while visible, in background
+workers. Plans and watches distinguish unverified controller liveness from an
+observed stop. Read failures remain visible even for previously empty reports.
+Read-only disk scans run only on `d` in an owned helper process. Closing the
+dashboard stops that helper and its `du` descendants without signalling queued
+builds. The helper uses a separate read-only connection and bounded output. Explicit
+action flows and bounded local log reads retain their own behavior.
 
 ## Command history
 
