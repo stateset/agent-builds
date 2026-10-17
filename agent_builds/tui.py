@@ -19,6 +19,7 @@ from .tui_logs import LogView, TailCache, strip_escapes
 from .tui_details import DetailsView
 from .tui_history import HistoryRead, HistoryView, inspect_history
 from .tui_prompt import edit as edit_prompt, job_context, recipient_context
+from .tui_views import VIEWS, choose as choose_view, footer as view_footer
 
 
 def tail(path, lines):
@@ -53,7 +54,9 @@ def compact_lines(rows, selected, plans, plan_index, view, config, height, width
         from .queue_health import banner
         lines += [banner(queue_health, compact=True)]
     selected_row = None
-    if view == 4:
+    if VIEWS[view].full:
+        lines += [VIEWS[view].name.upper(), 'Resize to 65x15', 'V chooses a view']
+    elif view == 4:
         room=max(1,height-len(lines)-3)
         page=history_view.page(history_repository,history_report,max(1,width-1),room) if history_view else []
         lines += ["HISTORY " + (history_view.position() if history_view else ""),history_status]+page
@@ -114,7 +117,7 @@ def compact_lines(rows, selected, plans, plan_index, view, config, height, width
         if rows:
             selected_row = rows[selected]
             if height < 12:
-                lines += [selected_row['state']+' '+selected_row['id']]
+                lines += [selected_row['id']+' '+selected_row['state']]
             else:
                 lines += [selected_row['id'],selected_row['state']]
             if selected_row['reason']:
@@ -124,7 +127,7 @@ def compact_lines(rows, selected, plans, plan_index, view, config, height, width
             lines += (tail_reader or tail)(Path(selected_row['log_path']), max(1, height-len(lines)-2))
         else:
             lines += ['No matching jobs' if browser and (browser['query'] or browser['mode']!='all' or browser.get('repository') is not None) else 'No jobs yet']
-    footer = 'j/k PgUp/Dn H q' if view==4 else 'PgUp/Dn i/l ? q' if view==3 else 'j/k scroll r back q' if view==12 else 'j/k scroll u back q' if view==11 else 'F R C Tab / f l ? q' if browser and view==0 else 'j/k move v views q'
+    footer = view_footer(view, width, compact=True)
     return lines[:height-1] + [footer]
 
 
@@ -157,7 +160,7 @@ def main(screen, cwd):
     screen.timeout(200)
     store = Store()
     selected = 0
-    message = '? help | / search | f filter | l logs | q quit (jobs continue)'
+    message = 'V views | ? help | / search | f filter | l logs | q quit (jobs continue)'
     browser_mode, browser_query = 'all',''
     browser_repository = None
     follow_head = False
@@ -290,7 +293,7 @@ def main(screen, cwd):
                 plan_index = next((i for i, p in enumerate(plan_rows) if p['id'] == plan_id), min(plan_index, max(0, len(plan_rows)-1)))
                 plan_id = plan_rows[plan_index]['id'] if plan_rows else None
                 last_plans = time.monotonic()
-            if view == 9 and time.monotonic()-last_groups >= 1:
+            if view == 9 and full_view and not help_active and time.monotonic()-last_groups >= 1:
                 from .groups import listing
                 with store.read_snapshot():
                     group_rows=listing(store,limit=20)
@@ -325,7 +328,7 @@ def main(screen, cwd):
                 for index,line in enumerate(log_page):
                     match=log_view.match_kind(index)
                     paint(screen,index+3,0,line,curses.A_REVERSE if match==2 else curses.color_pair(3) if match else 0)
-                paint(screen,height-1,0,'/ find  n/N match  End live  l jobs  ? help  q quit')
+                paint(screen,height-1,0,view_footer(13,width))
             elif compact:
                 browser=dict(mode=browser_mode,query=browser_query,loaded=len(loaded_rows),order=browser_order,expanded=jobs_expanded,repository=browser_repository,follow=follow_head)
                 for index, line in enumerate(compact_lines(rows, selected, plan_rows, plan_index, view, config, height, width, watch_rows, watch_index, health_result, health_offset,workbench_result,workbench_offset,queue_health_result,browser,read_tail,details_view,detail_row,detail_read.error,history_view,history_repository,history_report,history_status)):
@@ -527,15 +530,7 @@ def main(screen, cwd):
                     for index, line in enumerate(read_tail(store.log_path(row['id']), max(1, height - log_top - offset - 3))):
                         paint(screen, log_top + offset + index, 0, line)
                 paint(screen, height - 2, 0, message)
-                paint(screen, height - 1, 0, 'F follow  R repo  C clear  Tab table  / find  f filter  l log  ? q' if view==0 else 'PgUp/Dn Home/End  j/k job  i jobs  l logs  ? help  q quit' if view==3 else '? help  / search  f filter  s sort  l logs  i details  v views  q quit' if view!=7 else 'o plan  c cancel plan  r resume  e export  PgUp/PgDn scroll  v views  q quit')
-                if view==4:
-                    paint(screen,height-1,0,'j/k scroll  PgUp/PgDn page  Home/End  H jobs  v views  ? help  q quit')
-                elif view==10:
-                    paint(screen,height-1,0,'c stop observation  r resume controller  e export  Enter probe log  v views  q quit')
-                elif view==11:
-                    paint(screen,height-1,0,'j/k scroll  PgUp/PgDn page  u jobs  v views  q quit | read only')
-                elif view==12:
-                    paint(screen,height-1,0,'j/k scroll  f next trial  e draft profile  t trial reviewed file  r jobs  q quit')
+                paint(screen, height - 1, 0, view_footer(view, width))
             if help_active:
                 screen.erase()
                 content=[part for line in HELP for part in textwrap.wrap(line,max(1,width-2))]
@@ -560,6 +555,20 @@ def main(screen, cwd):
                 continue
             if key in (ord('q'), 27):
                 break
+            if key==ord('V'):
+                if height>=8 and width>=20:
+                    target=choose_view(screen,view,bool(rows),paint,has_log=view==13 and log_job is not None)
+                    if target is not None:
+                        if target==13 and view!=13:
+                            log_job=rows[selected] if rows else None
+                            log_view.select(log_job['id'] if log_job else None,log_job['log_path'] if log_job else None)
+                        if target==3 and view!=3:
+                            details_view.home()
+                        if target!=0 and follow_head:
+                            follow_head=False
+                            message='Selection pinned; F follows the first matching row.'
+                        view=target
+                continue
             if view==0:
                 if key==ord('F'):
                     follow_head=not follow_head
@@ -570,6 +579,10 @@ def main(screen, cwd):
                     message='Selection pinned; F follows the first matching row.'
             if key==ord('H') and height>=8 and width>=20:
                 view=0 if view==4 else 4
+                continue
+            if compact and VIEWS[view].full:
+                if key==ord('v'):
+                    view=0
                 continue
             if view==4:
                 if key in (ord('j'),curses.KEY_DOWN,ord('k'),curses.KEY_UP,curses.KEY_NPAGE,curses.KEY_PPAGE):

@@ -323,7 +323,10 @@ class ExternalWatchTests(unittest.TestCase):
         self.assertIn(handle,result)
         self.assertTrue(any('EXTERNAL' in line for line in result))
         self.assertTrue(any('idle' in line for line in result))
-        self.assertIn('v views',result[-1])
+        self.assertIn('V views',result[-1])
+        self.assertIn('j/k',result[-1])
+        self.assertIn('q',result[-1])
+        self.assertLessEqual(len(result[-1]),23)
 
     def test_empty_watch_view_cannot_cancel_or_mutate_an_unrelated_job(self):
         import curses

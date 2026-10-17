@@ -153,6 +153,10 @@ checked again immediately before sending; a changed recipient is skipped rather
 than prompted later. Delivery means input was submitted, not that policy was
 adopted. Uncertain submissions are never automatically retried.
 
+In `buildr tui`, press `V` to find a view by name or description; Enter opens it
+and Esc returns. The picker shows size/job requirements and works in narrow
+split panes. See the [TUI guide](docs/tui.md) for browsing and inspection controls.
+
 ## Documentation
 
 | Topic | Guide |

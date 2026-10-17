@@ -20,6 +20,7 @@ workbench retain their own inspection behavior.
 
 | Key | Action |
 | --- | --- |
+| `V` | Find and open a dashboard view; Esc returns |
 | `?` | Open scrollable help; Esc, `?` or `q` returns without taking an action |
 | `j` / `k`, arrows | Select a job |
 | `F` | Toggle following the first matching row in the jobs view |
@@ -38,13 +39,40 @@ workbench retain their own inspection behavior.
 | `r` | Selected-job workbench |
 | `v` | Cycle views |
 
+`V` opens a searchable view picker in full and narrow panes. Type to filter
+names and descriptions; Backspace edits and Ctrl+U clears. Arrows or Tab/Shift+Tab
+move through results, PgUp/PgDn page, and Home/End select first/last. Enter opens
+the highlighted view; Esc returns. Inside the picker, letters including `q`,
+`n`, `c` and `p` are search text. They never quit, submit, cancel or pause work.
+
+The picker marks the current view with `*` and unavailable views with `!`.
+The selected description explains its purpose or requirement. Full-pane tools
+require 65 columns by 15 rows; details, logs and workbench require a selected
+job. An already open log remains available even if its job leaves the browser.
+An unavailable selection stays in the picker until you resize or choose another
+view. Below 20x8, only Esc is accepted; query and selection survive resizing.
+
+Cancelling preserves the current view, following mode, job selection and held
+log position/search. Opening an inspection pins a followed job. The picker
+performs no inspections itself; periodic dashboard reads resume after it closes.
+Selecting a view never dispatches a build, sends an announcement, connects to a
+remote worker or applies advice. Existing deliberate action flows remain in
+their views. Lowercase `v` retains its existing cycling behavior.
+
+When a full-pane tool is resized into a narrow pane, it shows its name and size
+requirement rather than unrelated job output. `V` chooses an available view;
+`v` returns to jobs. Navigation keys do not move the hidden job selection.
+Footer hints adapt to width, retaining view-picker and quit controls without
+clipping them or advertising full-pane actions in narrow panes.
+
 Search is a literal, case-insensitive substring of one field; it does not read
 logs or source evidence. At most 256 search characters are retained. The job
 browser covers the bounded 200 loaded rows, not the complete history. Its label
 shows matching and loaded counts. Problems include failed, lost and timed-out
 jobs; deliberate cancellations are separate. Global queue health and reservation
 totals remain global when jobs are filtered. Narrow panes put the selected wait
-reason before repository details and logs.
+reason before repository details and logs. The smallest pane puts the full
+selected job handle before its state so the handle stays visible.
 
 `F` enables optional following in the jobs view. `JOBS FOLLOW` (or `FOLLOW` in
 narrow panes) marks the mode. Each refreshed snapshot selects its first row
