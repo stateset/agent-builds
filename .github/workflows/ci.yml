@@ -54,7 +54,7 @@ jobs:
       - name: Format and type checks for new coordination modules
         if: matrix.python == '3.12'
         run: |
-          python -m agent_builds run --lane quick --jobs 1 --memory-gb 1 --timeout 120 -- python -m ruff format --check agent_builds/execution_policy.py agent_builds/polling.py agent_builds/launch.py agent_builds/scale.py agent_builds/queue_health.py tests/test_coordination.py tests/test_scale.py tests/test_queue_health.py tests/test_admission_reads.py tests/test_lock_scaling.py tests/test_recovery_check.py tests/test_usage_contention.py agent_builds/tui_browser.py agent_builds/tui_logs.py agent_builds/tui_details.py agent_builds/output.py agent_builds/tui_prompt.py agent_builds/process_tree.py tests/test_process_tree.py tools/verify_telemetry_scan.py agent_builds/verification.py agent_builds/experiments.py tests/test_verification_workload.py tests/test_output.py tests/test_tui_prompt.py tests/test_tui_browser.py tests/test_tui_logs.py tests/test_tui_details.py tools/verify_admission_reads.py tools/verify_coordination.py tools/verify_installed.py tools/verify_recovery.py tools/verify_tui_cache.py
+          python -m agent_builds run --lane quick --jobs 1 --memory-gb 1 --timeout 120 -- python -m ruff format --check agent_builds/execution_policy.py agent_builds/polling.py agent_builds/launch.py agent_builds/scale.py agent_builds/queue_health.py tests/test_coordination.py tests/test_scale.py tests/test_queue_health.py tests/test_admission_reads.py tests/test_lock_scaling.py tests/test_recovery_check.py tests/test_usage_contention.py agent_builds/tui_browser.py agent_builds/tui_logs.py agent_builds/tui_details.py agent_builds/output.py agent_builds/tui_prompt.py agent_builds/process_tree.py tests/test_process_tree.py tools/verify_telemetry_scan.py agent_builds/verification.py agent_builds/engine_study.py tests/test_engine_study.py tools/verify_runner_cost.py agent_builds/experiments.py tests/test_verification_workload.py tests/test_output.py tests/test_tui_prompt.py tests/test_tui_browser.py tests/test_tui_logs.py tests/test_tui_details.py tools/verify_admission_reads.py tools/verify_coordination.py tools/verify_installed.py tools/verify_recovery.py tools/verify_tui_cache.py
           python -m agent_builds run --lane quick --jobs 1 --memory-gb 1 --timeout 120 -- python -m mypy --follow-imports=skip --check-untyped-defs agent_builds/execution_policy.py agent_builds/polling.py agent_builds/launch.py
       - name: Verify bounded admission reads with bulky evidence
         if: matrix.python == '3.12'
@@ -192,6 +192,41 @@ jobs:
         with:
           name: verification-workload
           path: ${{ runner.temp }}/verification-workload.json*
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Before and after runner workload acceptance
+        if: matrix.python == '3.12'
+        run: >-
+          python -m agent_builds run --lane quick --jobs 2 --memory-gb 2 --timeout 600 --
+          python tools/verify_runner_cost.py --pairs 1 --agents 2 --cpus 2
+          --output '${{ runner.temp }}/runner-cost.json'
+      - name: Independently check runner comparison evidence
+        if: matrix.python == '3.12'
+        run: |
+          python - <<'PYTHON'
+          import json, os
+          from pathlib import Path
+          report=json.loads((Path(os.environ['RUNNER_TEMP'])/'runner-cost.json').read_text())
+          assert report['result']=='passed' and report['verification_valid'] and report['source_changed'] is False
+          assert report['baseline']['commit']=='c0aaabc0c7abed34d95988ba0c84cd8d9cf746ab'
+          assert len(report['records'])==2 and {r['engine'] for r in report['records']}=={'baseline','candidate'}
+          assert len(report['comparisons'])==1
+          for arm in report['records']:
+              assert arm['jobs']==arm['verified_jobs']==2 and arm['failed_jobs']==0
+              assert arm['sampler_interval_seconds']==0.1 and arm['sampler_samples']>0
+              assert {j['id'] for j in arm['results']}=={'agent-0','agent-1'}
+              for job in arm['results']:
+                  assert job['verified'] and job['exit_code']==0
+                  proof=job['verification']
+                  assert [s['name'] for s in proof['stages']]==['package','browser_tests','prompt_tests']
+                  assert all(s['exit_code']==0 for s in proof['stages']) and len(proof['artifacts'])==2
+          PYTHON
+      - name: Retain runner comparison evidence
+        if: always() && matrix.python == '3.12'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: runner-cost
+          path: ${{ runner.temp }}/runner-cost.json*
           if-no-files-found: warn
           retention-days: 14
       - name: Retain verified release distributions

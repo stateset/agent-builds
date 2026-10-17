@@ -2,6 +2,11 @@
 
 ## 0.26.1 (unreleased)
 
+- Add paired before/after runner studies using one frozen package/test workload,
+  a pinned pre-telemetry runner and common controller instrumentation. Preserve
+  native results, setup cost, CPU/RSS observations and interrupted evidence;
+  withhold comparisons for incomplete or changed-source work.
+
 - Reduce process-telemetry path overhead and expand descendant membership with
   an indexed traversal. Preserve PID/start identity and process-group rules,
   bound stat-file reads, and tolerate non-UTF-8 Linux process names. Add a paired
