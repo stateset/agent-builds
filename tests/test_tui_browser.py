@@ -56,6 +56,7 @@ class TuiBrowserTests(unittest.TestCase):
         answers=None,
         background_submit=None,
         log_submit=None,
+        log_status_submit=None,
         state_path=None,
         on_update=None,
     ):
@@ -98,8 +99,9 @@ class TuiBrowserTests(unittest.TestCase):
 
         with mock.patch(
             "agent_builds.tui.submit_read", side_effect=background_submit or completed
-        ), mock.patch(
-            "agent_builds.tui.submit_log_read", side_effect=logs
+        ), mock.patch("agent_builds.tui.submit_log_read", side_effect=logs), mock.patch(
+            "agent_builds.tui.submit_log_status_read",
+            side_effect=log_status_submit or completed,
         ), mock.patch.dict(
             os.environ, AGENT_BUILDS_STATE=str(state_path or self.store.root)
         ), mock.patch(
