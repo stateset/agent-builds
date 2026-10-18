@@ -2,6 +2,11 @@
 
 ## 0.26.2 (unreleased)
 
+- Add repeatable native-terminal observations against an explicit baseline,
+  with paired order, full/narrow panes, stalled reads, retained partial failures
+  and source checks. CI verifies and retains the measurements without treating
+  observed timings as a latency guarantee or coding-productivity result.
+
 - Search dashboard help with `/`, preserving query and scroll position when
   reopening it. Add Home/End navigation and cache wrapping across idle frames.
 

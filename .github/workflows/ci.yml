@@ -65,7 +65,8 @@ jobs:
             agent_builds/tui_links.py tests/test_tui_link_reads.py tests/test_tui_links.py \
             tests/test_tui_link_navigation.py tests/test_tui_link_terminal.py \
             tests/test_tui_read_freshness.py tests/test_tui_snapshot_freshness.py tests/test_tui_jump.py \
-            agent_builds/tui_help.py tests/test_tui_help.py
+            agent_builds/tui_help.py tests/test_tui_help.py \
+            tools/verify_tui_responsiveness.py tests/test_tui_responsiveness.py
           python -m agent_builds run --lane quick --jobs 1 --memory-gb 1 --timeout 120 -- python -m mypy --follow-imports=skip --check-untyped-defs agent_builds/execution_policy.py agent_builds/polling.py agent_builds/launch.py
       - name: Verify bounded admission reads with bulky evidence
         if: matrix.python == '3.12'
@@ -116,6 +117,41 @@ jobs:
         run: >-
           python -m agent_builds run --lane quick --jobs 1 --memory-gb 2 --timeout 120 --
           python tools/verify_tui_cache.py --output '${{ runner.temp }}/tui-cache.json'
+      - name: Observe native terminal response with a stalled reader
+        if: matrix.python == '3.12'
+        run: |
+          git worktree add --detach "$RUNNER_TEMP/buildr-tui-latency-baseline" v0.26.1
+          python -m agent_builds run --lane quick --jobs 1 --memory-gb 2 --timeout 180 -- python tools/verify_tui_responsiveness.py --baseline-checkout "$RUNNER_TEMP/buildr-tui-latency-baseline" --output "$RUNNER_TEMP/tui-responsiveness.json"
+      - name: Independently verify native terminal observations
+        if: matrix.python == '3.12'
+        run: |
+          python - <<'PYTHON'
+          import json, math, os, statistics
+          from pathlib import Path
+          report=json.loads((Path(os.environ['RUNNER_TEMP'])/'tui-responsiveness.json').read_text())
+          assert report['result']=='passed' and report['source_changed'] is False
+          assert report['sources']['candidate']['commit']==os.environ['GITHUB_SHA']
+          assert len(report['records'])==4
+          assert {(r['mode'],r['pair']) for r in report['records']}=={(m,p) for m in ('baseline','candidate') for p in range(2)}
+          for row in report['records']:
+              assert row['native_exit']==0 and row['read_still_stalled'] and row['state_remained_missing']
+              assert row['observed_help_sizes']==[[8,20],[24,100]]
+              assert row['sample_count']==len(row['samples'])==22 and row['p95_method']=='nearest-rank'
+              assert row['source']==report['sources'][row['mode']]['commit']
+              times=sorted(s['seconds'] for s in row['samples'])
+              assert all(math.isfinite(t) and t>=0 for t in times)
+              assert row['median_seconds']==statistics.median(times)
+              assert row['p95_seconds']==times[math.ceil(.95*len(times))-1]
+              assert row['max_seconds']==max(times)
+          PYTHON
+      - name: Retain native terminal observations
+        if: always() && matrix.python == '3.12'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: tui-responsiveness
+          path: ${{ runner.temp }}/tui-responsiveness.json
+          if-no-files-found: warn
+          retention-days: 14
       - name: Independently verify dashboard cache evidence
         if: matrix.python == '3.12'
         run: |
@@ -163,7 +199,19 @@ jobs:
           --timeout 120 -- python -m build
       - name: Validate distributions
         if: matrix.python == '3.12'
-        run: python -m twine check dist/*
+        run: |
+          python -m twine check dist/*
+          python - <<'PYTHON'
+          from pathlib import Path
+          import tarfile
+          archives=list(Path('dist').glob('*.tar.gz'))
+          assert len(archives)==1
+          with tarfile.open(archives[0]) as source:
+              for name in ('tools/verify_tui_responsiveness.py','tests/test_tui_responsiveness.py','tests/tui_terminal.py'):
+                  matches=[entry for entry in source.getmembers() if entry.name.endswith('/'+name)]
+                  assert len(matches)==1 and matches[0].isfile(),name
+                  assert source.extractfile(matches[0]).read()==Path(name).read_bytes(),name
+          PYTHON
       - name: Verify native and batch execution from an installed wheel
         if: matrix.python == '3.12'
         shell: bash

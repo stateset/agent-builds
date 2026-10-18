@@ -2,3 +2,4 @@ include LICENSE NOTICE README.md CHANGELOG.md CONTRIBUTING.md SECURITY.md
 recursive-include docs *.md
 recursive-include examples *.json
 include tests/tui_terminal.py
+include tools/verify_tui_responsiveness.py

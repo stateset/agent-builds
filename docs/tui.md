@@ -400,3 +400,33 @@ No fixture command executes and the global queue configuration is unchanged.
 Reports require a new path outside the checkout. CI independently verifies the
 report and retains it as `tui-cache`. Timings are observations, not thresholds;
 this measures selected hot paths, not terminal frame rate or coding productivity.
+
+## Repeatable terminal observations
+
+The repository's native terminal check uses private pseudo-terminals at 100x24
+and 20x8, while a real background queue read remains deliberately stalled. It
+opens and closes help repeatedly, records key-to-screen times, help wrapping
+calls, quit time and host pressure, then reverses baseline/candidate order.
+It submits no fixture jobs, preserves missing private queue state, and never
+touches real Ghostty or Herdr panes.
+
+Use clean source checkouts, a full clone with tests, and a new report path outside
+both trees. The entire observer belongs in one shared reservation:
+
+```sh
+git worktree add --detach /tmp/buildr-tui-baseline v0.26.1
+buildr run --lane quick --jobs 1 --memory-gb 2 --timeout 180 -- \
+  python3 tools/verify_tui_responsiveness.py \
+  --baseline-checkout /tmp/buildr-tui-baseline --output /tmp/tui-response.json
+```
+
+Reports retain completed arms and the current unconfirmed arm when a read,
+terminal, source check or catchable interruption fails. SIGTERM follows the same
+owned-child cleanup and report path. There is no automatic retry or
+overwrite. A changed or dirty source cannot produce a passing result. Timings
+include process scheduling and terminal parsing; p95 uses nearest rank over
+22 key-to-screen samples per arm, with quit measured separately. CI retains
+these observations and checks native completion and isolation. Passing proves
+the controlled interaction completed; it sets no timing SLA and does not prove
+agent productivity or statistical significance. Initial loading, waiting for
+queue admission and terminal startup are outside the key-response samples.
