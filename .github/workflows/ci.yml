@@ -199,7 +199,19 @@ jobs:
           --timeout 120 -- python -m build
       - name: Validate distributions
         if: matrix.python == '3.12'
-        run: python -m twine check dist/*
+        run: |
+          python -m twine check dist/*
+          python - <<'PYTHON'
+          from pathlib import Path
+          import tarfile
+          archives=list(Path('dist').glob('*.tar.gz'))
+          assert len(archives)==1
+          with tarfile.open(archives[0]) as source:
+              for name in ('tools/verify_tui_responsiveness.py','tests/test_tui_responsiveness.py','tests/tui_terminal.py'):
+                  matches=[entry for entry in source.getmembers() if entry.name.endswith('/'+name)]
+                  assert len(matches)==1 and matches[0].isfile(),name
+                  assert source.extractfile(matches[0]).read()==Path(name).read_bytes(),name
+          PYTHON
       - name: Verify native and batch execution from an installed wheel
         if: matrix.python == '3.12'
         shell: bash
