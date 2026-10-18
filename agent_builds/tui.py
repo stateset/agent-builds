@@ -25,6 +25,7 @@ from .tui_reads import submit_read as submit_log_read
 from .tui_reads import submit_read as submit_log_status_read
 from .tui_log_reads import LogReads
 from .tui_links import LogLinks
+from .tui_help import HelpView
 from .tui_reads import submit_read as submit_link_read
 from .tui_submissions import SubmissionTracker
 from .tui_reads import submit_read as submit_submission_read
@@ -193,7 +194,7 @@ def main(screen, cwd):
     browser_repository = None
     follow_head = False
     browser_order,jobs_expanded='queue',False
-    help_active, help_offset = False,0
+    help_active, help_view = False,HelpView(HELP)
     loaded_rows, metrics = [],None
     browser_read=SnapshotRead(lambda key: read_browser(store.root),interval=1,submit=submit_read,label='queue snapshot')
     metrics_read=SnapshotRead(lambda key: snapshot(cwd),interval=1,submit=submit_read,label='host metrics')
@@ -633,13 +634,17 @@ def main(screen, cwd):
                 paint(screen, height - 1, 0, view_footer(view, width))
             if help_active:
                 screen.erase()
-                content=[part for line in HELP for part in textwrap.wrap(line,max(1,width-2))]
-                room=max(1,height-3)
-                help_offset=min(max(0,help_offset),max(0,len(content)-room))
-                paint(screen,0,0,'BUILDR HELP | shared queue',curses.A_BOLD)
-                for index,line in enumerate(content[help_offset:help_offset+room]):
-                    paint(screen,index+1,0,line)
-                paint(screen,height-1,0,'Esc/?/q back | j/k scroll')
+                query_rows=1 if help_view.query else 0
+                content=help_view.page(max(1,width-2),max(1,height-3-query_rows))
+                paint(screen,0,0,'BUILDR HELP | '+help_view.position(),curses.A_BOLD)
+                if help_view.query:
+                    paint(screen,1,0,'Find: '+help_view.query)
+                for index,line in enumerate(content):
+                    paint(screen,index+1+query_rows,0,line)
+                if not content:
+                    paint(screen,1+query_rows,0,'No matching help')
+                paint(screen,height-2,0,'/ search | blank clears' if width>=25 else '/ find blank clears')
+                paint(screen,height-1,0,'Esc/?/q back | j/k PgUp/PgDn Home/End' if width>=40 else 'Esc back j/k Pg ? q')
             elif log_links.status and height>=8 and width>=20:
                 paint(screen,height-2,0,log_links.status)
             if not log_visible:
@@ -650,12 +655,20 @@ def main(screen, cwd):
                 if key in (ord('?'),ord('q'),27):
                     help_active=False
                 elif key in (ord('j'),curses.KEY_DOWN,curses.KEY_NPAGE):
-                    help_offset+=max(1,height-3) if key==curses.KEY_NPAGE else 1
+                    help_view.scroll(1,key==curses.KEY_NPAGE)
                 elif key in (ord('k'),curses.KEY_UP,curses.KEY_PPAGE):
-                    help_offset=max(0,help_offset-(max(1,height-3) if key==curses.KEY_PPAGE else 1))
+                    help_view.scroll(-1,key==curses.KEY_PPAGE)
+                elif key==curses.KEY_HOME:
+                    help_view.home()
+                elif key==curses.KEY_END:
+                    help_view.end()
+                elif key==ord('/') and height>=8 and width>=20:
+                    query=prompt(screen,'Find help (blank clears)',help_view.query)
+                    if query is not None:
+                        help_view.search(query)
                 continue
             if key==ord('?'):
-                help_active,help_offset=True,0
+                help_active=True
                 continue
             if key not in (-1,curses.KEY_RESIZE):
                 log_links.cancel()

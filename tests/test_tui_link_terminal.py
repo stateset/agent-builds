@@ -202,6 +202,11 @@ class LinkedLogTerminalTests(unittest.TestCase):
                 self.assertEqual(request[1:], ["browser", job_id])
                 os.write(master, b"?")
                 see("BUILDR HELP")
+                if route == "jump":
+                    os.write(master, b"/")
+                    see("Find help (blank clears)")
+                    os.write(master, b"blocker\n")
+                    see("Find: blocker")
                 os.write(master, b"q")
                 see("Opening log " + job_id)
                 terminal.resize(8, 20)
@@ -213,6 +218,15 @@ class LinkedLogTerminalTests(unittest.TestCase):
                     lambda screen: origin_heading in screen and "Opening log" in screen,
                     "compact watch view and pending notice after resize",
                 )
+                if route == "jump":
+                    os.write(master, b"?")
+                    see("Find: blocker")
+                    os.write(master, b"/")
+                    see("BUILDR INPUT")
+                    os.write(master, b"\x15missing-help-text\n")
+                    see("No matching help")
+                    os.write(master, b"q")
+                    see("Opening log")
                 # Navigation cancels only the open intent, not its daemon read.
                 os.write(master, b"j")
                 wait_for(

@@ -52,7 +52,7 @@ history likewise keeps its checkout until you leave the view.
 | --- | --- |
 | `V` | Find and open a dashboard view; Esc returns |
 | `J` | Open a log by its full 12-character job ID, from any view |
-| `?` | Open scrollable help; Esc, `?` or `q` returns without taking an action |
+| `?` | Open searchable help; Esc, `?` or `q` returns without taking an action |
 | `j` / `k`, arrows | Select a job |
 | `F` | Toggle following the first matching row in the jobs view |
 | PgUp / PgDn, Home / End | Page through jobs or select first/last in the jobs view |
@@ -77,6 +77,16 @@ names and descriptions; Backspace edits and Ctrl+U clears. Arrows or Tab/Shift+T
 move through results, PgUp/PgDn page, and Home/End select first/last. Enter opens
 the highlighted view; Esc returns. Inside the picker, letters including `q`,
 `n`, `c` and `p` are search text. They never quit, submit, cancel or pause work.
+
+Inside help, `/` finds instructions using literal, case-insensitive text. Search
+matches complete instructions before wrapping, so a phrase can span screen lines.
+Blank input clears the search; Esc cancels the prompt and preserves the current
+query and position. j/k and arrows scroll, PgUp/PgDn page, and Home/End move to the
+first/last page. Query and position survive leaving and reopening help. A missing
+match is labelled explicitly. Help search is independent of job/log filters and
+remains available while background reads are stalled. Help consumes action keys
+and performs no queue writes. Its wrapped layout is reused across idle frames,
+scrolling and height changes; width or query changes rebuild it.
 
 The picker marks the current view with `*` and unavailable views with `!`.
 The selected description explains its purpose or requirement. Full-pane tools
