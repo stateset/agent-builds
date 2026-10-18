@@ -75,6 +75,12 @@ def measure(root, expected, mode, pair):
                 blocked.wait()
                 raise AssertionError('Read unexpectedly released')
             calls = [0]
+            sizes = set()
+            painting = tui.paint
+            def painted(screen, y, x, text, *args):
+                if str(text).startswith('BUILDR HELP'):
+                    sizes.add(screen.getmaxyx())
+                return painting(screen, y, x, text, *args)
             wrapping = textwrap.wrap
             def wrapped(text, *args, **kwargs):
                 if text in tui.HELP:
@@ -87,6 +93,7 @@ def measure(root, expected, mode, pair):
             try:
                 with contextlib.ExitStack() as guards:
                     guards.enter_context(patch.object(tui, 'read_browser', side_effect=stalled))
+                    guards.enter_context(patch.object(tui, 'paint', side_effect=painted))
                     guards.enter_context(patch.object(textwrap, 'wrap', side_effect=wrapped))
                     guards.enter_context(patch.object(LazyStore, 'writable', side_effect=forbidden))
                     for name in ('_ensure_schema', 'submit', 'recover'):
@@ -94,7 +101,7 @@ def measure(root, expected, mode, pair):
                     guards.enter_context(patch('subprocess.Popen', side_effect=forbidden))
                     runpy.run_module('agent_builds', run_name='__main__')
             finally:
-                output.write_text(json.dumps({'help_wrap_calls': calls[0], 'read_still_stalled': not blocked.is_set()}))
+                output.write_text(json.dumps({'help_wrap_calls': calls[0], 'read_still_stalled': not blocked.is_set(), 'observed_help_sizes': sorted(sizes)}))
         """)
         env = dict(
             os.environ,
@@ -196,6 +203,7 @@ def measure(root, expected, mode, pair):
             quit_seconds = time.monotonic() - started
             counts = json.loads(counters.read_text())
             assert counts["read_still_stalled"] and not state.exists()
+            assert counts["observed_help_sizes"] == [[8, 20], [24, 100]]
             assert identity(root) == expected
             timings = sorted(row["seconds"] for row in observations)
             return dict(

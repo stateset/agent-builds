@@ -135,6 +135,7 @@ jobs:
           assert {(r['mode'],r['pair']) for r in report['records']}=={(m,p) for m in ('baseline','candidate') for p in range(2)}
           for row in report['records']:
               assert row['native_exit']==0 and row['read_still_stalled'] and row['state_remained_missing']
+              assert row['observed_help_sizes']==[[8,20],[24,100]]
               assert row['sample_count']==len(row['samples'])==22 and row['p95_method']=='nearest-rank'
               assert row['source']==report['sources'][row['mode']]['commit']
               times=sorted(s['seconds'] for s in row['samples'])
