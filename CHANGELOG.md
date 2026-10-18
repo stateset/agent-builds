@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.26.2 (unreleased)
 
 - Search dashboard help with `/`, preserving query and scroll position when
   reopening it. Add Home/End navigation and cache wrapping across idle frames.
