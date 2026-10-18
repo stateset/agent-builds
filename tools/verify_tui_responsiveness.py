@@ -319,7 +319,15 @@ def main():
     parser.add_argument("--baseline-checkout", required=True)
     parser.add_argument("--output", required=True)
     args = parser.parse_args()
-    run(args.baseline_checkout, args.output)
+
+    def interrupted(signum, frame):
+        raise SystemExit(128 + signum)
+
+    previous = signal.signal(signal.SIGTERM, interrupted)
+    try:
+        run(args.baseline_checkout, args.output)
+    finally:
+        signal.signal(signal.SIGTERM, previous)
 
 
 if __name__ == "__main__":

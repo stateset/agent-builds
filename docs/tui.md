@@ -421,7 +421,8 @@ buildr run --lane quick --jobs 1 --memory-gb 2 --timeout 180 -- \
 ```
 
 Reports retain completed arms and the current unconfirmed arm when a read,
-terminal, source check or interruption fails. There is no automatic retry or
+terminal, source check or catchable interruption fails. SIGTERM follows the same
+owned-child cleanup and report path. There is no automatic retry or
 overwrite. A changed or dirty source cannot produce a passing result. Timings
 include process scheduling and terminal parsing; p95 uses nearest rank over
 22 key-to-screen samples per arm, with quit measured separately. CI retains

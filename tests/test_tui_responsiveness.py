@@ -61,7 +61,11 @@ class ResponsivenessReportTests(unittest.TestCase):
         self.assertEqual(json.loads(self.output.read_text()), result)
 
     def test_failure_and_interruption_preserve_completed_and_unknown_current_arm(self):
-        for exception in (RuntimeError("fixture failure"), KeyboardInterrupt()):
+        for exception in (
+            RuntimeError("fixture failure"),
+            KeyboardInterrupt(),
+            SystemExit(143),
+        ):
             output = self.root / ("report-" + type(exception).__name__ + ".json")
             with self.subTest(exception=type(exception).__name__), mock.patch.object(
                 observer,
@@ -75,7 +79,9 @@ class ResponsivenessReportTests(unittest.TestCase):
             self.assertEqual(result["current_arm"], dict(mode="candidate", pair=0))
             self.assertEqual(
                 result["result"],
-                "interrupted" if isinstance(exception, KeyboardInterrupt) else "failed",
+                "interrupted"
+                if isinstance(exception, (KeyboardInterrupt, SystemExit))
+                else "failed",
             )
             self.assertIsNone(result["source_changed"])
 
