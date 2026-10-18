@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Search dashboard help with `/`, preserving query and scroll position when
+  reopening it. Add Home/End navigation and cache wrapping across idle frames.
+
 ## 0.26.1 — 2026-10-18
 
 - Wait for the owned detached runner in the concurrent MCP submission test before

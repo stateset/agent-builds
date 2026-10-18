@@ -175,6 +175,8 @@ def label(
 
 
 HELP = (
+    "HELP: / searches these instructions literally, ignoring case; blank clears. Esc/?/q returns.",
+    "In help: j/k or arrows scroll; PgUp/PgDn page; Home/End first/last. Query and position survive reopening.",
     "FIND A VIEW",
     "J: open a log by full job ID from any view (20x8 minimum); Esc/blank cancels",
     "Job lookup ignores browser filters/history limits. Navigation abandons pending lookup; l returns to jobs.",
