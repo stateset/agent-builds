@@ -1,5 +1,36 @@
 # Buildr dashboard
 
+## Repeatable terminal observations
+
+The repository's native terminal check uses private pseudo-terminals at 100x24
+and 20x8, while a real background queue read remains deliberately stalled. It
+opens and closes help repeatedly, records key-to-screen times, help wrapping
+calls, quit time and host pressure, then reverses baseline/candidate order.
+It submits no fixture jobs, preserves missing private queue state, and never
+touches real Ghostty or Herdr panes.
+
+Use clean source checkouts, a full clone with tests, and a new report path outside
+both trees. The entire observer belongs in one shared reservation:
+
+```sh
+git worktree add --detach /tmp/buildr-tui-baseline v0.26.1
+buildr run --lane quick --jobs 1 --memory-gb 2 --timeout 180 -- \
+  python3 tools/verify_tui_responsiveness.py \
+  --baseline-checkout /tmp/buildr-tui-baseline --output /tmp/tui-response.json
+```
+
+Reports retain completed arms and the current unconfirmed arm when a read,
+terminal, source check or interruption fails. There is no automatic retry or
+overwrite. A changed or dirty source cannot produce a passing result. Timings
+include process scheduling and terminal parsing; p95 uses nearest rank over
+22 key-to-screen samples per arm, with quit measured separately. CI retains
+these observations and checks native completion and isolation. Passing proves
+the controlled interaction completed; it sets no timing SLA and does not prove
+agent productivity or statistical significance. Initial loading, waiting for
+queue admission and terminal startup are outside the key-response samples.
+
+## Using the dashboard
+
 Run `buildr tui` in Ghostty, Herdr or another terminal. The dashboard adapts to
 split panes down to 20 columns by 8 rows. `q` closes it while jobs continue.
 Keyboard input is checked every 200 ms. Jobs/settings, host metrics and the global
