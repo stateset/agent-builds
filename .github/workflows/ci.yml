@@ -126,16 +126,22 @@ jobs:
         if: matrix.python == '3.12'
         run: |
           python - <<'PYTHON'
-          import json, os
+          import json, math, os, statistics
           from pathlib import Path
           report=json.loads((Path(os.environ['RUNNER_TEMP'])/'tui-responsiveness.json').read_text())
           assert report['result']=='passed' and report['source_changed'] is False
+          assert report['sources']['candidate']['commit']==os.environ['GITHUB_SHA']
           assert len(report['records'])==4
           assert {(r['mode'],r['pair']) for r in report['records']}=={(m,p) for m in ('baseline','candidate') for p in range(2)}
           for row in report['records']:
               assert row['native_exit']==0 and row['read_still_stalled'] and row['state_remained_missing']
               assert row['sample_count']==len(row['samples'])==22 and row['p95_method']=='nearest-rank'
-              assert all(s['seconds']>=0 for s in row['samples'])
+              assert row['source']==report['sources'][row['mode']]['commit']
+              times=sorted(s['seconds'] for s in row['samples'])
+              assert all(math.isfinite(t) and t>=0 for t in times)
+              assert row['median_seconds']==statistics.median(times)
+              assert row['p95_seconds']==times[math.ceil(.95*len(times))-1]
+              assert row['max_seconds']==max(times)
           PYTHON
       - name: Retain native terminal observations
         if: always() && matrix.python == '3.12'
