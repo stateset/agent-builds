@@ -136,10 +136,26 @@ class MCPTests(unittest.TestCase):
     def test_concurrent_connections_with_same_key_create_only_one_job(self):
         import concurrent.futures
         args = self.arguments()
-        with mock.patch.dict(os.environ, self.env, clear=True):
-            with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
-                results = list(pool.map(lambda _: mcp.call('buildr_submit', args), range(2)))
-            final = mcp.call('buildr_submission', dict(request_key=args['request_key']))
+        runners = []
+        launch = subprocess.Popen
+
+        def owned_runner(*arguments, **keywords):
+            child = launch(*arguments, **keywords)
+            runners.append(child)
+            return child
+
+        try:
+            with mock.patch.dict(os.environ, self.env, clear=True), \
+                    mock.patch('agent_builds.runner.subprocess.Popen', side_effect=owned_runner):
+                with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+                    results = list(pool.map(lambda _: mcp.call('buildr_submit', args), range(2)))
+                final = mcp.call('buildr_submission', dict(request_key=args['request_key']))
+        finally:
+            # A receipt precedes admission and final runner writes. Reap the
+            # exact fixture process before tearDown can remove its state.
+            for child in runners:
+                self.assertEqual(child.wait(timeout=20), 0)
+        self.assertEqual(len(runners), 1)
         self.assertEqual(len(self.store.rows()), 1)
         self.assertEqual(final['submission_state'], 'submitted')
         self.assertTrue(all(r['replay_safe'] for r in results))

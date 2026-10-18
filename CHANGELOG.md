@@ -1,6 +1,9 @@
 # Changelog
 
-## 0.26.1 (unreleased)
+## 0.26.1 — 2026-10-18
+
+- Wait for the owned detached runner in the concurrent MCP submission test before
+  removing its temporary queue, avoiding a race with queued fixture startup.
 
 - Open logs by full job ID with `J` from any supported pane, independently of
   browser filters and history limits, with asynchronous lookup and visible errors.
