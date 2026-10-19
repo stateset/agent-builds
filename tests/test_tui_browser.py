@@ -66,9 +66,7 @@ class TuiBrowserTests(unittest.TestCase):
             ),
             pressure,
         )
-        self.assertTrue(
-            any("CPU 80.0% some" in line for line in pressure), pressure
-        )
+        self.assertTrue(any("CPU 80.0% some" in line for line in pressure), pressure)
 
     def dashboard(
         self,
