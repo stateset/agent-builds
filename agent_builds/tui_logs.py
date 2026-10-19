@@ -63,10 +63,7 @@ class TailCache:
             return False
         self.last_poll, self.signature, self.error = now, result.signature, result.error
         if result.lines is not None:
-            lines = list(result.lines)
-            changed = lines != self.lines
-            if changed:
-                self.lines = lines
+            self.lines = list(result.lines)
             self.clipped = result.clipped
             self.loaded = result.error is None
             if not result.error:
@@ -224,7 +221,10 @@ class LogView:
         self.last_read, self.signature, self.error = now, result.signature, result.error
         self.observed = now
         if result.lines is not None:
-            self.lines = list(result.lines)
+            lines = list(result.lines)
+            changed = lines != self.lines
+            if changed:
+                self.lines = lines
             self.clipped = result.clipped
             self.loaded = result.error is None
             if not result.error:
