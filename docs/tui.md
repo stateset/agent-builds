@@ -335,7 +335,17 @@ or changing its selected item abandons the pending handoff; a late result cannot
 switch you back. Help defers the handoff until it closes. A failed lookup shows
 an error and stays in the originating view; it is not retried automatically.
 Plans, watches and blocker links work in narrow panes; groups retain their
-existing full-pane size requirement. `l` returns from the log to jobs.
+existing full-pane size requirement.
+
+`b` returns from a log to the view that opened it, including its selected receipt,
+plan, group, watch or pinned inspected job. `l` returns directly to jobs.
+The source is recorded only when a log opens successfully; cancelling or failing
+a lookup leaves it unchanged. A `J` jump from an already open log keeps the same
+source rather than building a navigation stack. Help consumes `b`, and panes
+smaller than 20x8 ignore it. Returning to a full-size-only source in a narrow
+pane shows its size requirement. Views refresh normally after returning; this
+preserves the source identity, not a frozen copy of its evidence. Missing tool
+items follow their view's existing selection rules.
 
 Focused logs refresh the pinned job's state on a separate read-only connection,
 including after it leaves the 200-row browser. Holding or searching output does

@@ -628,9 +628,10 @@ class TuiBrowserTests(unittest.TestCase):
         self.store.log_path(self.jobs[0]).write_text("readable log\n")
         for size in ((20, 100), (8, 20)):
             frames = self.dashboard(
-                [ord("l"), *map(ord, "pcbnat"), ord(" "), ord("q")], size
+                [ord("l"), *map(ord, "pcnat"), ord(" "), ord("b"), ord("q")], size
             )
-            text = "\n".join(frames[-1].values())
+            text = "\n".join(frames[-2].values())
+            self.assertIn("JOBS", "\n".join(frames[-1].values()))
             self.assertIn("LOG HELD", text)
             self.assertIn("readable log", text)
             self.assertIn(self.jobs[0], text)

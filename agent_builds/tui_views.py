@@ -237,7 +237,7 @@ _FULL_FOOTERS = {
     10: "V views  c stop observation  r resume controller  e export  Enter probe log  v next  q quit",
     11: "V views  j/k scroll  PgUp/PgDn page  u jobs  v next  q quit | read only",
     12: "V views  j/k scroll  f next trial  e draft profile  t trial reviewed file  r jobs  q quit",
-    13: "V views  J job  / find  n/N match  End live  l jobs  ? help  q quit",
+    13: "V views  b back  J job  / find  n/N match  End live  l jobs  ? help  q quit",
 }
 _MEDIUM_FOOTERS = {
     15: "V Tab receipt j/k Pg Home/End U jobs ? q",
@@ -250,7 +250,7 @@ _MEDIUM_FOOTERS = {
     10: "V views c stop r resume e export Enter log PgUp/Dn ? q",
     11: "V views j/k scroll PgUp/Dn u jobs ? q",
     12: "V views j/k scroll f next e draft t trial r jobs ? q",
-    13: "V views J job / find n/N match End live l jobs ? q",
+    13: "V b back J job / find n/N match End live l jobs ? q",
 }
 _COMPACT_FOOTERS = {
     15: "V Tab j/k Pg U ? q",
@@ -262,7 +262,7 @@ _COMPACT_FOOTERS = {
     10: "V views j/k Enter q",
     11: "V j/k u ? q",
     12: "V j/k r ? q",
-    13: "V J / n End l ? q",
+    13: "V b back / l ? q",
 }
 
 

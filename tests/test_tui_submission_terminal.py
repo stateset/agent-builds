@@ -253,11 +253,7 @@ class TuiSubmissionTerminalTests(unittest.TestCase):
                     ),
                     "exact receipt job log",
                 )
-                os.write(master, b"l")
-                wait_screen(
-                    lambda rendered: "JOBS" in rendered, "jobs after receipt log"
-                )
-                os.write(master, b"U")
+                os.write(master, b"b")
                 wait_screen(
                     lambda rendered: "SUBMISSIONS 1/1" in rendered,
                     "retained receipt selection",
@@ -272,6 +268,15 @@ class TuiSubmissionTerminalTests(unittest.TestCase):
                         "SUBMISSIONS 1/1" in rendered and "Enter " + handle in rendered
                     ),
                     "selected receipt in minimum pane",
+                )
+                os.write(master, b"\n")
+                wait_screen(
+                    lambda rendered: "LOG LIVE" in rendered, "narrow receipt log"
+                )
+                os.write(master, b"b")
+                wait_screen(
+                    lambda rendered: "SUBMISSIONS 1/1" in rendered,
+                    "back to selected receipt in minimum pane",
                 )
                 os.write(master, b"q")
                 self.assertEqual(

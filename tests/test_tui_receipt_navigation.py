@@ -274,6 +274,30 @@ class ReceiptNavigationTests(unittest.TestCase):
                 self.assertIn(self.target, frames[-1][1])
                 self.assertFalse(browser.done())
 
+    def test_back_returns_to_selected_receipt_without_lookup_or_resubmission(self):
+        for size in ((24, 120), (8, 20)):
+            self.seed(
+                (
+                    status("old", handle=self.target),
+                    status("new", "unconfirmed", None, None),
+                )
+            )
+            calls = []
+
+            def submit(loader, key):
+                calls.append(key)
+                return links.completed(loader, key)
+
+            frames = self.dashboard(
+                [ord("U"), 9, 9, 10, -1, ord("b"), -1, ord("q")],
+                size,
+                link_submit=submit,
+            )
+            self.assertIn("SUBMISSIONS 2/2", frames[-1][0])
+            self.assertIn("Enter " + self.target, links.text(frames[-1]))
+            self.assertEqual(len(calls), 1)
+            self.assertEqual(self.flow.tracker.starts, [])
+
 
 if __name__ == "__main__":
     unittest.main()
