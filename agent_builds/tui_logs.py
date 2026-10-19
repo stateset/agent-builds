@@ -176,11 +176,14 @@ class LogView:
         self.width = self.height = None
         self.anchor = None
         self.signature = None
-        self.last_read = float("-inf")
+        self.last_read = self.last_content_read = float("-inf")
         self.clipped = False
         self.error = None
         self.loaded = False
         self.observed = None
+
+    def content_due(self, now):
+        return now - self.last_content_read >= TAIL_RECHECK_SECONDS
 
     def poll(self, now):
         if self.path is None or not self.follow or now - self.last_read < 0.5:
@@ -194,6 +197,7 @@ class LogView:
                     0,
                     ("focused",) + self.key,
                     self.signature,
+                    self.content_due(now),
                 )
             ),
             now,
@@ -209,6 +213,8 @@ class LogView:
             self.lines = list(result.lines)
             self.clipped = result.clipped
             self.loaded = result.error is None
+            if not result.error:
+                self.last_content_read = now
             self._find_matches()
             self.width = None
         return True
@@ -360,6 +366,7 @@ class LogView:
 
     def end(self):
         self.follow, self.last_read = True, float("-inf")
+        self.last_content_read = float("-inf")
         self.match_index = self.anchor = None
 
     def toggle(self):

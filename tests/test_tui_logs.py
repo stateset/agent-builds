@@ -61,6 +61,63 @@ class TuiLogTests(unittest.TestCase):
             self.assertEqual(opened.call_count, before + 1)
         self.assertEqual(self.view.page(40, 5), ["changed"])
 
+    def test_focused_content_recheck_is_based_on_content_not_metadata_polls(self):
+        self.write(["old"])
+        metadata = self.path.stat()
+        with mock.patch.object(Path, "stat", return_value=metadata), mock.patch(
+            "agent_builds.tui_logs.os.fstat", return_value=metadata
+        ), mock.patch("agent_builds.tui_logs.os.open", wraps=os.open) as opened:
+            self.view.poll(0)
+            self.write(["new"])
+            for now in (0.6, 1.2, 2, 4.9):
+                self.view.poll(now)
+                self.assertEqual(self.view.page(20, 2), ["old"])
+            self.assertEqual(opened.call_count, 1)
+            self.view.poll(5.5)
+            self.assertEqual(self.view.page(20, 2), ["new"])
+            self.assertEqual(self.view.last_content_read, 5.5)
+            self.view.poll(5.6)
+            self.view.poll(9.9)
+            self.assertEqual(opened.call_count, 2)
+            self.view.poll(10.5)
+            self.assertEqual(opened.call_count, 3)
+
+    def test_end_forces_same_metadata_content_while_hold_does_not_read(self):
+        self.write(["old"])
+        metadata = self.path.stat()
+        with mock.patch.object(Path, "stat", return_value=metadata), mock.patch(
+            "agent_builds.tui_logs.os.fstat", return_value=metadata
+        ), mock.patch("agent_builds.tui_logs.os.open", wraps=os.open) as opened:
+            self.view.poll(0)
+            self.view.home()
+            self.write(["new"])
+            self.view.poll(1)
+            self.assertEqual(opened.call_count, 1)
+            self.assertEqual(self.view.page(20, 2), ["old"])
+            self.view.end()
+            self.view.poll(1)
+            self.assertEqual(opened.call_count, 2)
+            self.assertEqual(self.view.page(20, 2), ["new"])
+
+    def test_only_accepted_successful_content_advances_recheck_timestamp(self):
+        from agent_builds.tui_log_reads import LogRequest, LogResult
+
+        self.write(["old"])
+        self.view.poll(0)
+        request = LogRequest(0, ("focused",) + self.view.key)
+        self.view.apply(LogResult(request, self.view.signature), 3)
+        self.assertEqual(self.view.last_content_read, 0)
+        self.view.apply(LogResult(request, lines=(), error="fixture failure"), 4)
+        self.assertEqual(self.view.last_content_read, 0)
+        self.assertTrue(self.view.content_due(5))
+        other = LogRequest(0, ("focused", "other", str(self.path)))
+        self.assertFalse(self.view.apply(LogResult(other, lines=("wrong",)), 5))
+        self.view.home()
+        self.assertFalse(self.view.apply(LogResult(request, lines=("late",)), 5))
+        self.assertEqual(self.view.last_content_read, 0)
+        self.view.select("other", self.path)
+        self.assertTrue(self.view.content_due(5))
+
     def test_large_log_keeps_only_a_bounded_recent_window(self):
         self.path.write_bytes(
             b"private-old-start\n" + b"x\n" * (MAX_BYTES * 2) + b"newest\n"

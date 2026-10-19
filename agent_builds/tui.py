@@ -412,7 +412,8 @@ def main(screen, cwd):
             elif view == 13:
                 if log_view.follow and log_job and height>=8 and width>=20:
                     log_visible=True
-                    refresh_log('focused',log_job['id'],log_view.path,log_view,time.monotonic())
+                    now=time.monotonic()
+                    refresh_log('focused',log_job['id'],log_view.path,log_view,now,log_view.content_due(now))
                 log_page=log_view.page(max(1,width-1),max(1,height-4))
                 mode='LIVE' if log_view.follow else 'HELD (output only)'
                 paint(screen,0,0,'LOG '+mode+' | '+log_view.position(max(1,height-4)),curses.A_BOLD | curses.color_pair(1 if log_view.follow else 3))

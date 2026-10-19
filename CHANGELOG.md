@@ -2,6 +2,10 @@
 
 ## 0.26.2 (unreleased)
 
+- Periodically recheck focused log content even when file metadata is unchanged,
+  matching the inline safeguard. End requests fresh bounded content immediately;
+  held and hidden views still avoid reads and obsolete results stay discarded.
+
 - Reveal the matching text when searching long wrapped log lines, including
   Unicode casefold expansions. Keep hits visible across resizing and use their
   actual position for next/previous navigation after manual scrolling. Retain

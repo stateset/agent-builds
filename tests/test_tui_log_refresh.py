@@ -81,6 +81,47 @@ class TuiLogRefreshTests(unittest.TestCase):
         ):
             return self.fixture.dashboard(keys, dimensions, **kwargs)
 
+    def test_focused_rechecks_unchanged_metadata_and_end_forces_immediate_content(self):
+        from agent_builds.tui_log_reads import LogResult
+
+        for size in ((24, 100), (8, 20)):
+            calls, now, content = [], [100], ["OLD"]
+            signature = (1, 2, 3, 4, 5)
+
+            def submit(loader, request):
+                if request.key[0] != "focused":
+                    return completed(loader, request)
+                calls.append(request)
+                future = Future()
+                fresh = request.force_content or request.known_signature != signature
+                future.set_result(
+                    LogResult(request, signature, tuple(content) if fresh else None)
+                )
+                return future
+
+            steps = iter([ord("l"), -1, -1, curses.KEY_END, ord("q")])
+
+            def key():
+                value = next(steps)
+                if value == -1:
+                    now[0] = 100.6 if now[0] == 100 else 105
+                    content[:] = ["NEW"]
+                elif value == curses.KEY_END:
+                    content[:] = ["END"]
+                return value
+
+            with self.subTest(size=size):
+                frames = self.dashboard(
+                    key, size, clock=lambda: now[0], log_submit=submit
+                )
+            self.assertIn("OLD", frame_text(frames[2]))
+            self.assertNotIn("NEW", frame_text(frames[2]))
+            self.assertIn("NEW", frame_text(frames[3]))
+            self.assertIn("END", frame_text(frames[-1]))
+            self.assertEqual(
+                [request.force_content for request in calls], [True, False, True, True]
+            )
+
     def test_pending_logs_allow_selection_help_resize_and_quit_in_both_layouts(self):
         for mode in ("inline", "focused"):
             for initial_size in ((24, 100), (12, 40)):
@@ -293,7 +334,7 @@ class TuiLogRefreshTests(unittest.TestCase):
                     if value == -1:
                         idle_keys[0] += 1
                         if idle_keys[0] == 1:
-                            now[0] = 101
+                            now[0] = 106
                         elif idle_keys[0] == 2:
                             path.write_text("OBSOLETE_BEFORE_HOLD\n")
                             pending.finish(
@@ -324,6 +365,9 @@ class TuiLogRefreshTests(unittest.TestCase):
                         )
                     )
                     self.assertEqual(len(focused_calls), 3)
+                    self.assertTrue(
+                        all(request.force_content for request in focused_calls)
+                    )
                     self.assertIn("FRESH_AFTER_END", frame_text(frames[-1]))
 
     def test_current_log_error_is_visible_and_retries_are_throttled(self):
