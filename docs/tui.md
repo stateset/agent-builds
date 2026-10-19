@@ -365,7 +365,11 @@ to jobs; `q` closes the dashboard. Shared action keys are ignored in log focus.
 
 The viewer loads at most the recent 256 KiB and labels omitted earlier output.
 Use `buildr logs JOB_ID` or the job’s log file for the full history. Changed logs
-refresh at most twice a second; unchanged logs are not reread. Held snapshots
+refresh at most twice a second. Metadata-only observations reuse existing output,
+with a bounded content recheck on the first visible poll after five seconds
+since the last accepted content read. This catches same-size rewrites even when
+metadata is unchanged. End requests fresh content immediately; metadata polls,
+failed reads and discarded results do not postpone the recheck. Held snapshots
 do not start new log-file reads. Following handles file replacement, truncation and
 missing files. Lines wrap to the pane width; ANSI control sequences are removed
 and carriage-return progress uses the last segment of each line. This is a text
