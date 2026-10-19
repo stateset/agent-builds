@@ -2,6 +2,11 @@
 
 ## 0.26.2 (unreleased)
 
+- Keep held log inspection on the same logical text across narrow/wide pane
+  resizing and temporary height clamping, without rereading output. Manual
+  navigation replaces the anchor; search matches and live following retain
+  their existing behavior.
+
 - Add `b` in focused logs to return to their source view, retaining receipt and
   tool selection, inspected-job identity and history checkout. Direct jumps
   inside a log keep its original source; `l` still returns to jobs.
