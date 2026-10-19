@@ -2,6 +2,9 @@
 
 ## 0.26.3 (unreleased)
 
+- Distinguish loading, empty and unmatched diagnostic reports in the content area,
+  keeping guidance outside evidence, row counts and search results.
+
 - Filter loaded health, why, workbench and history report lines with literal `/`
   search. Show query/counts in narrow panes; preserve read errors, scope boundaries
   and cached rendering without changing job filters or reading more evidence.

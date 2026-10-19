@@ -81,7 +81,7 @@ def compact_lines(rows, selected, plans, plan_index, view, config, height, width
         lines += [VIEWS[view].name.upper(), 'Resize to 65x15', 'V chooses a view']
     elif view == 4:
         room=max(1,height-len(lines)-3)
-        page=history_view.page(history_repository,history_report,max(1,width-1),room,history_error) if history_view else []
+        page=history_view.display_page(history_repository,history_report,max(1,width-1),room,history_error) if history_view else []
         lines += ["HISTORY " + (history_view.position() if history_view else ""),history_view.status_label(history_status) if history_view else history_status]+page
     elif view == 3:
         room=max(1,height-len(lines)-2)
@@ -98,10 +98,10 @@ def compact_lines(rows, selected, plans, plan_index, view, config, height, width
             inspection=dict(widget=widget,scope='global' if view==11 else (None,0),report=health if view==11 else workbench,status='Read only',error=None,job=None)
         widget=inspection['widget']
         room=max(1,height-len(lines)-3)
-        page=widget.page(inspection['scope'],inspection['report'],max(1,width-1),room,inspection['error'])
+        page=widget.display_page(inspection['scope'],inspection['report'],max(1,width-1),room,inspection['error'])
         if legacy_offset:
             widget.offset=legacy_offset
-            page=widget.page(inspection['scope'],inspection['report'],max(1,width-1),room,inspection['error'])
+            page=widget.display_page(inspection['scope'],inspection['report'],max(1,width-1),room,inspection['error'])
         title=('WHY ' if view==14 else 'WORK ')+inspection['job']['id'] if view in (12,14) and inspection['job'] else VIEWS[view].name.upper()+' '+widget.position()
         lines += [title,widget.status_label(inspection['status'])]+page
     elif view == 10:
@@ -334,11 +334,12 @@ def main(screen, cwd):
             inspect_key=(kind,inspection_row['id'] if inspection_row else None) if kind and readable and (kind=='health' or inspection_row) else None
             inspection_data=inspection_read.get(inspect_key,time.monotonic())
             inspection_status=inspection_read.status(time.monotonic()) if kind=='health' or inspection_row else 'No job selected'
+            inspection_error=inspection_read.error if kind=='health' or inspection_row else 'No job selected'
             workbench_result=inspection_data if kind=='workbench' else None
             inspection=None
             if kind:
                 scope=(inspection_row['id'] if inspection_row else None,workbench_candidate) if kind=='workbench' else 'global' if kind=='health' else inspection_row['id'] if inspection_row else None
-                inspection=dict(widget=inspection_views[view],scope=scope,report=inspection_data,status=inspection_status,error=inspection_read.error,job=inspection_row)
+                inspection=dict(widget=inspection_views[view],scope=scope,report=inspection_data,status=inspection_status,error=inspection_error,job=inspection_row)
             tool_kind={2:'announcements',5:'workers',7:'plans',8:'advisor',9:'groups',10:'watches'}.get(view)
             tool_read.label=tool_kind or 'tool report'
             tool_read.interval=2 if view==8 else 1
@@ -503,7 +504,7 @@ def main(screen, cwd):
                         paint(screen,height-3,0,'Selected {}/{} {} | {}'.format(selected+1,len(rows),row['id'],row['reason'] or row['cwd']))
                 elif view in (11,12,14):
                     widget=inspection['widget']
-                    page=widget.page(inspection['scope'],inspection_data,max(1,width-1),max(1,height-log_top-4),inspection_read.error)
+                    page=widget.display_page(inspection['scope'],inspection_data,max(1,width-1),max(1,height-log_top-4),inspection_error)
                     paint(screen,log_top-1,0,VIEWS[view].name.upper()+' | '+widget.position(),curses.A_BOLD)
                     paint(screen,log_top,0,widget.status_label(inspection_status))
                     for index,line in enumerate(page):
@@ -532,7 +533,7 @@ def main(screen, cwd):
                     paint(screen,log_top-1,0,'JOB DETAILS | i returns to jobs',curses.A_BOLD)
                     paint(screen,log_top,0,'Details unavailable: '+(detail_read.error or detail_read.status(time.monotonic()) if inspection_row else 'No job selected'))
                 elif view == 4:
-                    page=history_view.page(history_repository,history_report,max(1,width-1),max(1,height-log_top-4),history_read.error)
+                    page=history_view.display_page(history_repository,history_report,max(1,width-1),max(1,height-log_top-4),history_read.error)
                     paint(screen,log_top-1,0,'HISTORY | read only | '+history_view.position(),curses.A_BOLD)
                     paint(screen,log_top,0,history_view.status_label(history_status))
                     for index,line in enumerate(page):

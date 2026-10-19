@@ -15,6 +15,53 @@ class TextView(ReportView):
 
 
 class ReportSearchTests(unittest.TestCase):
+    def test_display_only_empty_states_do_not_enter_evidence_or_match_counts(self):
+        view = TextView()
+        self.assertEqual(view.display_page("a", None, 19, 1), ["Loading report"])
+        self.assertIsNone(view.matches)
+        report = dict(lines=[])
+        self.assertEqual(view.display_page("a", report, 19, 1), ["Empty report"])
+        view.search("absent")
+        self.assertEqual(view.display_page("a", report, 19, 1), ["No matching lines"])
+        self.assertEqual(view.matches, 0)
+        self.assertEqual(view.position(), "0/0")
+        self.assertEqual(view.logical, [])
+        self.assertEqual(view.wrapped, [])
+        self.assertEqual(view.page("a", report, 19, 1), [])
+        self.assertIn("blank clears", " ".join(view.display_page("a", report, 19, 3)))
+        view.search("No matching lines")
+        view.display_page("a", report, 19, 1)
+        self.assertEqual(view.matches, 0)
+        self.assertEqual(
+            view.display_page("a", dict(lines=["No matching lines"]), 19, 1),
+            ["No matching lines"],
+        )
+        self.assertEqual(view.matches, 1)
+        self.assertEqual(view.position(), "1-1/1")
+
+    def test_empty_states_resize_and_yield_to_pending_errors_and_refreshed_content(
+        self,
+    ):
+        view = TextView()
+        report = dict(lines=["haystack"])
+        view.page("a", report, 19, 1)
+        view.search("needle")
+        for width in (1, 7, 19, 99):
+            for height in (1, 2, 8):
+                rows = view.display_page("a", report, width, height)
+                self.assertLessEqual(len(rows), height)
+                self.assertTrue(all(len(row) <= width for row in rows))
+                self.assertEqual(view.matches, 0)
+        self.assertEqual(view.display_page("a", None, 19, 1), ["Loading report"])
+        self.assertIsNone(view.matches)
+        self.assertEqual(
+            view.display_page("a", None, 19, 1, "disk blocked"), ["disk blocked"]
+        )
+        self.assertEqual(
+            view.display_page("a", dict(lines=["needle"]), 19, 1), ["needle"]
+        )
+        self.assertEqual(view.matches, 1)
+
     def test_literal_unicode_search_uses_sanitized_logical_lines(self):
         view = TextView()
         report = dict(
@@ -200,6 +247,41 @@ class ReportSearchDashboardTests(unittest.TestCase):
                     ["", "needle", "needle"],
                 )
                 self.assertNotIn("Find 1:", "\n".join(frames[-1].values()))
+
+    def test_missing_job_is_not_presented_as_a_loading_report(self):
+        self.store.db.execute("DELETE FROM jobs")
+        for target in (12, 14):
+            for size in ((24, 100), (8, 20)):
+                with self.subTest(target=target, size=size), mock.patch(
+                    "agent_builds.tui.choose_view", return_value=target
+                ), mock.patch(
+                    "agent_builds.tui_reads.submit_read", side_effect=completed
+                ):
+                    frames = self.dashboard(
+                        [ord("V"), -1, -1, ord("q")], dimensions=size
+                    )
+                text = "\n".join(frames[-1].values())
+                self.assertIn("No job selected", text)
+                self.assertNotIn("Loading report", text)
+
+    def test_no_match_message_is_visible_in_all_report_routes(self):
+        for target in (4, 11, 12, 14):
+            for size in ((24, 100), (8, 20)):
+                with self.subTest(target=target, size=size), mock.patch(
+                    "agent_builds.tui.choose_view", return_value=target
+                ), mock.patch(
+                    "agent_builds.tui_reads.submit_read", side_effect=completed
+                ), mock.patch(
+                    "agent_builds.tui_history.submit_read", side_effect=completed
+                ):
+                    frames = self.dashboard(
+                        [ord("V"), -1, -1, ord("/"), -1, ord("q")],
+                        dimensions=size,
+                        answers=["UNMATCHABLE_SENTINEL"],
+                    )
+                self.assertTrue(
+                    any("No matching lines" in "\n".join(f.values()) for f in frames)
+                )
 
     def test_initial_history_read_error_remains_visible_with_a_query_in_minimum_pane(
         self,
