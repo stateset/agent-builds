@@ -219,6 +219,52 @@ class PromptTests(unittest.TestCase):
         self.assertIsNone(result)
         self.assertIn("Resize to edit", frames[0].values())
 
+    def test_acceptance_hint_fits_at_the_full_hint_width_boundary(self):
+        for width, expected in (
+            (40, "Enter OK Esc cancel"),
+            (41, "Enter accept | Esc cancel | Ctrl+U clear"),
+        ):
+            with self.subTest(width=width):
+                result, frames = self.edit(["\x1b"], dimensions=(12, width))
+                self.assertIsNone(result)
+                self.assertEqual(frames[0][11], expected)
+
+    def test_context_resize_retains_reviewed_text_and_typed_response(self):
+        context = (
+            "prefix " * 100
+            + "\n"
+            + "\n".join("TARGET-{:02d}".format(i) for i in range(80))
+        )
+        result, frames = self.edit(
+            [
+                curses.KEY_NPAGE,
+                ((12, 40), curses.KEY_RESIZE),
+                ((100, 100), curses.KEY_RESIZE),
+                ((24, 100), curses.KEY_RESIZE),
+                "x",
+                "\n",
+            ],
+            dimensions=(24, 100),
+            context=context,
+            initial="safe",
+        )
+
+        def first_target(frame):
+            return next(
+                (
+                    line
+                    for y, line in sorted(frame.items())
+                    if line.startswith("TARGET-")
+                ),
+                None,
+            )
+
+        target = first_target(frames[1])
+        self.assertIsNotNone(target)
+        self.assertEqual(first_target(frames[2]), target)
+        self.assertEqual(first_target(frames[4]), target)
+        self.assertEqual(result, "safex")
+
     def test_context_scroll_is_clamped_after_resize_without_losing_input(self):
         result, frames = self.edit(
             [curses.KEY_NPAGE, curses.KEY_NPAGE, ((20, 70), curses.KEY_RESIZE), "\n"],
@@ -396,6 +442,46 @@ class InputBufferTests(unittest.TestCase):
 
 
 class PromptContextTests(unittest.TestCase):
+    def test_long_unicode_context_retains_character_position_across_resize(self):
+        text = "Captured command:\n" + "".join(
+            "界{:03d}e\u0301 ".format(i) for i in range(300)
+        )
+        context = PromptContext(text)
+        context.page(39, 2)
+        context.scroll(10)
+        first = context.page(39, 2)[0]
+        context.page(19, 1)
+        context.page(99, 1000)
+        self.assertEqual(context.top, 0)
+        self.assertEqual(context.page(39, 2)[0], first)
+        self.assertEqual(context.lines[0], "Captured command:")
+
+    def test_manual_paging_after_height_clamp_replaces_the_old_position(self):
+        context = PromptContext("\n".join("row-{:02d}".format(i) for i in range(60)))
+        context.page(39, 2)
+        context.scroll(15)
+        self.assertEqual(context.page(39, 2)[0], "row-30")
+        context.page(99, 1000)
+        context.scroll(1)
+        context.page(99, 1000)
+        self.assertEqual(context.page(19, 2)[0], "row-00")
+        context.scroll(1000)
+        self.assertEqual(context.page(19, 2)[-1], "row-59")
+
+    def test_idle_and_height_only_context_frames_do_not_resanitize_or_rewrap(self):
+        context = PromptContext("long captured command " * 100)
+        first = context.page(39, 2)
+        with mock.patch(
+            "agent_builds.tui_text.clean_lines",
+            side_effect=AssertionError("resanitized"),
+        ), mock.patch(
+            "agent_builds.tui_text.wrap_line", side_effect=AssertionError("rewrapped")
+        ):
+            for unused in range(300):
+                self.assertEqual(context.page(39, 2), first)
+            context.page(39, 1000)
+            self.assertEqual(context.page(39, 2), first)
+
     def test_context_is_bounded_cleaned_and_clipping_is_explicit(self):
         context = PromptContext(
             "bad\udcffname\n\x1b[31mred\x1b[0m\n" + "x" * MAX_CONTEXT_CHARS
@@ -409,7 +495,7 @@ class PromptContextTests(unittest.TestCase):
 
     def test_wrapping_is_reused_until_width_changes(self):
         context = PromptContext("one two three four")
-        with mock.patch("agent_builds.tui_prompt.wrap_line", wraps=wrap_line) as wrap:
+        with mock.patch("agent_builds.tui_text.wrap_line", wraps=wrap_line) as wrap:
             context.page(10, 1)
             wrapped = context.wrapped
             context.scroll(1)
