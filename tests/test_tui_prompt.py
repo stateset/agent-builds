@@ -219,6 +219,16 @@ class PromptTests(unittest.TestCase):
         self.assertIsNone(result)
         self.assertIn("Resize to edit", frames[0].values())
 
+    def test_acceptance_hint_fits_at_the_full_hint_width_boundary(self):
+        for width, expected in (
+            (40, "Enter OK Esc cancel"),
+            (41, "Enter accept | Esc cancel | Ctrl+U clear"),
+        ):
+            with self.subTest(width=width):
+                result, frames = self.edit(["\x1b"], dimensions=(12, width))
+                self.assertIsNone(result)
+                self.assertEqual(frames[0][11], expected)
+
     def test_context_resize_retains_reviewed_text_and_typed_response(self):
         context = (
             "prefix " * 100

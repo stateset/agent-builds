@@ -209,7 +209,7 @@ def edit(screen, title, initial, context, paint):
                         height - 1,
                         0,
                         "Enter accept | Esc cancel | Ctrl+U clear"
-                        if width >= 40
+                        if width >= 41
                         else "Enter OK Esc cancel",
                     )
                     screen.move(height - 3, min(width - 2, 2 + caret))

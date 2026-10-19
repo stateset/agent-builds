@@ -4,6 +4,7 @@
 
 - Retain the reviewed prompt-context text across split resizing and temporary
   height clamping, without changing the captured snapshot or typed response.
+  Keep the acceptance hint complete at the 40/41-column boundary.
 
 - Reuse focused-log wrapping and search caches when accepted content is unchanged,
   retaining periodic file rechecks, freshness, clipping and error recovery.
