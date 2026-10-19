@@ -1,5 +1,6 @@
 """Report reading position survives wrapping changes without I/O or idle scans."""
 
+from concurrent.futures import Future
 import curses
 import unittest
 from unittest import mock
@@ -113,10 +114,22 @@ class ReportAnchorDashboardTests(unittest.TestCase):
             return actions[index]
 
         lines = ["prefix " * 100] + ["TARGET-{:02d}".format(i) for i in range(50)]
+
+        def completed(loader, request):
+            future = Future()
+            try:
+                future.set_result(loader(request))
+            except Exception as error:
+                future.set_exception(error)
+            return future
+
         with mock.patch(
             "agent_builds.tui_inspect.HealthView.lines", return_value=lines
         ):
-            frames = self.dashboard(key, dimensions=lambda: size[0])
+            with mock.patch(
+                "agent_builds.tui_reads.submit_read", side_effect=completed
+            ):
+                frames = self.dashboard(key, dimensions=lambda: size[0])
 
         def first_target(frame):
             return next(
