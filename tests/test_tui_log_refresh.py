@@ -122,6 +122,71 @@ class TuiLogRefreshTests(unittest.TestCase):
                 [request.force_content for request in calls], [True, False, True, True]
             )
 
+    def test_empty_states_remain_visible_with_pending_job_status_in_minimum_panes(self):
+        for size in ((24, 100), (8, 20)):
+            for mode, expected in (
+                ("empty", "Empty log snapshot"),
+                ("missing", "Log unavailable"),
+                ("pending", "Loading log"),
+                ("held", "No captured output"),
+            ):
+                path = self.store.log_path(self.jobs[0])
+                path.write_bytes(b"")
+                if mode == "missing":
+                    path.unlink()
+                pending = PendingLogs()
+                state = Future()
+                keys = [ord("l")] + ([ord(" ")] if mode == "held" else []) + [ord("q")]
+                with self.subTest(size=size, mode=mode):
+                    frames = self.dashboard(
+                        keys,
+                        size,
+                        log_submit=pending
+                        if mode in ("pending", "held")
+                        else completed,
+                        log_status_submit=lambda loader, key: state,
+                    )
+                self.assertEqual(frames[-1][3], expected)
+                self.assertIn("State loading", frames[-1][2])
+                self.assertFalse(state.done())
+                if size[1] > 20:
+                    self.assertIn("rows 0-0/0", frames[-1][0])
+
+    def test_empty_placeholder_tracks_append_truncate_and_held_snapshot(self):
+        for size in ((24, 100), (8, 20)):
+            path = self.store.log_path(self.jobs[0])
+            path.write_bytes(b"")
+            now = [100]
+            ticks = [0]
+            steps = iter([ord("l"), -1, -1, ord(" "), -1, curses.KEY_END, ord("q")])
+
+            def key():
+                value = next(steps)
+                if value == -1:
+                    ticks[0] += 1
+                    now[0] += 1
+                    path.write_text({1: "OUTPUT\n", 2: "", 3: "AFTER\n"}[ticks[0]])
+                return value
+
+            with self.subTest(size=size):
+                frames = self.dashboard(key, size, clock=lambda: now[0])
+            self.assertEqual(frames[1][3], "Empty log snapshot")
+            self.assertEqual(frames[2][3], "OUTPUT")
+            for frame in frames[3:6]:
+                self.assertEqual(frame[3], "Empty log snapshot")
+            self.assertIn("HELD", frames[5][0])
+            self.assertEqual(frames[-1][3], "AFTER")
+
+    def test_empty_browser_does_not_advertise_loading_an_unselected_log(self):
+        for size in ((24, 100), (8, 20)):
+            with self.subTest(size=size):
+                frames = self.dashboard(
+                    [ord("/"), ord("l"), ord("q")], size, query="no-matching-job"
+                )
+            self.assertEqual(frames[-1][3], "No job selected")
+            self.assertNotIn("Loading log", frame_text(frames[-1]))
+            self.assertNotIn("Empty log snapshot", frame_text(frames[-1]))
+
     def test_pending_logs_allow_selection_help_resize_and_quit_in_both_layouts(self):
         for mode in ("inline", "focused"):
             for initial_size in ((24, 100), (12, 40)):

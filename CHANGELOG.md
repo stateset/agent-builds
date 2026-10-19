@@ -2,6 +2,10 @@
 
 ## 0.26.2 (unreleased)
 
+- Distinguish loading, unavailable, confirmed empty and uncaptured focused-log
+  snapshots in the content area, including minimum panes. Keep status messages
+  outside captured output, search results and row counts.
+
 - Periodically recheck focused log content even when file metadata is unchanged,
   matching the inline safeguard. End requests fresh bounded content immediately;
   held and hidden views still avoid reads and obsolete results stay discarded.
