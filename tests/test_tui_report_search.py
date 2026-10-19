@@ -207,7 +207,7 @@ class ReportSearchDashboardTests(unittest.TestCase):
         with mock.patch("agent_builds.tui.choose_view", return_value=4), mock.patch(
             "agent_builds.tui_history.submit_read", side_effect=completed
         ), mock.patch(
-            "agent_builds.tui_history.inspect_history",
+            "agent_builds.tui.inspect_history",
             side_effect=OSError("disk blocked"),
         ):
             frames = self.dashboard(
