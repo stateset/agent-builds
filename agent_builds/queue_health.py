@@ -254,16 +254,22 @@ def dashboard_banner(result, width, stale=False, status=""):
     limited = disk.get("limited_jobs")
     if result["status"] == "paused":
         choices = [
-            result["summary"],
+            result.get("summary")
+            or "PAUSED: {} waiting; running jobs continue".format(waiting),
             "PAUSED: {} waiting".format(waiting),
             "PAUSED W{}".format(waiting),
             "PAUSED",
         ]
     elif result["status"] == "disk_blocked":
         gap = rounded_up(disk["shortfall_min_gb"])
-        choices = [
-            "STATE " + banner(result),
+        choices = (
+            ["STATE " + banner(result)]
+            if disk.get("available_gb") is not None
+            and disk.get("required_min_gb") is not None
+            else []
+        ) + [
             "DISK: +{:.1f} GiB needed".format(gap),
+            "DISK: +{:.1f}GiB".format(gap),
             "DISK: +{:.1f}G".format(gap),
             "DISK blocked",
             "DISK",
@@ -281,7 +287,7 @@ def dashboard_banner(result, width, stale=False, status=""):
         ]
     else:
         choices = [
-            banner(result),
+            result.get("summary") or banner(result, compact=True),
             banner(result, compact=True),
             "{} wait | {} run".format(waiting, running),
             "W{} R{}".format(waiting, running),

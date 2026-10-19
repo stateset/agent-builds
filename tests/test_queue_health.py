@@ -332,13 +332,21 @@ class DashboardBannerTests(unittest.TestCase):
             ),
         )
 
+    def test_minimal_legacy_snapshots_keep_counts_and_gap_without_full_summary(self):
+        result = dict(status="waiting", waiting_jobs=2, reservations=dict(jobs=1))
+        self.assertEqual(queue_health.dashboard_banner(result, 20), "2 wait | 1 run")
+        result.update(status="disk_blocked", disk=dict(shortfall_min_gb=1))
+        self.assertEqual(queue_health.dashboard_banner(result, 20), "DISK: +1.0GiB")
+        result.update(status="paused")
+        self.assertTrue(queue_health.dashboard_banner(result, 120).startswith("PAUSED"))
+
     def test_disk_shortfall_and_stale_warning_fit_smallest_pane(self):
         result = self.report()
-        self.assertEqual(queue_health.dashboard_banner(result, 20), "DISK: +6.2G")
+        self.assertEqual(queue_health.dashboard_banner(result, 20), "DISK: +6.2GiB")
         stale = queue_health.dashboard_banner(
             result, 20, stale=True, status="Snapshot 99s ago; refreshing"
         )
-        self.assertEqual(stale, "STALE DISK: +6.2G")
+        self.assertEqual(stale, "STALE DISK: +6.2GiB")
         self.assertIn(
             "STATE DISK: all 2 waiting", queue_health.dashboard_banner(result, 120)
         )
