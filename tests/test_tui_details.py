@@ -1,12 +1,15 @@
 """Long selected evidence stays readable without repeated formatting or reads."""
 
 import copy
+import curses
+from concurrent.futures import Future
 from pathlib import Path
 import tempfile
 import unittest
 from unittest import mock
 
-from agent_builds import tui_details
+from agent_builds import tui_details, tui_text
+import test_tui_browser as browser_fixture
 from agent_builds.store import Store
 from agent_builds.tui_details import DetailsView, detail_lines
 
@@ -31,6 +34,49 @@ class DetailsTests(unittest.TestCase):
     def tearDown(self):
         self.store.close()
         self.temp.cleanup()
+
+    def test_long_unicode_command_keeps_logical_position_across_resize_and_hidden_read(
+        self,
+    ):
+        self.row["command_display"] = "".join(
+            "界{:03d}e\u0301 ".format(i) for i in range(300)
+        )
+        view = DetailsView()
+        view.page(self.row, 39, 2)
+        view.scroll(10)
+        before = view.page(self.row, 39, 2)[0]
+        anchor = view.anchor
+        self.assertGreater(anchor[2], 0)
+        view.page(self.row, 19, 1)
+        self.assertEqual(view.anchor, anchor)
+        view.page(self.row, 99, 1000)
+        self.assertEqual(view.offset, 0)
+        self.assertEqual(view.page(self.row, 39, 2)[0], before)
+        view.clear()
+        self.assertIsNone(view.row)
+        self.assertEqual(view.paragraphs, [])
+        self.assertEqual(view.visible, [])
+        self.assertEqual(view.locations, [])
+        self.assertEqual(view.anchor, anchor)
+        self.assertEqual(view.page(copy.deepcopy(self.row), 39, 2)[0], before)
+        self.assertEqual(view.job, self.row["id"])
+
+    def test_navigation_after_height_clamp_and_scope_change_replace_the_anchor(self):
+        view = DetailsView()
+        self.row["command_display"] = "token " * 500
+        view.page(self.row, 19, 2)
+        view.scroll(20)
+        view.page(self.row, 19, 2)
+        view.page(self.row, 99, 1000)
+        view.scroll(1)
+        view.page(self.row, 99, 1000)
+        self.assertEqual(view.page(self.row, 19, 2)[0], self.row["id"] + " queued")
+        view.end()
+        self.assertEqual(view.page(self.row, 39, 2)[-1], view.wrapped[-1])
+        view.page(dict(self.row, id="new-job"), 39, 2)
+        self.assertEqual(view.offset, 0)
+        view.home()
+        self.assertEqual(view.page(self.row, 19, 2)[0], self.row["id"] + " queued")
 
     def test_long_command_paths_and_reason_are_preserved_across_wrapped_rows(self):
         self.row.update(cwd="/checkout/" + "folder/" * 30, reason="wait " * 60)
@@ -68,7 +114,7 @@ class DetailsTests(unittest.TestCase):
             tui_details, "detail_lines", wraps=detail_lines
         ) as formatted:
             with mock.patch.object(
-                tui_details, "wrap_line", wraps=tui_details.wrap_line
+                tui_text, "wrap_line", wraps=tui_text.wrap_line
             ) as wrapped:
                 view.page(self.row, 40, 3)
                 calls = wrapped.call_count
@@ -132,6 +178,70 @@ class DetailsTests(unittest.TestCase):
         self.assertLess(sum(map(len, view.logical)), tui_details.MAX_DETAIL_CHARS + 100)
         self.assertIn("Details clipped", "".join(view.wrapped))
         self.assertLess(len(view.wrapped), 4000)
+
+
+class DetailsAnchorDashboardTests(unittest.TestCase):
+    setUp = browser_fixture.TuiBrowserTests.setUp
+    tearDown = browser_fixture.TuiBrowserTests.tearDown
+    dashboard = browser_fixture.TuiBrowserTests.dashboard
+
+    def test_details_resize_and_help_round_trip_keep_the_inspected_text(self):
+        size = [(24, 100)]
+        actions = iter(
+            [
+                ord("i"),
+                -1,
+                curses.KEY_END,
+                curses.KEY_PPAGE,
+                -1,
+                -1,
+                ord("?"),
+                ord("q"),
+                -1,
+                ord("q"),
+            ]
+        )
+        step = [0]
+
+        def key():
+            index = step[0]
+            step[0] += 1
+            if index == 4:
+                size[0] = (8, 20)
+            elif index == 5:
+                size[0] = (24, 100)
+            return next(actions)
+
+        def completed(loader, request):
+            future = Future()
+            try:
+                future.set_result(loader(request))
+            except Exception as error:
+                future.set_exception(error)
+            return future
+
+        with mock.patch(
+            "agent_builds.tui_details.detail_lines",
+            return_value=["prefix " * 100]
+            + ["TARGET-{:02d}".format(i) for i in range(50)],
+        ), mock.patch("agent_builds.tui_reads.submit_read", side_effect=completed):
+            frames = self.dashboard(key, dimensions=lambda: size[0])
+
+        def first_target(frame):
+            return next(
+                (
+                    line
+                    for y, line in sorted(frame.items())
+                    if line.startswith("TARGET-")
+                ),
+                None,
+            )
+
+        target = first_target(frames[4])
+        self.assertIsNotNone(target)
+        self.assertEqual(first_target(frames[5]), target)
+        self.assertEqual(first_target(frames[6]), target)
+        self.assertEqual(first_target(frames[9]), target)
 
 
 if __name__ == "__main__":

@@ -303,8 +303,10 @@ cancellation use 124/130; these are job results, not necessarily native process
 exit codes. A missing exit
 remains "not recorded" even for a terminal state. Selected reads refresh at most
 once a second. Formatting is reused until that snapshot changes; wrapping is
-reused until its content or pane width changes. Resize clamps the scroll
-position. Help and hidden views release cached evidence; read errors cannot
+reused until its content or pane width changes. Resizing retains the logical line and character position, including after a
+taller pane temporarily moves the top upward to fill the view. Manual paging,
+Home and End replace the retained position. Hidden or failed reads release
+cached evidence while retaining the position for that job; changing jobs resets it. Help and hidden views release cached evidence; read errors cannot
 show another job's old details. Narrow panes keep shared actions disabled.
 
 Rendered details retain at most 64 Ki characters plus a clipping notice. This
