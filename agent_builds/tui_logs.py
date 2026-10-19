@@ -172,6 +172,7 @@ class LogView:
         self.matches = []
         self.match_set = set()
         self.match_index = None
+        self.match_target = None
         self.width = self.height = None
         self.anchor = None
         self.signature = None
@@ -220,7 +221,7 @@ class LogView:
             if needle and needle in line.casefold()
         ]
         self.match_set = set(self.matches)
-        self.match_index = None
+        self.match_index = self.match_target = None
 
     def search(self, query, width, height):
         """Search logical lines in the current snapshot, never the full file."""
@@ -237,7 +238,7 @@ class LogView:
         self.follow = False
         self.match_index = index % len(self.matches)
         self.top = min(
-            self.starts[self.matches[self.match_index]],
+            self._match_row(self.match_index),
             max(0, len(self.wrapped) - max(1, height)),
         )
 
@@ -248,12 +249,19 @@ class LogView:
         if self.match_index is not None:
             index = self.match_index + direction
         else:
-            positions = [self.starts[line] for line in self.matches]
+            line = bisect_right(self.starts, self.top) - 1
             index = (
-                bisect_right(positions, self.top)
+                bisect_right(self.matches, line)
                 if direction > 0
-                else bisect_left(positions, self.top) - 1
+                else bisect_left(self.matches, line) - 1
             )
+            if line in self.match_set:
+                current = bisect_left(self.matches, line)
+                hit = self._match_row(current)
+                if (direction > 0 and hit > self.top) or (
+                    direction < 0 and hit < self.top
+                ):
+                    index = current
         self._jump(index, height)
 
     def match_kind(self, visible_row):
@@ -284,8 +292,23 @@ class LogView:
         line = bisect_right(self.starts, row) - 1
         return line, sum(len(part) for part in self.wrapped[self.starts[line] : row])
 
+    def _match_row(self, index):
+        line = self.matches[index]
+        if self.match_target is None or self.match_target[0] != line:
+            text = self.lines[line]
+            remaining = text.casefold().index(self.query.casefold())
+            for offset, character in enumerate(text):
+                size = len(character.casefold())
+                if remaining < size:
+                    break
+                remaining -= size
+            self.match_target = line, offset
+        return self._text_row(*self.match_target)
+
     def _anchor_row(self):
-        line, offset = self.anchor
+        return self._text_row(*self.anchor)
+
+    def _text_row(self, line, offset):
         start = self.starts[line]
         end = (
             self.starts[line + 1] if line + 1 < len(self.starts) else len(self.wrapped)
@@ -315,7 +338,7 @@ class LogView:
             self.width = width
         if changed and not self.follow:
             if self.match_index is not None:
-                self.top = self.starts[self.matches[self.match_index]]
+                self.top = self._match_row(self.match_index)
             elif self.anchor is not None:
                 self.top = self._anchor_row()
         self.height = height
