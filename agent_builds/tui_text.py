@@ -100,7 +100,7 @@ class ReportView:
         if report is None:
             message = ["Report unavailable" if error else "Loading report"]
         elif self.query:
-            message = ["No matching lines", "/ edits; blank clears"]
+            message = ["No matching lines", "/: blank clears"]
         else:
             message = ["Empty report"]
         return [part for line in message for part in wrap_line(line, max(1, width))][
