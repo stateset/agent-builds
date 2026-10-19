@@ -5,7 +5,8 @@ import textwrap
 import time
 import unicodedata
 
-from .tui_logs import clean_lines, wrap_line
+from .tui_logs import clean_lines
+from .tui_text import ReportView
 
 MAX_CONTEXT_CHARS = 16 * 1024
 
@@ -76,6 +77,14 @@ class InputBuffer:
         return "".join(chars), caret
 
 
+class _ContextPage(ReportView):
+    # PromptContext bounds and sanitizes the captured text before rendering.
+    limit = None
+
+    def lines(self, scope, report):
+        return report
+
+
 class PromptContext:
     def __init__(self, text=""):
         clipped = len(text) > MAX_CONTEXT_CHARS
@@ -84,37 +93,36 @@ class PromptContext:
         )
         if clipped:
             self.lines.append("[Context clipped at 16 Ki characters]")
-        self.width, self.wrapped = None, []
-        self.top, self.room = 0, 1
+        self._page = _ContextPage()
+
+    @property
+    def width(self):
+        return self._page.width
+
+    @property
+    def wrapped(self):
+        return self._page.wrapped
+
+    @property
+    def top(self):
+        return self._page.offset
+
+    @property
+    def room(self):
+        return self._page.height
 
     def __bool__(self):
         return bool(self.lines)
 
     def page(self, width, room):
-        width = max(1, width)
-        self.room = max(1, room)
-        if width != self.width:
-            self.wrapped = [
-                part for line in self.lines for part in wrap_line(line, width)
-            ]
-            self.width = width
-        self.top = min(max(0, self.top), max(0, len(self.wrapped) - self.room))
-        return self.wrapped[self.top : self.top + self.room]
+        return self._page.page("prompt", self.lines, width, room)
 
     def scroll(self, direction):
-        self.top = min(
-            max(0, self.top + direction * self.room),
-            max(0, len(self.wrapped) - self.room),
-        )
+        self._page.scroll(direction, pages=True)
+        self._page.offset = min(max(0, self.top), max(0, len(self.wrapped) - self.room))
 
     def position(self):
-        if not self.wrapped:
-            return "0-0/0"
-        return "{}-{}/{}".format(
-            self.top + 1,
-            min(len(self.wrapped), self.top + self.room),
-            len(self.wrapped),
-        )
+        return self._page.position() if self.wrapped else "0-0/0"
 
 
 def job_context(row):

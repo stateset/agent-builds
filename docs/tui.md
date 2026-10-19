@@ -526,3 +526,10 @@ limits. Other job filesystems may have additional limits. `STALE` stays first
 when observations are old or refresh fails, and pause takes priority over disk
 limits. `W` and `R` abbreviate waiting and running counts when space is tight.
 These are observations, not a new admission decision or an automatic cleanup.
+
+Captured prompt context retains its logical line and character position across
+split resizing, including temporary height clamping. PgUp/PgDn establishes a new
+position. This keeps the same captured snapshot and typed response; it does not
+refresh job or recipient state or accept a confirmation. Existing context bounds
+and resize requirements remain in effect. Idle and height-only frames reuse
+the wrapped snapshot.

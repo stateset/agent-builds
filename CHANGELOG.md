@@ -2,6 +2,9 @@
 
 ## 0.26.3 (unreleased)
 
+- Retain the reviewed prompt-context text across split resizing and temporary
+  height clamping, without changing the captured snapshot or typed response.
+
 - Reuse focused-log wrapping and search caches when accepted content is unchanged,
   retaining periodic file rechecks, freshness, clipping and error recovery.
 
