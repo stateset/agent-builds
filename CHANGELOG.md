@@ -2,6 +2,10 @@
 
 ## 0.26.3 (unreleased)
 
+- Keep report reading positions stable across pane resizing and temporary height
+  clamping, including health, why, workbench, history and submission receipts.
+  Explicit navigation replaces the anchor; idle rendering stays cached.
+
 - Retain full and longer-window host stalls in workflow studies, with explicit
   reading counts, sampling gaps, bounded first samples and a final observation.
   Preserve existing fields and native/source verification requirements.

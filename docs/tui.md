@@ -474,3 +474,11 @@ these observations and checks native completion and isolation. Passing proves
 the controlled interaction completed; it sets no timing SLA and does not prove
 agent productivity or statistical significance. Initial loading, waiting for
 queue admission and terminal startup are outside the key-response samples.
+
+
+Report views retain the logical text position while pane width changes or a
+taller pane temporarily clamps scrolling. This applies to queue health, why,
+workbench, history and submission receipts. Manual scrolling, Home and End
+replace that position; changing the report's scope resets it. Refreshed content is clamped within the current report and may change the text
+at that logical position. Rendering and
+height-only resizing use cached text; resizing does not request fresh evidence.
