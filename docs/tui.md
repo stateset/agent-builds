@@ -72,6 +72,20 @@ history likewise keeps its checkout until you leave the view.
 | `r` | Selected-job workbench |
 | `v` | Cycle views |
 
+In `U` submissions, Tab/Shift+Tab cycles the overview and individual receipts,
+newest first. The selected receipt's number stays visible; j/k, paging and
+Home/End scroll its details. Selection remains pinned as other attempts update
+or arrive. Cycling past the last receipt returns to the full overview.
+
+Enter opens the selected confirmed **job** log through a background read, even
+outside browser filters/history limits or while the initial job list is pending.
+The overview, plans, starting attempts, invalid confirmations and unconfirmed
+outcomes never open a job or retry work. The pinned action hint shows the exact
+job ID when Enter is available. Help defers a pending handoff; changing receipt
+or view abandons it. A missing job displays an error without retrying. Returning
+to jobs preserves filters; reopening `U` keeps receipt selection. Both selection
+and log opening work at 20x8. Plans remain inspectable via the view picker.
+
 `V` opens a searchable view picker in full and narrow panes. Type to filter
 names and descriptions; Backspace edits and Ctrl+U clears. Arrows or Tab/Shift+Tab
 move through results, PgUp/PgDn page, and Home/End select first/last. Enter opens

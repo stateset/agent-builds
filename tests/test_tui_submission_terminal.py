@@ -95,6 +95,7 @@ class TuiSubmissionTerminalTests(unittest.TestCase):
                     "temporary=marker.with_suffix('.tmp')",
                     "temporary.write_text(json.dumps(dict(pid=pid,start=start,job_id=os.environ.get('AGENT_BUILDS_JOB_ID'))))",
                     "temporary.replace(marker)",
+                    "print('receipt log fixture',flush=True)",
                     "release=Path(sys.argv[2])",
                     "deadline=time.monotonic()+30",
                     "exec({!r})".format(wait_loop),
@@ -233,6 +234,45 @@ class TuiSubmissionTerminalTests(unittest.TestCase):
                     "submission history and durable receipt path",
                 )
                 self.assertTrue(identity_is_live(native))
+                os.write(master, b"\t")
+                wait_screen(
+                    lambda rendered: (
+                        "SUBMISSIONS 1/1" in rendered and "Enter " + handle in rendered
+                    ),
+                    "selected confirmed receipt",
+                )
+                os.write(master, b"\n")
+                wait_screen(
+                    lambda rendered: (
+                        "LOG LIVE" in rendered
+                        and handle + " running" in rendered
+                        and any(
+                            line.strip() == "receipt log fixture"
+                            for line in rendered.splitlines()
+                        )
+                    ),
+                    "exact receipt job log",
+                )
+                os.write(master, b"l")
+                wait_screen(
+                    lambda rendered: "JOBS" in rendered, "jobs after receipt log"
+                )
+                os.write(master, b"U")
+                wait_screen(
+                    lambda rendered: "SUBMISSIONS 1/1" in rendered,
+                    "retained receipt selection",
+                )
+                terminal.resize(8, 20)
+                fcntl.ioctl(
+                    master, termios.TIOCSWINSZ, struct.pack("HHHH", 8, 20, 0, 0)
+                )
+                os.kill(child.pid, signal.SIGWINCH)
+                wait_screen(
+                    lambda rendered: (
+                        "SUBMISSIONS 1/1" in rendered and "Enter " + handle in rendered
+                    ),
+                    "selected receipt in minimum pane",
+                )
                 os.write(master, b"q")
                 self.assertEqual(
                     child.wait(timeout=max(0.1, deadline - time.monotonic())), 0

@@ -223,6 +223,8 @@ HELP = (
     "DELIBERATE ACTIONS (FULL VIEW)",
     "n: new job; o: submit plan; t: saved task",
     "U: this dashboard's submission receipts; starting is not confirmed job creation.",
+    "In submissions: Tab/Shift+Tab cycles overview and receipts; Enter opens the selected confirmed job log.",
+    "j/k, paging and Home/End scroll the current report. Receipt selection survives updates; unconfirmed attempts never open or retry work.",
     "Unconfirmed submissions are never retried automatically; inspect their receipt and transcript.",
     "c: request cancellation after typing yes",
     "Input prompts: Enter accepts, Esc cancels, Ctrl+U clears; resize preserves entered text.",
