@@ -246,6 +246,58 @@ def banner(result, compact=False):
     )
 
 
+def dashboard_banner(result, width, stale=False, status=""):
+    """Fit existing observations to the pane; never recompute admission or do I/O."""
+    waiting = result["waiting_jobs"]
+    running = result["reservations"]["jobs"]
+    disk = result.get("disk", {})
+    limited = disk.get("limited_jobs")
+    if result["status"] == "paused":
+        choices = [
+            result["summary"],
+            "PAUSED: {} waiting".format(waiting),
+            "PAUSED W{}".format(waiting),
+            "PAUSED",
+        ]
+    elif result["status"] == "disk_blocked":
+        gap = rounded_up(disk["shortfall_min_gb"])
+        choices = [
+            "STATE " + banner(result),
+            "DISK: +{:.1f} GiB needed".format(gap),
+            "DISK: +{:.1f}G".format(gap),
+            "DISK blocked",
+            "DISK",
+        ]
+    elif limited is not None and 0 < limited < waiting:
+        gap = rounded_up(disk["shortfall_max_gb"])
+        choices = [
+            "STATE DISK: {}/{} waiting limited | +{:.1f} GiB for largest request".format(
+                limited, waiting, gap
+            ),
+            "DISK: {}/{} +{:.1f}G".format(limited, waiting, gap),
+            "DISK: {}/{}".format(limited, waiting),
+            "DISK: some jobs",
+            "DISK",
+        ]
+    else:
+        choices = [
+            banner(result),
+            banner(result, compact=True),
+            "{} wait | {} run".format(waiting, running),
+            "W{} R{}".format(waiting, running),
+            "QUEUE",
+        ]
+    room = max(0, width - 1)
+    prefix = "STALE " if stale else ""
+    text = next(
+        (prefix + item for item in choices if len(prefix + item) <= room),
+        "STALE" if stale and room >= 5 else "",
+    )
+    if text and status and len(text + " | " + status) <= room:
+        text += " | " + status
+    return text
+
+
 def lines(result):
     yield result["summary"]
     disk = result["disk"]

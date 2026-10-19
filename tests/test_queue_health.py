@@ -1,4 +1,5 @@
 import io
+import copy
 import json
 import os
 from pathlib import Path
@@ -11,6 +12,7 @@ from agent_builds.__main__ import main
 from agent_builds.store import Store
 from agent_builds.tui import compact_lines
 from agent_builds import tui
+import test_tui_browser as browser_fixture
 
 
 class QueueHealthTests(unittest.TestCase):
@@ -311,6 +313,125 @@ class QueueHealthTests(unittest.TestCase):
         self.assertIn("+3.3 GiB", header[0])
         self.assertIn("all 1 waiting", header[0])
         self.assertEqual(self.store.get_control(job)["state"], "queued")
+
+
+class DashboardBannerTests(unittest.TestCase):
+    def report(self, waiting=2, limited=2, status="disk_blocked"):
+        return dict(
+            initialized=True,
+            waiting_jobs=waiting,
+            reservations=dict(jobs=1, cpu_slots=1, memory_gb=1, scratch_gb=0),
+            status=status,
+            summary="{} waiting | 1 running".format(waiting),
+            disk=dict(
+                limited_jobs=limited,
+                available_gb=3.8,
+                required_min_gb=10,
+                shortfall_min_gb=6.2,
+                shortfall_max_gb=8.2,
+            ),
+        )
+
+    def test_disk_shortfall_and_stale_warning_fit_smallest_pane(self):
+        result = self.report()
+        self.assertEqual(queue_health.dashboard_banner(result, 20), "DISK: +6.2G")
+        stale = queue_health.dashboard_banner(
+            result, 20, stale=True, status="Snapshot 99s ago; refreshing"
+        )
+        self.assertEqual(stale, "STALE DISK: +6.2G")
+        self.assertIn(
+            "STATE DISK: all 2 waiting", queue_health.dashboard_banner(result, 120)
+        )
+
+    def test_partial_disk_limits_never_claim_all_waiters_are_blocked(self):
+        result = self.report(waiting=3, limited=1, status="busy")
+        text = queue_health.dashboard_banner(result, 120)
+        self.assertIn("1/3 waiting limited", text)
+        self.assertIn("+8.2 GiB for largest request", text)
+        self.assertNotIn("all", text)
+        self.assertEqual(
+            queue_health.dashboard_banner(result, 20, stale=True), "STALE DISK: 1/3"
+        )
+
+    def test_pause_has_priority_and_unknown_disk_does_not_invent_a_shortfall(self):
+        result = self.report(status="paused")
+        self.assertTrue(queue_health.dashboard_banner(result, 20).startswith("PAUSED"))
+        result = self.report(status="waiting", limited=None)
+        result["disk"] = dict(limited_jobs=None, available_gb=None)
+        self.assertNotIn("DISK", queue_health.dashboard_banner(result, 20))
+        self.assertIn("2 wait", queue_health.dashboard_banner(result, 20))
+
+    def test_every_width_and_large_counts_fit_without_mutating_or_probing(self):
+        reports = [
+            self.report(),
+            self.report(waiting=100000, limited=1, status="waiting"),
+            self.report(waiting=100000, limited=100000, status="paused"),
+            self.report(waiting=0, limited=None, status="idle"),
+        ]
+        before = copy.deepcopy(reports)
+        with mock.patch(
+            "agent_builds.queue_health.shutil.disk_usage",
+            side_effect=AssertionError("render probed disk"),
+        ):
+            for result in reports:
+                for width in range(131):
+                    for stale in (True, False):
+                        text = queue_health.dashboard_banner(
+                            result,
+                            width,
+                            stale=stale,
+                            status="Snapshot 100s ago; refreshing",
+                        )
+                        self.assertLessEqual(len(text), max(0, width - 1))
+                        if stale and width >= 20:
+                            self.assertTrue(text.startswith("STALE"))
+        self.assertEqual(reports, before)
+
+    def test_small_positive_gaps_round_up_and_age_never_displaces_the_blocker(self):
+        result = self.report()
+        result["disk"]["shortfall_min_gb"] = 0.00001
+        self.assertIn("+0.1G", queue_health.dashboard_banner(result, 20))
+        text = queue_health.dashboard_banner(result, 120, status="Snapshot 1s ago")
+        self.assertTrue(text.startswith("STATE DISK:"))
+        self.assertTrue(text.endswith("Snapshot 1s ago"))
+
+    def test_cli_banner_output_and_unknown_observations_keep_existing_meaning(self):
+        result = self.report()
+        self.assertEqual(
+            queue_health.banner(result, compact=True), "DISK: +6.2 GiB needed"
+        )
+        result = self.report(waiting=100000, limited=0, status="busy")
+        self.assertEqual(
+            queue_health.dashboard_banner(result, 20), "100000 wait | 1 run"
+        )
+        self.assertNotIn("DISK", queue_health.dashboard_banner(result, 120))
+
+
+class DashboardBlockerTests(unittest.TestCase):
+    setUp = browser_fixture.TuiBrowserTests.setUp
+    tearDown = browser_fixture.TuiBrowserTests.tearDown
+    dashboard = browser_fixture.TuiBrowserTests.dashboard
+
+    def test_blocker_survives_narrow_and_full_painting_with_empty_job_filter(self):
+        for partial in (False, True):
+            result = DashboardBannerTests().report(
+                waiting=3,
+                limited=1 if partial else 3,
+                status="busy" if partial else "disk_blocked",
+            )
+            for size in ((8, 20), (15, 65), (24, 100)):
+                with self.subTest(partial=partial, size=size), mock.patch(
+                    "agent_builds.tui.read_summary", return_value=result
+                ):
+                    frames = self.dashboard(
+                        [ord("/"), -1, ord("q")],
+                        dimensions=size,
+                        answers=["unmatched-job-filter"],
+                    )
+                text = "\n".join(frames[-1].values())
+                self.assertIn("DISK:", text)
+                self.assertIn("1/3" if partial else "+6.2", text)
+                self.assertIn("No matching jobs", text)
 
 
 if __name__ == "__main__":
