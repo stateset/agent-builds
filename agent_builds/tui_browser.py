@@ -175,7 +175,6 @@ def label(
 
 
 HELP = (
-    "REPORT SEARCH: / filters loaded health, why, workbench and history lines literally, ignoring case; blank clears, Esc cancels. No new evidence is read.",
     "HELP: / searches these instructions literally, ignoring case; blank clears. Esc/?/q returns.",
     "In help: j/k or arrows scroll; PgUp/PgDn page; Home/End first/last. Query and position survive reopening.",
     "FIND A VIEW",
@@ -219,6 +218,7 @@ HELP = (
     "History refreshes in the background every 3 seconds while visible; no automatic tuning.",
     "u: queue health; r: selected-job workbench; h: advisor",
     "Health, why and workbench read in the background with one shared in-flight read.",
+    "REPORT SEARCH: / filters loaded health, why, workbench and history lines literally, ignoring case; blank clears, Esc cancels. No new evidence is read.",
     "Hidden views/help suspend refreshes. Read errors label retained results as stale.",
     "d: cache inventory (no deletion); v: cycle views",
     "PgUp/PgDn scroll detail views. Narrow panes support jobs, plans, watches, history, health and workbench.",
