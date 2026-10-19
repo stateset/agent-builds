@@ -223,6 +223,7 @@ HELP = (
     "d: cache inventory (no deletion); v: cycle views",
     "PgUp/PgDn scroll detail views. Narrow panes support jobs, plans, watches, history, health and workbench.",
     "DELIBERATE ACTIONS (FULL VIEW)",
+    "Plans: arrows select plan; Tab/Shift+Tab selects stage or overview; Enter opens its recorded log.",
     "n: new job; o: submit plan; t: saved task",
     "U: this dashboard's submission receipts; starting is not confirmed job creation.",
     "In submissions: Tab/Shift+Tab cycles overview and receipts; Enter opens the selected confirmed job log.",

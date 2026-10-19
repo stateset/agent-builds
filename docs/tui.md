@@ -72,6 +72,15 @@ history likewise keeps its checkout until you leave the view.
 | `r` | Selected-job workbench |
 | `v` | Cycle views |
 
+In Plans, arrows or j/k select a plan. Tab/Shift+Tab cycles its stages and the
+overview; Enter opens the selected stage's recorded job log. The overview keeps
+the existing preference for a live stage, then a failed stage, then a recent
+submitted stage. A selected stage without a confirmed job shows “No recorded
+log” and never opens another stage's output. Selection follows the stage name
+across snapshot refreshes and reordering; removing the stage or changing plans
+returns to the overview. `b` returns from the log to the selected stage. These
+controls also work in a 20-by-8 split and do not submit or retry stages.
+
 In `U` submissions, Tab/Shift+Tab cycles the overview and individual receipts,
 newest first. The selected receipt's number stays visible; j/k, paging and
 Home/End scroll its details. Selection remains pinned as other attempts update
