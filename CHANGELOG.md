@@ -2,6 +2,9 @@
 
 ## 0.26.3 (unreleased)
 
+- Preserve the instruction and character position in help across split resizing
+  and temporary height clamping, retaining cached wrapping and local search.
+
 - Keep job details anchored to the inspected text across split resizing and
   hidden reads, reusing the shared report renderer and releasing hidden evidence.
 

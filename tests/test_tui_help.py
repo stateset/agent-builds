@@ -13,6 +13,60 @@ from agent_builds.tui_help import HelpView
 
 
 class HelpViewTests(unittest.TestCase):
+    def test_instruction_and_character_anchor_survive_resize_and_height_clamp(self):
+        instruction = "".join("word-{:03d} ".format(i) for i in range(300))
+        view = HelpView(["prefix " * 50, instruction, "last"])
+        view.page(38, 3)
+        view.scroll(30)
+        first = view.page(38, 3)[0]
+        anchor = view.anchor
+        self.assertEqual(anchor[0], 1)
+        self.assertGreater(anchor[1], 0)
+        for width, room in ((18, 3), (98, 1000), (38, 3)):
+            view.page(width, room)
+            self.assertEqual(view.anchor, anchor)
+        self.assertEqual(view.page(38, 3)[0], first)
+
+    def test_navigation_and_search_replace_clamped_or_missing_anchors(self):
+        view = HelpView(["row {:03d}".format(i) for i in range(100)])
+        first = view.page(18, 2)
+        view.scroll(60)
+        view.page(18, 2)
+        view.page(98, 1000)
+        view.scroll(1)
+        view.page(98, 1000)
+        self.assertEqual(view.page(18, 2), first)
+        view.end()
+        self.assertEqual(view.page(18, 2)[-1], "row 099")
+        view.home()
+        self.assertEqual(view.page(18, 2), first)
+        view.search("row 06")
+        self.assertEqual(view.page(18, 2)[0], "row 060")
+        view.search("missing")
+        self.assertEqual(view.page(18, 2), [])
+        self.assertIsNone(view.anchor)
+        view.end()
+        view.search("")
+        self.assertEqual(view.page(18, 2), first)
+
+    def test_word_wrap_anchor_handles_repeated_words_tabs_newlines_and_hyphens(self):
+        instruction = "repeat repeat\talpha-beta\nnext  " * 100
+        view = HelpView([instruction, "last"])
+        view.page(38, 2)
+        view.scroll(20)
+        first = view.page(38, 2)[0]
+        anchor = view.anchor
+        view.page(18, 2)
+        self.assertEqual(view.anchor, anchor)
+        self.assertEqual(view.page(38, 2)[0], first)
+        with mock.patch.object(
+            tui_help.textwrap, "wrap", side_effect=AssertionError("rewrapped")
+        ):
+            for unused in range(300):
+                view.page(38, 2)
+            view.page(38, 1000)
+            self.assertEqual(view.page(38, 2)[0], first)
+
     def test_idle_paging_and_height_changes_reuse_wrapping(self):
         view = HelpView(["A long instruction " * 20, "Other instruction"])
         with mock.patch.object(
@@ -87,6 +141,61 @@ class HelpNavigationTests(unittest.TestCase):
             (list(store.db.iterdump()), store.config_path.read_bytes()), before
         )
         return frames
+
+    def test_help_resize_and_reopen_retain_instruction_while_reads_are_stalled(self):
+        size = [(24, 100)]
+        actions = iter(
+            [
+                ord("?"),
+                curses.KEY_END,
+                curses.KEY_PPAGE,
+                -1,
+                -1,
+                ord("q"),
+                ord("?"),
+                ord("q"),
+                ord("q"),
+            ]
+        )
+        step = [0]
+
+        def key():
+            index = step[0]
+            step[0] += 1
+            if index == 3:
+                size[0] = (8, 20)
+            elif index == 4:
+                size[0] = (24, 100)
+            return next(actions)
+
+        pending = Future()
+        instructions = ["prefix " * 100] + [
+            "TARGET-{:02d}".format(i) for i in range(60)
+        ]
+        with mock.patch("agent_builds.tui.HELP", instructions):
+            frames = self.dashboard(
+                key,
+                lambda: size[0],
+                [],
+                background_submit=lambda loader, request: pending,
+            )
+
+        def first_target(frame):
+            return next(
+                (
+                    line
+                    for y, line in sorted(frame.items())
+                    if line.startswith("TARGET-")
+                ),
+                None,
+            )
+
+        target = first_target(frames[3])
+        self.assertIsNotNone(target)
+        self.assertEqual(first_target(frames[4]), target)
+        self.assertEqual(first_target(frames[5]), target)
+        self.assertEqual(first_target(frames[7]), target)
+        self.assertFalse(pending.done())
 
     def test_search_cancel_clear_and_reopen_preserve_browser_and_help_state(self):
         for size in ((24, 100), (8, 20)):
