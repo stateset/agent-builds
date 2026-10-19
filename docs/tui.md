@@ -96,7 +96,10 @@ Inside help, `/` finds instructions using literal, case-insensitive text. Search
 matches complete instructions before wrapping, so a phrase can span screen lines.
 Blank input clears the search; Esc cancels the prompt and preserves the current
 query and position. j/k and arrows scroll, PgUp/PgDn page, and Home/End move to the
-first/last page. Query and position survive leaving and reopening help. A missing
+first/last page. Query and position survive leaving and reopening help.
+Resizing retains the instruction and character position, even when a taller
+pane temporarily moves the top upward to fill the view. Manual navigation or a
+new query replaces the retained position. A missing
 match is labelled explicitly. Help search is independent of job/log filters and
 remains available while background reads are stalled. Help consumes action keys
 and performs no queue writes. Its wrapped layout is reused across idle frames,
