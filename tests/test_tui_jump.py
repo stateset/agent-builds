@@ -237,6 +237,108 @@ class JobJumpTests(unittest.TestCase):
         self.assertIn("Log unavailable:", links.text(frames[-1]))
         self.assertFalse(missing.exists())
 
+    def test_nested_jump_keeps_original_inspected_job_after_browser_eviction(self):
+        for size in ((24, 100), (8, 20)):
+            hidden, now = [False], [100]
+            original = Store.browser_rows
+
+            def rows(store, *args, **kwargs):
+                return [
+                    row
+                    for row in original(store, *args, **kwargs)
+                    if not hidden[0] or row["id"] != self.jobs[0]
+                ]
+
+            steps = iter([ord("i"), ord("l"), ord("J"), -1, ord("b"), -1, ord("q")])
+
+            def key():
+                value = next(steps)
+                if value == -1:
+                    hidden[0], now[0] = True, now[0] + 2
+                return value
+
+            with self.subTest(size=size), mock.patch.object(
+                Store, "browser_rows", rows
+            ):
+                frames = self.dashboard(
+                    key, size, answers=[self.target], clock=lambda: now[0]
+                )
+            self.assertTrue(
+                any(
+                    self.target in f.get(1, "") and "LOG LIVE" in f.get(0, "")
+                    for f in frames
+                )
+            )
+            self.assertIn("DETAILS", links.text(frames[-1]))
+            self.assertIn(self.jobs[0], links.text(frames[-1]))
+            self.assertNotIn(self.jobs[1], links.text(frames[-1]))
+
+    def test_back_restores_history_checkout_and_submission_overview(self):
+        self.store.db.execute(
+            "UPDATE jobs SET cwd=? WHERE id=?", (str(self.root / "other"), self.target)
+        )
+        for size in ((24, 100), (8, 20)):
+            for source, heading in ((4, "HISTORY"), (15, "SUBMISSIONS")):
+                requests = []
+
+                def submit(loader, key):
+                    requests.append(key)
+                    return links.completed(loader, key)
+
+                with self.subTest(size=size, source=source), mock.patch.object(
+                    tui, "choose_view", return_value=source
+                ), mock.patch(
+                    "agent_builds.tui_history.submit_read", side_effect=submit
+                ):
+                    frames = self.dashboard(
+                        [ord("V"), ord("J"), -1, ord("b"), -1, ord("q")],
+                        size,
+                        answers=[self.target],
+                    )
+                self.assertIn(heading, links.text(frames[-1]))
+                if source == 4:
+                    self.assertEqual(requests, [str(self.root)] * 2)
+
+    def test_cancelled_invalid_and_failed_jumps_keep_existing_back_destination(self):
+        for value in (None, "", "invalid", "f" * 12):
+            with self.subTest(value=value):
+                frames = self.dashboard(
+                    [ord("i"), ord("l"), ord("J"), -1, ord("b"), -1, ord("q")],
+                    answers=[value],
+                )
+            self.assertIn("DETAILS", links.text(frames[-1]))
+            self.assertIn(self.jobs[0], links.text(frames[-1]))
+
+    def test_help_consumes_back_and_tiny_panes_defer_it(self):
+        size = [(24, 100)]
+        steps = iter(
+            [
+                ord("i"),
+                ord("l"),
+                ord("?"),
+                ord("b"),
+                ord("q"),
+                curses.KEY_RESIZE,
+                ord("b"),
+                curses.KEY_RESIZE,
+                ord("b"),
+                -1,
+                ord("q"),
+            ]
+        )
+
+        def key():
+            value = next(steps)
+            if value == curses.KEY_RESIZE:
+                size[0] = (7, 19) if size[0][0] >= 8 else (8, 20)
+            return value
+
+        frames = self.dashboard(key, lambda: size[0])
+        self.assertIn("BUILDR HELP", frames[4][0])
+        self.assertIn("LOG LIVE", frames[5][0])
+        self.assertIn("LOG LIVE", frames[8][0])
+        self.assertIn("DETAILS", links.text(frames[-1]))
+
 
 if __name__ == "__main__":
     unittest.main()

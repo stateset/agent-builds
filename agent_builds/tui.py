@@ -229,6 +229,11 @@ def main(screen, cwd):
     log_status_read=SnapshotRead(lambda handle: read_selected(store.root,('control',handle)),interval=1,submit=submit_log_status_read,label='job state')
     log_links=LogLinks(lambda key: read_selected(store.root,key),submit=submit_link_read)
     direct_log_view=None
+    log_return=(0,None,None)
+    def remember_log_origin():
+        nonlocal log_return
+        if view!=13:
+            log_return=(view,context_row,history_scope)
     children = []
     submissions=SubmissionTracker(store.root,submit=submit_submission_read)
     submission_view,submission_rows=SubmissionView(),()
@@ -363,6 +368,7 @@ def main(screen, cwd):
             direct_lookup=direct_log_view==view
             linked_job=log_links.poll(('jump',view) if direct_lookup else link_origin,readable and (direct_lookup or not VIEWS[view].full or full_view),time.monotonic())
             if linked_job is not None:
+                remember_log_origin()
                 direct_log_view=None
                 log_job=context_row=linked_job
                 log_view.select(log_job['id'],log_job['log_path'])
@@ -699,6 +705,7 @@ def main(screen, cwd):
                     target=choose_view(screen,view,context_row is not None,paint,has_log=view==13 and log_job is not None)
                     if target is not None:
                         if target==13 and view!=13:
+                            remember_log_origin()
                             log_job=context_row
                             log_view.select(log_job['id'] if log_job else None,log_job['log_path'] if log_job else None)
                         if target in (3,12,14):
@@ -783,6 +790,7 @@ def main(screen, cwd):
                     view=3
                     details_view.home()
                 elif key==ord('l'):
+                    remember_log_origin()
                     log_job=inspection_row
                     log_view.select(log_job['id'] if log_job else None,log_job['log_path'] if log_job else None)
                     view=13
@@ -792,7 +800,11 @@ def main(screen, cwd):
                     follow_head=False
                 continue
             if view==13:
-                if key in (ord('l'),ord('v')):
+                if key==ord('b') and height>=8 and width>=20:
+                    view,return_job,history_scope=log_return
+                    if view in (3,12,14):
+                        focus.select(return_job)
+                elif key in (ord('l'),ord('v')):
                     view=0
                 elif key==ord(' '):
                     log_reads.invalidate()
@@ -818,6 +830,7 @@ def main(screen, cwd):
                     log_view.scroll(direction*amount,max(1,width-1),max(1,height-4))
                 continue
             if view in (0,3) and key==ord('l'):
+                remember_log_origin()
                 log_job=context_row
                 log_view.select(log_job['id'] if log_job else None,log_job['log_path'] if log_job else None)
                 view=13

@@ -2,6 +2,10 @@
 
 ## 0.26.2 (unreleased)
 
+- Add `b` in focused logs to return to their source view, retaining receipt and
+  tool selection, inspected-job identity and history checkout. Direct jumps
+  inside a log keep its original source; `l` still returns to jobs.
+
 - Select individual submission receipts with Tab/Shift+Tab and open a confirmed
   job's log with Enter, without copying IDs or changing browser filters. Keep
   the overview, pinned receipt selection and unknown-outcome safeguards.

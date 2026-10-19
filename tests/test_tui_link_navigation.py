@@ -488,6 +488,55 @@ class TuiLinkedLogNavigationTests(unittest.TestCase):
             self.assertIn("LINKED OUTPUT 2", text(frames[-1]))
             self.assertEqual(self.fixture.prompt_calls, [])
 
+    def test_back_returns_to_each_log_source_in_full_and_narrow_panes(self):
+        sources = (
+            (0, [ord("l")], "JOBS"),
+            (3, [ord("i"), ord("l")], "DETAILS"),
+            (14, [ord("w"), -1, ord("g")], "WHY"),
+            (7, [ord("V"), 10], "PLANS"),
+            (9, [ord("V"), 10], "GROUPS"),
+            (10, [ord("V"), 10], "EXTERNAL"),
+        )
+        for size in ((24, 100), (8, 20)):
+            for source, opening, heading in sources:
+                if source == 9 and size[1] < 65:
+                    continue
+                with self.subTest(size=size, source=source), mock.patch.object(
+                    tui, "choose_view", return_value=source
+                ), mock.patch(
+                    "agent_builds.tui_reads.submit_read", side_effect=completed
+                ):
+                    frames = self.dashboard(
+                        [ord("/")] + opening + [-1, ord("b"), -1, ord("q")],
+                        size,
+                        query=self.source,
+                    )
+                self.assertTrue(any("LOG LIVE" in f.get(0, "") for f in frames))
+                self.assertIn(heading, text(frames[-1]))
+                if source in (3, 14):
+                    self.assertIn(self.source, text(frames[-1]))
+
+    def test_back_retains_selected_watch_and_handles_resize_to_full_only_source(self):
+        self.tools["watches"].append(self.watch("watch-two", self.jobs[0]))
+        with mock.patch.object(tui, "choose_view", return_value=10):
+            frames = self.dashboard(
+                [ord("V"), ord("j"), 10, -1, ord("b"), -1, ord("q")]
+            )
+        self.assertIn("watch-two", text(frames[-1]))
+        size = [(24, 100)]
+        steps = iter([ord("V"), 10, -1, curses.KEY_RESIZE, ord("b"), ord("q")])
+
+        def key():
+            value = next(steps)
+            if value == curses.KEY_RESIZE:
+                size[0] = (8, 20)
+            return value
+
+        with mock.patch.object(tui, "choose_view", return_value=9):
+            frames = self.dashboard(key, lambda: size[0])
+        self.assertIn("GROUPS", text(frames[-1]))
+        self.assertIn("Resize to 65x15", text(frames[-1]))
+
 
 if __name__ == "__main__":
     unittest.main()
