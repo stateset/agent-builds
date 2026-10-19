@@ -2,10 +2,11 @@
 
 import curses
 import unittest
+import unicodedata
 from unittest import mock
 
 from agent_builds import tui
-from agent_builds.tui_prompt import MAX_CONTEXT_CHARS, PromptContext
+from agent_builds.tui_prompt import MAX_CONTEXT_CHARS, PromptContext, InputBuffer
 from agent_builds.tui_logs import wrap_line
 
 
@@ -20,6 +21,7 @@ class PromptTests(unittest.TestCase):
         context="",
     ):
         size = [dimensions]
+        self.cursor_positions = []
         screen, frame, frames = mock.Mock(), {}, []
         screen.getmaxyx.side_effect = lambda: size[0]
         screen.erase.side_effect = frame.clear
@@ -28,11 +30,23 @@ class PromptTests(unittest.TestCase):
             height, width = size[0]
             self.assertTrue(0 <= y < height and 0 <= x < width)
             self.assertLessEqual(len(text), width - 1)
+            self.assertLessEqual(
+                sum(
+                    0
+                    if unicodedata.combining(c)
+                    else 2
+                    if unicodedata.east_asian_width(c) in "WF"
+                    else 1
+                    for c in text
+                ),
+                width - 1,
+            )
             frame[y] = text[:count]
 
         def move(y, x):
             height, width = size[0]
             self.assertTrue(0 <= y < height and 0 <= x < width)
+            self.cursor_positions.append((y, x))
 
         actions = iter(keys)
 
@@ -57,6 +71,55 @@ class PromptTests(unittest.TestCase):
             finally:
                 screen.timeout.assert_called_with(200)
         return result, frames
+
+    def test_middle_insert_delete_home_end_and_backspace(self):
+        result, frames = self.edit(
+            [
+                curses.KEY_HOME,
+                curses.KEY_RIGHT,
+                "X",
+                curses.KEY_DC,
+                curses.KEY_END,
+                curses.KEY_BACKSPACE,
+                "\n",
+            ],
+            initial="abc",
+        )
+        self.assertEqual(result, "aX")
+        self.assertIn("Left/Right Home/End Del", frames[0].values())
+
+    def test_hidden_navigation_and_delete_cannot_edit_during_resize(self):
+        result, frames = self.edit(
+            [
+                curses.KEY_LEFT,
+                ((1, 1), curses.KEY_RESIZE),
+                curses.KEY_HOME,
+                curses.KEY_DC,
+                "\n",
+                ((8, 20), curses.KEY_RESIZE),
+                "X",
+                "\n",
+            ],
+            initial="abc",
+        )
+        self.assertEqual(result, "abXc")
+        self.assertIn("Arrows Home/End Del", frames[-1].values())
+
+    def test_wide_input_fits_cells_and_cursor_survives_resize(self):
+        initial = "prefix/" + "界e\u0301" * 50
+        result, frames = self.edit(
+            [curses.KEY_LEFT, ((8, 20), curses.KEY_RESIZE), "X", "\n"],
+            initial=initial,
+        )
+        self.assertEqual(result, initial[:-1] + "X" + initial[-1:])
+        self.assertTrue(all(x <= 18 for y, x in self.cursor_positions[-2:]))
+        self.assertIn("界", frames[-1][5])
+
+    def test_cursor_navigation_and_edits_still_require_explicit_acceptance(self):
+        result, _ = self.edit(
+            [curses.KEY_HOME, "X", curses.KEY_DC, "\x1b"], initial="yes"
+        )
+        self.assertIsNone(result)
 
     def test_question_help_and_editing_are_visible_before_acceptance(self):
         result, frames = self.edit(
@@ -113,7 +176,7 @@ class PromptTests(unittest.TestCase):
         initial = "/repo/" + "long/" * 60
         result, frames = self.edit(["\n"], dimensions=(8, 20), initial=initial)
         self.assertEqual(result, initial)
-        self.assertIn("> " + initial[-17:], frames[0].values())
+        self.assertIn("> " + initial[-16:], frames[0].values())
         self.assertIn("Enter OK Esc cancel", frames[0].values())
 
     def test_unsupported_cursor_visibility_does_not_break_editing(self):
@@ -163,6 +226,57 @@ class PromptTests(unittest.TestCase):
         )
         self.assertEqual(result, "safe")
         self.assertIn("Snapshot 1-6/6", frames[-1].values())
+
+
+class InputBufferTests(unittest.TestCase):
+    def test_boundaries_shortcuts_and_clear_preserve_exact_text(self):
+        buffer = InputBuffer("abc")
+        for key in (curses.KEY_RIGHT, curses.KEY_DC):
+            buffer.handle(key)
+        self.assertEqual((buffer.value, buffer.cursor), ("abc", 3))
+        buffer.handle("\x01")
+        buffer.handle(curses.KEY_LEFT)
+        buffer.handle(curses.KEY_BACKSPACE)
+        self.assertEqual((buffer.value, buffer.cursor), ("abc", 0))
+        buffer.handle("start ")
+        buffer.handle("\x05")
+        buffer.handle(" end")
+        self.assertEqual(buffer.value, "start abc end")
+        buffer.handle("\x15")
+        self.assertEqual((buffer.value, buffer.cursor), ("", 0))
+
+    def test_cell_window_tracks_beginning_middle_and_end_without_truncating_value(self):
+        original = "prefix/" + "界e\u0301" * 100 + "/tail"
+        buffer = InputBuffer(original)
+        for cursor in (len(original), 0, 27):
+            buffer.cursor = cursor
+            for width in (1, 16, 56):
+                text, caret = buffer.window(width)
+                cells = sum(
+                    0
+                    if unicodedata.combining(c)
+                    else 2
+                    if unicodedata.east_asian_width(c) in "WF"
+                    else 1
+                    for c in text
+                )
+                self.assertLessEqual(cells, width)
+                self.assertTrue(0 <= caret <= width)
+                self.assertEqual(buffer.value, original)
+                self.assertEqual(buffer.cursor, cursor)
+        buffer.cursor = 0
+        self.assertTrue(buffer.window(16)[0].startswith("prefix/"))
+
+    def test_display_work_is_bounded_for_long_zero_width_text_and_controls(self):
+        original = "e" + "\u0301" * 100000
+        buffer = InputBuffer(original)
+        text, caret = buffer.window(16)
+        self.assertLessEqual(len(text), 72)
+        self.assertEqual(buffer.value, original)
+        self.assertEqual(caret, 0)
+        buffer = InputBuffer("a\tb\nc")
+        self.assertEqual(buffer.window(16), ("a b c", 5))
+        self.assertEqual(buffer.value, "a\tb\nc")
 
 
 class PromptContextTests(unittest.TestCase):

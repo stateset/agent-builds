@@ -2,6 +2,9 @@
 
 ## 0.26.3 (unreleased)
 
+- Edit prompt text at the cursor with arrows, Home/End and Delete, using a
+  bounded display window that respects wide-character terminal cells.
+
 - Preserve the instruction and character position in help across split resizing
   and temporary height clamping, retaining cached wrapping and local search.
 
