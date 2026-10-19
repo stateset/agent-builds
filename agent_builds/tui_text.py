@@ -92,6 +92,21 @@ class ReportView:
         self._last_offset = self.offset
         return self.wrapped[self.offset : self.offset + self.height]
 
+    def display_page(self, repository, report, width, height, error=None):
+        """Add display-only empty states without making them report evidence."""
+        rows = self.page(repository, report, width, height, error)
+        if rows:
+            return rows
+        if report is None:
+            message = ["Report unavailable" if error else "Loading report"]
+        elif self.query:
+            message = ["No matching lines", "/ edits; blank clears"]
+        else:
+            message = ["Empty report"]
+        return [part for line in message for part in wrap_line(line, max(1, width))][
+            : max(1, height)
+        ]
+
     def _select_paragraphs(self):
         if self.report is None:
             self.visible = self.paragraphs

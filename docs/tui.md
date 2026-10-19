@@ -497,3 +497,7 @@ scope changes. Refreshed snapshots update matches from current text. Pending
 reads show a pending search; read errors stay visible even when their text does
 not match. Search is limited to retained report text, including its existing
 64 Ki-character clipping rules, and never loads omitted evidence.
+
+Report content distinguishes loading, an accepted empty report and a search with
+no matching lines, even at 20x8. Empty-search guidance is display-only: it never
+counts as a report line or search match. Press `/` to edit; blank restores text.
