@@ -1,6 +1,7 @@
 """Prompt editing remains explicit and readable across split-pane resizes."""
 
 import curses
+import os
 import unittest
 import unicodedata
 from unittest import mock
@@ -226,6 +227,121 @@ class PromptTests(unittest.TestCase):
         )
         self.assertEqual(result, "safe")
         self.assertIn("Snapshot 1-6/6", frames[-1].values())
+
+
+@unittest.skipUnless(os.name == "posix", "requires a private pseudo-terminal")
+class PromptTerminalTests(unittest.TestCase):
+    def test_native_cursor_edit_accept_and_cancel_in_full_and_minimum_panes(self):
+        import errno
+        import fcntl
+        import json
+        from pathlib import Path
+        import pty
+        import selectors
+        import struct
+        import subprocess
+        import sys
+        import tempfile
+        import termios
+        import time
+        from tui_terminal import TerminalScreen
+
+        code = (
+            "import curses,json,sys; from pathlib import Path; "
+            "from agent_builds.tui import prompt; "
+            "result=curses.wrapper(lambda screen: prompt(screen,'Edit command',sys.argv[2])); "
+            "Path(sys.argv[1]).write_text(json.dumps(result))"
+        )
+        initial = "cargo test " + "界" * 20
+        expected = "cargo check " + "界" * 20 + " --release"
+        for height, width in ((24, 100), (8, 20)):
+            for accept in (True, False):
+                with self.subTest(
+                    size=(height, width), accept=accept
+                ), tempfile.TemporaryDirectory() as directory:
+                    root = Path(directory)
+                    output, state = root / "result.json", root / "missing-state"
+                    master, slave = pty.openpty()
+                    selector = selectors.DefaultSelector()
+                    terminal = TerminalScreen(height, width)
+                    child = None
+                    try:
+                        fcntl.ioctl(
+                            slave,
+                            termios.TIOCSWINSZ,
+                            struct.pack("HHHH", height, width, 0, 0),
+                        )
+                        env = dict(
+                            os.environ,
+                            TERM="xterm-256color",
+                            PYTHONUTF8="1",
+                            AGENT_BUILDS_STATE=str(state),
+                        )
+                        child = subprocess.Popen(
+                            [sys.executable, "-c", code, str(output), initial],
+                            cwd=str(Path(__file__).resolve().parent.parent),
+                            env=env,
+                            stdin=slave,
+                            stdout=slave,
+                            stderr=slave,
+                            start_new_session=True,
+                        )
+                        os.close(slave)
+                        slave = None
+                        selector.register(master, selectors.EVENT_READ)
+
+                        def wait_screen(predicate):
+                            deadline = time.monotonic() + 20
+                            while time.monotonic() < deadline:
+                                for unused, events in selector.select(0.05):
+                                    try:
+                                        data = os.read(master, 65536)
+                                    except OSError as error:
+                                        if error.errno != errno.EIO:
+                                            raise
+                                        data = b""
+                                    terminal.feed(data)
+                                if predicate(terminal.text()):
+                                    return
+                                if child.poll() is not None:
+                                    break
+                            self.fail(
+                                "Private prompt did not render expected text: "
+                                + repr(terminal.text())
+                            )
+
+                        wait_screen(
+                            lambda text: (
+                                "BUILDR INPUT" in text and "Edit command" in text
+                            )
+                        )
+                        self.assertFalse(output.exists())
+                        # Real xterm Home, Right, Delete and End sequences.
+                        os.write(
+                            master,
+                            b"\x1bOH"
+                            + b"\x1bOC" * 6
+                            + b"\x1b[3~" * 4
+                            + b"check\x1bOF --release",
+                        )
+                        wait_screen(lambda text: "--release" in text)
+                        self.assertTrue(0 <= terminal.column <= width - 2)
+                        self.assertEqual(terminal.row, height - 3)
+                        self.assertFalse(output.exists())
+                        os.write(master, b"\n" if accept else b"\x1b")
+                        self.assertEqual(child.wait(timeout=10), 0)
+                        self.assertEqual(
+                            json.loads(output.read_text()), expected if accept else None
+                        )
+                        self.assertFalse(state.exists())
+                    finally:
+                        if child is not None and child.poll() is None:
+                            child.kill()
+                            child.wait(timeout=10)
+                        selector.close()
+                        os.close(master)
+                        if slave is not None:
+                            os.close(slave)
 
 
 class InputBufferTests(unittest.TestCase):
