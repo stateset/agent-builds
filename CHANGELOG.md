@@ -2,6 +2,11 @@
 
 ## 0.26.2 (unreleased)
 
+- Reveal the matching text when searching long wrapped log lines, including
+  Unicode casefold expansions. Keep hits visible across resizing and use their
+  actual position for next/previous navigation after manual scrolling. Retain
+  matching-line counts and cached idle rendering.
+
 - Keep held log inspection on the same logical text across narrow/wide pane
   resizing and temporary height clamping, without rereading output. Manual
   navigation replaces the anchor; search matches and live following retain

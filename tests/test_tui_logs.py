@@ -326,6 +326,84 @@ class TuiLogTests(unittest.TestCase):
             for unused in range(300):
                 self.assertEqual(self.view.page(7, 2), expected)
 
+    def test_search_reveals_first_hit_deep_inside_a_wrapped_line(self):
+        self.write(
+            ["intro", "x" * 30 + "needle" + "z" * 30 + "needle"] + ["padding"] * 20
+        )
+        self.view.poll(0)
+        self.view.search("needle", 10, 3)
+        self.assertEqual(self.view.page(10, 3)[0], "needlezzzz")
+        self.assertEqual(self.view.matches, [1])
+        self.assertEqual(self.view.search_label(), "Find 1/1: needle")
+        self.assertEqual(self.view.match_kind(0), 2)
+        self.view.page(7, 3)
+        self.assertIn("ne", self.view.page(7, 3)[0])
+        self.assertEqual(self.view.page(10, 3)[0], "needlezzzz")
+
+    def test_casefold_expansion_maps_hit_to_original_text_before_wrapping(self):
+        for prefix, query, suffix, expected in (
+            ("ß" * 20, "NEEDLE", "needle", "needlezzzz"),
+            ("x" * 30, "SS", "ß", "ßzzzzzzzzz"),
+            ("x" * 30, "SX", "ßx", "ßxzzzzzzzz"),
+            ("甲乙丙丁戊", "NEEDLE", "needle", "needlezzzz"),
+            ("ae\u0301bcdefghij", "NEEDLE", "needle", "jneedlezzz"),
+        ):
+            self.view.select(prefix + query, self.path)
+            self.write([prefix + suffix + "z" * 50] + ["padding"] * 20)
+            self.view.poll(0)
+            self.view.search(query, 10, 3)
+            self.assertEqual(self.view.page(10, 3)[0], expected)
+
+    def test_next_previous_after_scrolling_use_hit_position_within_current_line(self):
+        self.write(
+            ["hit earlier", "x" * 30 + "hit middle" + "z" * 30, "hit later"]
+            + ["padding"] * 20
+        )
+        self.view.poll(0)
+        self.view.search("hit", 10, 3)
+        self.view.scroll(2, 10, 3)
+        self.assertEqual(self.view.page(10, 3)[0], "xxxxxxxxxx")
+        self.view.next_match(1, 10, 3)
+        self.assertEqual(self.view.match_index, 1)
+        self.assertEqual(self.view.page(10, 3)[0], "hit middle")
+        self.view.scroll(1, 10, 3)
+        self.view.next_match(-1, 10, 3)
+        self.assertEqual(self.view.match_index, 1)
+        self.assertEqual(self.view.page(10, 3)[0], "hit middle")
+        self.view.next_match(1, 10, 3)
+        self.assertEqual(self.view.match_index, 2)
+        self.view.next_match(1, 10, 3)
+        self.assertEqual(self.view.match_index, 0)
+
+    def test_hit_cache_resets_on_query_content_and_job_changes(self):
+        self.write(["x" * 20 + "first" + "y" * 25 + "second"] + ["padding"] * 20)
+        self.view.poll(0)
+        self.view.search("first", 10, 3)
+        self.assertEqual(self.view.match_target, (0, 20))
+        self.view.search("second", 10, 3)
+        self.assertEqual(self.view.match_target, (0, 50))
+        self.view.end()
+        self.write(["second moved"] + ["padding"] * 20)
+        self.view.poll(1)
+        self.assertIsNone(self.view.match_target)
+        self.view.next_match(1, 10, 3)
+        self.assertEqual(self.view.match_target, (0, 0))
+        self.view.select("another", self.path)
+        self.assertIsNone(self.view.match_target)
+
+    def test_idle_selected_hits_do_not_rewrap_remap_or_read_files(self):
+        self.write(["x" * 100 + "hit target"] + ["padding"] * 20)
+        self.view.poll(0)
+        self.view.search("hit", 10, 3)
+        expected = self.view.page(10, 3)
+        with mock.patch.object(
+            self.view, "_match_row", side_effect=AssertionError("idle hit scan")
+        ), mock.patch(
+            "agent_builds.tui_logs.wrap_line", side_effect=AssertionError("idle wrap")
+        ), mock.patch.object(Path, "stat", side_effect=AssertionError("idle IO")):
+            for unused in range(300):
+                self.assertEqual(self.view.page(10, 3), expected)
+
     def test_real_terminal_can_search_jump_and_quit_without_running_a_job(self):
         import fcntl
         import pty
@@ -482,11 +560,15 @@ class TuiLogTests(unittest.TestCase):
                 wait_for(b"Find in loaded log")
                 os.write(master, b"\x15HELD-ANCHOR\n")
                 wait_for(b"Find 1/1: HELD-ANCHOR")
+                wait_for(b"HELD-ANCHOR" + b"y" * 88, row=3)
+                resize(8, 20)
+                wait_for(b"xxxxHELD-ANCHORyyyy", row=3)
+                resize(20, 100)
+                wait_for(b"HELD-ANCHOR" + b"y" * 88, row=3)
                 os.write(master, b"/")
                 wait_for(b"Find in loaded log")
                 os.write(master, b"\x15\n")
                 wait_for(b"Space hold/resume")
-                os.write(master, b"j")
                 wait_for(b"HELD-ANCHOR" + b"y" * 88, row=3)
                 resize(8, 20)
                 wait_for(b"xxxxHELD-ANCHORyyyy", row=3)

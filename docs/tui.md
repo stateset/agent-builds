@@ -389,8 +389,11 @@ anchors cover only the loaded snapshot and do not survive selecting another job.
 In log focus, `/` searches literal text, ignoring case, across the loaded logical
 lines (including text spanning a visual wrap). Enter accepts, Esc leaves the
 existing search unchanged, and a blank query clears it. Search holds the current
-snapshot and jumps to the first matching line. `n`/`N` move to the next/previous
-matching line, wrapping at either end; multiple occurrences on one line count
+snapshot and reveals the first occurrence in the first matching logical line,
+including hits deep inside wrapped lines. Resizing keeps that occurrence visible.
+`n`/`N` move to the first occurrence in the next/previous matching line, wrapping
+at either end; after manual scrolling they use the hit's screen position rather
+than the beginning of its logical line. Multiple occurrences on one line count
 as one match. Matching lines are highlighted, with the selected match reversed.
 The header shows the visible wrapped-row range and total; the search label shows
 the selected match and matching-line count. Searches cover the recent loaded
