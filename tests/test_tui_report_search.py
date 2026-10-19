@@ -103,6 +103,29 @@ class ReportSearchTests(unittest.TestCase):
             view.page("a", report, 19, 1)
         self.assertEqual(view.matches, 1)
 
+    def test_stale_status_stays_first_when_query_would_fill_a_narrow_pane(self):
+        view = TextView()
+        report = dict(lines=["needle"])
+        view.page("a", report, 19, 1)
+        view.search("needle")
+        view.page("a", report, 19, 1)
+        self.assertTrue(
+            view.status_label("STALE Snapshot 9s ago; refreshing").startswith(
+                "STALE | Find 1:"
+            )
+        )
+        view.page("a", report, 19, 1, "database busy")
+        self.assertTrue(
+            view.status_label("Stale history: database busy").startswith(
+                "STALE | Find 1:"
+            )
+        )
+        view.search("")
+        self.assertEqual(
+            view.status_label("Stale history: database busy"),
+            "Stale history: database busy",
+        )
+
     def test_search_never_loads_clipped_report_text(self):
         view = TextView()
         report = dict(lines=["x" * (view.limit + 10), "OMITTED NEEDLE"])
@@ -177,6 +200,25 @@ class ReportSearchDashboardTests(unittest.TestCase):
                     ["", "needle", "needle"],
                 )
                 self.assertNotIn("Find 1:", "\n".join(frames[-1].values()))
+
+    def test_initial_history_read_error_remains_visible_with_a_query_in_minimum_pane(
+        self,
+    ):
+        with mock.patch("agent_builds.tui.choose_view", return_value=4), mock.patch(
+            "agent_builds.tui_history.submit_read", side_effect=completed
+        ), mock.patch(
+            "agent_builds.tui_history.inspect_history",
+            side_effect=OSError("disk blocked"),
+        ):
+            frames = self.dashboard(
+                [ord("V"), -1, -1, ord("/"), -1, ord("q")],
+                dimensions=(8, 20),
+                answers=["needle"],
+            )
+        self.assertTrue(
+            any("Find unavailable:" in "\n".join(f.values()) for f in frames)
+        )
+        self.assertTrue(any("disk blocked" in "\n".join(f.values()) for f in frames))
 
     def test_search_while_inspection_is_pending_shows_unknown_match_count(self):
         pending = Future()

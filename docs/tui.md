@@ -496,4 +496,4 @@ Queries stay with each report widget and clear when its checkout/job/candidate
 scope changes. Refreshed snapshots update matches from current text. Pending
 reads show a pending search; read errors stay visible even when their text does
 not match. Search is limited to retained report text, including its existing
-64 KiB clipping rules, and never loads omitted evidence.
+64 Ki-character clipping rules, and never loads omitted evidence.

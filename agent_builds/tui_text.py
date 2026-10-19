@@ -128,6 +128,14 @@ class ReportView:
         )
         return "Find {}: {}".format(label, self.query)
 
+    def status_label(self, status):
+        if not self.query:
+            return status
+        stale = self.report is not None and (
+            self.error or status.casefold().startswith("stale ")
+        )
+        return ("STALE | " if stale else "") + self.search_status() + " | " + status
+
     def bounded(self, content):
         if self.limit is None:
             return list(content)
