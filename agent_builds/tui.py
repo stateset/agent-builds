@@ -26,6 +26,7 @@ from .tui_reads import submit_read as submit_log_read
 from .tui_reads import submit_read as submit_log_status_read
 from .tui_log_reads import LogReads
 from .tui_links import LogLinks
+from .tui_plan_stages import PlanStages
 from .tui_help import HelpView
 from .tui_reads import submit_read as submit_link_read
 from .tui_submissions import SubmissionTracker
@@ -55,7 +56,7 @@ def paint(screen, y, x, text, attr=0):
         pass
 
 
-def compact_lines(rows, selected, plans, plan_index, view, config, height, width, watches=None, watch_index=0, health=None, health_offset=0, workbench=None, workbench_offset=0, queue_health=None, browser=None, tail_reader=None, details_view=None, detail_row=None, detail_error=None, history_view=None, history_repository=None, history_report=None, history_status="", inspection=None, history_error=None):
+def compact_lines(rows, selected, plans, plan_index, view, config, height, width, watches=None, watch_index=0, health=None, health_offset=0, workbench=None, workbench_offset=0, queue_health=None, browser=None, tail_reader=None, details_view=None, detail_row=None, detail_error=None, history_view=None, history_repository=None, history_report=None, history_status="", inspection=None, history_error=None, plan_stages=None):
     """A monitor for narrow split panes; editing actions need the full view."""
     lines = ['BUILDR ' + __version__ + (' PAUSED' if config['paused'] else '')]
     if height < 8 or width < 20:
@@ -119,6 +120,9 @@ def compact_lines(rows, selected, plans, plan_index, view, config, height, width
         else:
             lines+=['No external watches']
     elif view == 7:
+        stage_lines = plan_stages.lines(plans[plan_index]) if plan_stages and plans else []
+        if stage_lines:
+            lines += stage_lines[:2]
         lines += [browser.get('tool_heading') if browser and browser.get('tool_heading') else 'PLANS | {} shown'.format(len(plans))]
         if plans:
             selected_row = plans[plan_index]
@@ -258,6 +262,7 @@ def main(screen, cwd):
     plan_rows = []
     plan_index = 0
     plan_id = None
+    plan_stages = PlanStages()
     plan_offset = 0
     advice_result = None
     advice_offset = 0
@@ -351,6 +356,7 @@ def main(screen, cwd):
                 plan_index=next((i for i,p in enumerate(plan_rows) if p['id']==plan_id),min(plan_index,max(0,len(plan_rows)-1)))
                 if tool_data is not None:
                     plan_id=plan_rows[plan_index]['id'] if plan_rows else None
+                    plan_stages.current(plan_rows[plan_index] if plan_rows else None)
             elif view==9:
                 group_rows=tool_data if tool_data is not None else []
                 group_index=next((i for i,g in enumerate(group_rows) if g['id']==group_id),min(group_index,max(0,len(group_rows)-1)))
@@ -364,6 +370,8 @@ def main(screen, cwd):
             elif view==8:
                 advice_result=tool_data
             link_origin=(view,watch_id if view==10 else group_id if view==9 else plan_id if view==7 else context_row['id'] if context_row else None)
+            if view==7:
+                link_origin=(view,plan_id,plan_stages.name,plan_stages.log_target(plan_rows[plan_index]) if plan_rows and plan_stages.name is not None else None)
             if view==15:
                 submission_view.current(submission_rows)
                 link_origin=(view,submission_view.selected_key)
@@ -441,7 +449,7 @@ def main(screen, cwd):
                 browser=dict(mode=browser_mode,query=browser_query,loaded=len(loaded_rows),order=browser_order,expanded=jobs_expanded,repository=browser_repository,follow=follow_head,initialized=browser_report['initialized'],queue_error=browser_stale,queue_age=browser_read.status(time.monotonic()),summary_status=summary_read.status(time.monotonic()),summary_error=summary_stale,tool_status=tool_status if view in (7,10) and (tool_data is None or tool_read.error) else '',tool_heading=tool_read.status(time.monotonic(),short_label='PLANS' if view==7 else 'EXTERNAL') if view in (7,10) else '')
                 if submission_rows:
                     browser['submission_notice']=compact_notice(submission_rows[-1])
-                for index, line in enumerate(compact_lines(rows, selected, plan_rows, plan_index, view, config, height, width, watch_rows, watch_index, None,0,workbench_result,0,queue_health_result,browser,read_tail,details_view,detail_row,detail_read.error or (detail_read.status(time.monotonic()) if inspection_row else None),history_view,history_repository,history_report,history_status,inspection,history_error=history_read.error)):
+                for index, line in enumerate(compact_lines(rows, selected, plan_rows, plan_index, view, config, height, width, watch_rows, watch_index, None,0,workbench_result,0,queue_health_result,browser,read_tail,details_view,detail_row,detail_read.error or (detail_read.status(time.monotonic()) if inspection_row else None),history_view,history_repository,history_report,history_status,inspection,history_error=history_read.error,plan_stages=plan_stages)):
                     paint(screen, index, 0, line)
             else:
                 context = ' | Herdr ' + os.environ.get('HERDR_PANE_ID', '') if os.environ.get('HERDR_ENV') == '1' else ''
@@ -598,14 +606,16 @@ def main(screen, cwd):
                     for index, line in enumerate(lines[advice_offset:advice_offset+visible]):
                         paint(screen, log_top+1+index, 0, line)
                 elif view == 7:
-                    paint(screen, log_top-1, 0, 'VERIFICATION PLANS | arrows select | Enter opens a stage log', curses.A_BOLD)
+                    paint(screen, log_top-1, 0, 'VERIFICATION PLANS | arrows plan | Tab stage | Enter log', curses.A_BOLD)
                     paint(screen,log_top,0,tool_status)
                     lines = ['No plans yet. Press o to submit a JSON verification plan.'] if tool_data is not None else []
                     if plan_rows:
                         plan = plan_rows[plan_index]
+                        stage_lines = plan_stages.lines(plan)
                         lines = ['{} | {} | {}'.format(plan['id'], plan['state'], plan['name']),
                                  'Stages: {} succeeded / {} total | elapsed {:.1f}s'.format(
                                      sum(s['state']=='succeeded' for s in plan['stages']), len(plan['stages']), plan['elapsed_seconds'])]
+                        lines = stage_lines + lines
                         if plan['state'] not in ('succeeded', 'failed', 'cancelled') and plan['controller_alive'] is False:
                             lines += ['Controller is not running; r resumes monitoring without retrying submitted stages.']
                         elif plan['state'] not in ('succeeded', 'failed', 'cancelled') and plan['controller_alive'] is None:
@@ -614,7 +624,7 @@ def main(screen, cwd):
                             lines += [plan['reason']]
                         for stage in plan['stages']:
                             job = stage['job']
-                            lines += ['{} {:11} | {} | {}'.format(stage['name'], stage['state'], stage['job_id'] or 'not submitted',
+                            lines += ['{}{} {:11} | {} | {}'.format('> ' if stage['name']==plan_stages.name else '  ', stage['name'], stage['state'], stage['job_id'] or 'not submitted',
                                 stage['reason'] or (job['reason'] if job else 'waiting for prerequisites'))]
                             if job:
                                 lines += ['  waited {:.1f}s | ran {:.1f}s | exit {} | {}'.format(job['wait_seconds'], job['elapsed_seconds'], job['exit_code'], job['command_display'])]
@@ -752,6 +762,10 @@ def main(screen, cwd):
                 continue
             if browser_report is None and view!=13:
                 continue
+            if view==7 and key in (9,curses.KEY_BTAB) and height>=8 and width>=20:
+                plan_stages.choose(plan_rows[plan_index] if plan_rows else None,1 if key==9 else -1)
+                plan_offset=0
+                continue
             if view==0:
                 if key==ord('F'):
                     follow_head=not follow_head
@@ -864,7 +878,7 @@ def main(screen, cwd):
                         targets=[stage for stage in stages if stage['job'] and stage['job']['state'] not in TERMINAL]
                         targets += [stage for stage in stages if stage['state'] in ('failed','lost') and stage['job']]
                         targets += list(reversed([stage for stage in stages if stage['job']]))
-                        link_handle=targets[0]['job_id'] if targets else None
+                        link_handle=plan_stages.log_target(plan_rows[plan_index]) if plan_stages.name is not None else targets[0]['job_id'] if targets else None
                     if link_handle:
                         log_links.open('browser',link_handle,link_origin,time.monotonic())
                         follow_head=False

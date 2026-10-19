@@ -2,6 +2,10 @@
 
 ## 0.26.3 (unreleased)
 
+- Select plan stages with Tab/Shift+Tab and open their exact recorded job logs,
+  including in narrow panes. Preserve stage identity across refreshes and log
+  round trips; discard obsolete lookups without submitting or retrying stages.
+
 - Retain the reviewed prompt-context text across split resizing and temporary
   height clamping, without changing the captured snapshot or typed response.
   Keep the acceptance hint complete at the 40/41-column boundary.
