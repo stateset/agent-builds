@@ -2,6 +2,9 @@
 
 ## 0.26.3 (unreleased)
 
+- Keep job details anchored to the inspected text across split resizing and
+  hidden reads, reusing the shared report renderer and releasing hidden evidence.
+
 - Distinguish loading, empty and unmatched diagnostic reports in the content area,
   keeping guidance outside evidence, row counts and search results.
 

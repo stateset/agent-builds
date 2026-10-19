@@ -1,6 +1,6 @@
 """Read-only, wrapped details for one explicitly selected job."""
 
-from .tui_logs import clean_lines, wrap_line
+from .tui_text import ReportView
 from .waits import summary
 
 MAX_DETAIL_CHARS = 64 * 1024
@@ -159,59 +159,36 @@ def detail_lines(row):
     return lines
 
 
-class DetailsView:
-    """Reuse formatted evidence until the selected snapshot or width changes."""
+class DetailsView(ReportView):
+    """Reuse bounded evidence and keep its logical position across pane resizing."""
 
-    def __init__(self):
-        self.job = None
-        self.offset = 0
-        self.height = 1
-        self.clear()
+    # detail_lines has a dedicated bound and notice, so do not clip it twice.
+    limit = None
+
+    @property
+    def job(self):
+        return self.key
+
+    @property
+    def row(self):
+        return self.report
 
     def clear(self):
-        # Release hidden evidence while retaining this job's scroll position.
-        self.row = None
-        self.logical = []
-        self.wrapped = []
-        self.width = None
+        # Release hidden evidence, keeping only this job's text position.
+        self.report = self.width = self.error = None
+        self.logical, self.wrapped, self.locations = [], [], []
+        self.paragraphs, self.visible = [], []
+        self.matches = None
+        self._selection_dirty = True
+
+    def lines(self, scope, row):
+        return bounded_lines(detail_lines(row))
 
     def page(self, row, width, height):
-        self.height = max(1, height)
         if row is None:
             self.clear()
             return []
-        if row["id"] != self.job:
-            self.job, self.offset = row["id"], 0
-        if row is not self.row:
-            self.logical = bounded_lines(detail_lines(row))
-            self.row, self.width = row, None
-        width = max(1, width)
-        if width != self.width:
-            self.wrapped = [
-                part
-                for line in self.logical
-                for paragraph in (
-                    clean_lines(str(line).encode("utf-8", errors="replace")) or [""]
-                )
-                for part in wrap_line(paragraph, width)
-            ]
-            self.width = width
-        self.offset = min(max(0, self.offset), max(0, len(self.wrapped) - self.height))
-        return self.wrapped[self.offset : self.offset + self.height]
-
-    def position(self):
-        total = len(self.wrapped)
-        if not total:
-            return "0/0"
-        return "{}-{}/{}".format(
-            self.offset + 1, min(total, self.offset + self.height), total
-        )
+        return super().page(row["id"], row, width, height)
 
     def scroll(self, pages):
-        self.offset += pages * self.height
-
-    def home(self):
-        self.offset = 0
-
-    def end(self):
-        self.offset = len(self.wrapped)
+        super().scroll(pages, pages=True)
