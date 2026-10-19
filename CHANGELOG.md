@@ -1,6 +1,10 @@
 # Changelog
 
-## 0.26.2 (unreleased)
+## 0.26.2 — 2026-10-19
+
+- Distinguish loading, unavailable, confirmed empty and uncaptured focused-log
+  snapshots in the content area, including minimum panes. Keep status messages
+  outside captured output, search results and row counts.
 
 - Periodically recheck focused log content even when file metadata is unchanged,
   matching the inline safeguard. End requests fresh bounded content immediately;

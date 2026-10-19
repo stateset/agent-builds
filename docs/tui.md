@@ -378,7 +378,14 @@ viewer, not a complete terminal emulator.
 Focused and inline logs share one background reader. Metadata checks, opening,
 reading and decoding happen in that worker; keyboard input and rendering use
 only accepted snapshots. A pending read never starts a backlog or delays quit.
-Loading, unavailable output and stale refreshes are labelled. Help, hidden logs,
+Loading, unavailable output and stale refreshes are labelled. An empty focused
+viewer shows `Loading log` before its first read, `Log unavailable` after a read
+error, or `Empty log snapshot` only after accepting empty content. Holding before
+a read completes shows `No captured output`. The messages fit at 20x8 even when
+job-state loading or freshness occupies the status row. They describe the retained
+snapshot, not whether a job will produce output; they are not log lines and do
+not enter search results or row counts. Actual blank log lines remain log lines.
+Help, hidden logs,
 expanded job tables and panes without room for inline output do not start reads.
 An already pending read may finish, but changing job, view, visibility, hold or
 search intent discards its result and error. End resumes from a new observation.

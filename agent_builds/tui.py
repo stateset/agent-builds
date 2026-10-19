@@ -418,8 +418,8 @@ def main(screen, cwd):
                 mode='LIVE' if log_view.follow else 'HELD (output only)'
                 paint(screen,0,0,'LOG '+mode+' | '+log_view.position(max(1,height-4)),curses.A_BOLD | curses.color_pair(1 if log_view.follow else 3))
                 paint(screen,1,0,log_job['id']+' '+log_job['state'] if log_job else 'No job selected')
-                note=log_view.error or (log_view.search_label() if log_view.query else 'Space hold/resume | / find | End live')
-                if log_view.follow and log_view.error is None:
+                note='No job selected' if log_job is None else log_view.error or (log_view.search_label() if log_view.query else 'Space hold/resume | / find | End live')
+                if log_view.follow and log_job is not None and log_view.error is None:
                     if log_view.signature is None:
                         note='Loading log; navigation stays available'
                     elif log_view.observed is not None and time.monotonic()-log_view.observed>1:
@@ -429,6 +429,8 @@ def main(screen, cwd):
                 if state_note:
                     note=state_note+' | '+note
                 paint(screen,2,0,note)
+                if not log_page:
+                    paint(screen,3,0,log_view.empty_notice(),curses.A_DIM)
                 for index,line in enumerate(log_page):
                     match=log_view.match_kind(index)
                     paint(screen,index+3,0,line,curses.A_REVERSE if match==2 else curses.color_pair(3) if match else 0)

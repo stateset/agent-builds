@@ -182,6 +182,17 @@ class LogView:
         self.loaded = False
         self.observed = None
 
+    def empty_notice(self):
+        if self.lines:
+            return ""
+        if self.path is None:
+            return "No job selected"
+        if self.error:
+            return "Log unavailable"
+        if self.loaded:
+            return "Empty log snapshot"
+        return "Loading log" if self.follow else "No captured output"
+
     def content_due(self, now):
         return now - self.last_content_read >= TAIL_RECHECK_SECONDS
 

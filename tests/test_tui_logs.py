@@ -118,6 +118,43 @@ class TuiLogTests(unittest.TestCase):
         self.view.select("other", self.path)
         self.assertTrue(self.view.content_due(5))
 
+    def test_empty_notices_distinguish_missing_uncaptured_and_accepted_content(self):
+        self.assertEqual(self.view.empty_notice(), "Loading log")
+        self.view.home()
+        self.assertEqual(self.view.empty_notice(), "No captured output")
+        self.view.end()
+        self.view.poll(0)
+        self.assertEqual(self.view.empty_notice(), "Log unavailable")
+        self.path.write_bytes(b"")
+        self.view.poll(1)
+        self.assertEqual(self.view.empty_notice(), "Empty log snapshot")
+        self.view.search("Empty", 20, 2)
+        self.assertEqual(self.view.matches, [])
+        self.assertEqual(self.view.page(20, 2), [])
+        self.assertEqual(self.view.position(2), "rows 0-0/0")
+        self.write(["real output"])
+        self.view.poll(2)
+        self.assertEqual(self.view.empty_notice(), "Empty log snapshot")
+        self.view.end()
+        self.view.poll(2)
+        self.assertEqual(self.view.empty_notice(), "")
+        self.path.write_bytes(b"")
+        self.view.poll(3)
+        self.assertEqual(self.view.empty_notice(), "Empty log snapshot")
+        self.view.select(None, None)
+        self.assertEqual(self.view.empty_notice(), "No job selected")
+
+    def test_real_blank_lines_are_output_and_empty_notices_never_read_files(self):
+        self.write([""])
+        self.view.poll(0)
+        self.assertEqual(self.view.page(20, 2), [""])
+        self.assertEqual(self.view.position(2), "rows 1-1/1")
+        with mock.patch.object(Path, "stat", side_effect=AssertionError("notice IO")):
+            for unused in range(300):
+                self.assertEqual(self.view.empty_notice(), "")
+        self.view.select("other", self.path)
+        self.assertEqual(self.view.empty_notice(), "Loading log")
+
     def test_large_log_keeps_only_a_bounded_recent_window(self):
         self.path.write_bytes(
             b"private-old-start\n" + b"x\n" * (MAX_BYTES * 2) + b"newest\n"
@@ -480,7 +517,7 @@ class TuiLogTests(unittest.TestCase):
             job = store.submit(
                 root, ["true"], "local", "quick", 1, 0.25, "fixture", "", 5
             )
-            store.log_path(job).write_text(
+            log_contents = (
                 "FIRST needle\n"
                 + "x" * 99
                 + "HELD-ANCHOR"
@@ -489,6 +526,7 @@ class TuiLogTests(unittest.TestCase):
                 + "padding\n" * 40
                 + "LAST needle\n"
             )
+            store.log_path(job).write_bytes(b"")
             master, slave = pty.openpty()
             fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 20, 100, 0, 0))
             env = dict(
@@ -598,6 +636,13 @@ class TuiLogTests(unittest.TestCase):
                 resize(20, 100)
                 os.write(master, b"l")
                 wait_for(b"LOG LIVE")
+                wait_for(b"Empty log snapshot", row=3)
+                resize(8, 20)
+                wait_for(b"Empty log snapshot", row=3)
+                store.log_path(job).write_text(log_contents)
+                wait_for(b"LAST needle")
+                self.assertNotIn("Empty log snapshot", terminal.text())
+                resize(20, 100)
                 os.write(master, b"/")
                 wait_for(b"Find in loaded log")
                 resize(8, 18)
