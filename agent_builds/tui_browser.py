@@ -175,6 +175,7 @@ def label(
 
 
 HELP = (
+    "REPORT SEARCH: / filters loaded health, why, workbench and history lines literally, ignoring case; blank clears, Esc cancels. No new evidence is read.",
     "HELP: / searches these instructions literally, ignoring case; blank clears. Esc/?/q returns.",
     "In help: j/k or arrows scroll; PgUp/PgDn page; Home/End first/last. Query and position survive reopening.",
     "FIND A VIEW",

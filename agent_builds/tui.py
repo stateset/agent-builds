@@ -82,7 +82,7 @@ def compact_lines(rows, selected, plans, plan_index, view, config, height, width
     elif view == 4:
         room=max(1,height-len(lines)-3)
         page=history_view.page(history_repository,history_report,max(1,width-1),room) if history_view else []
-        lines += ["HISTORY " + (history_view.position() if history_view else ""),history_status]+page
+        lines += ["HISTORY " + (history_view.position() if history_view else ""),((history_view.search_status()+' | ') if history_view and history_view.query else '')+history_status]+page
     elif view == 3:
         room=max(1,height-len(lines)-2)
         if details_view is not None and detail_row is not None:
@@ -103,7 +103,7 @@ def compact_lines(rows, selected, plans, plan_index, view, config, height, width
             widget.offset=legacy_offset
             page=widget.page(inspection['scope'],inspection['report'],max(1,width-1),room,inspection['error'])
         title=('WHY ' if view==14 else 'WORK ')+inspection['job']['id'] if view in (12,14) and inspection['job'] else VIEWS[view].name.upper()+' '+widget.position()
-        lines += [title,inspection['status']]+page
+        lines += [title,(widget.search_status()+' | ' if widget.query else '')+inspection['status']]+page
     elif view == 10:
         watches=watches or []
         lines+=[browser.get('tool_heading') if browser and browser.get('tool_heading') else 'EXTERNAL | {} shown'.format(len(watches))]
@@ -505,7 +505,7 @@ def main(screen, cwd):
                     widget=inspection['widget']
                     page=widget.page(inspection['scope'],inspection_data,max(1,width-1),max(1,height-log_top-4),inspection_read.error)
                     paint(screen,log_top-1,0,VIEWS[view].name.upper()+' | '+widget.position(),curses.A_BOLD)
-                    paint(screen,log_top,0,inspection_status)
+                    paint(screen,log_top,0,(widget.search_status()+' | ' if widget.query else '')+inspection_status)
                     for index,line in enumerate(page):
                         paint(screen,log_top+1+index,0,line)
                 elif view == 1:
@@ -534,7 +534,7 @@ def main(screen, cwd):
                 elif view == 4:
                     page=history_view.page(history_repository,history_report,max(1,width-1),max(1,height-log_top-4))
                     paint(screen,log_top-1,0,'HISTORY | read only | '+history_view.position(),curses.A_BOLD)
-                    paint(screen,log_top,0,history_status)
+                    paint(screen,log_top,0,(history_view.search_status()+' | ' if history_view.query else '')+history_status)
                     for index,line in enumerate(page):
                         paint(screen,log_top+1+index,0,line)
                 elif view == 5:
@@ -725,6 +725,13 @@ def main(screen, cwd):
                 if view!=15:
                     follow_head=False
                 view=0 if view==15 else 15
+                continue
+            if view in (4,11,12,14) and key==ord('/'):
+                if height>=8 and width>=20:
+                    widget=history_view if view==4 else inspection_views[view]
+                    query=prompt(screen,'Find loaded report (blank clears)',widget.query)
+                    if query is not None:
+                        widget.search(query)
                 continue
             if view==15:
                 if key in (9,curses.KEY_BTAB) and height>=8 and width>=20:

@@ -482,3 +482,18 @@ workbench, history and submission receipts. Manual scrolling, Home and End
 replace that position; changing the report's scope resets it. Refreshed content is clamped within the current report and may change the text
 at that logical position. Rendering and
 height-only resizing use cached text; resizing does not request fresh evidence.
+
+
+Press `/` in health, why, workbench or history to filter already-loaded report
+lines with a literal, case-insensitive query (up to 256 characters). This is not
+a regular expression and does not change job filters, selected jobs, saved trials
+or backend queries. The status line shows the query and matching logical-line
+count, independently of wrapping. Use j/k, PgUp/PgDn and Home/End to browse the
+filtered text. Entering a new or blank query starts at the top; blank restores
+all loaded text, and cancelling preserves the current query and position.
+
+Queries stay with each report widget and clear when its checkout/job/candidate
+scope changes. Refreshed snapshots update matches from current text. Pending
+reads show a pending search; read errors stay visible even when their text does
+not match. Search is limited to retained report text, including its existing
+64 KiB clipping rules, and never loads omitted evidence.
