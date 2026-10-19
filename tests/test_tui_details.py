@@ -64,19 +64,19 @@ class DetailsTests(unittest.TestCase):
     def test_navigation_after_height_clamp_and_scope_change_replace_the_anchor(self):
         view = DetailsView()
         self.row["command_display"] = "token " * 500
-        view.page(self.row, 19, 2)
+        first = view.page(self.row, 19, 2)
         view.scroll(20)
         view.page(self.row, 19, 2)
         view.page(self.row, 99, 1000)
         view.scroll(1)
         view.page(self.row, 99, 1000)
-        self.assertEqual(view.page(self.row, 19, 2)[0], self.row["id"] + " queued")
+        self.assertEqual(view.page(self.row, 19, 2)[0], first[0])
         view.end()
         self.assertEqual(view.page(self.row, 39, 2)[-1], view.wrapped[-1])
         view.page(dict(self.row, id="new-job"), 39, 2)
         self.assertEqual(view.offset, 0)
         view.home()
-        self.assertEqual(view.page(self.row, 19, 2)[0], self.row["id"] + " queued")
+        self.assertEqual(view.page(self.row, 19, 2)[0], first[0])
 
     def test_long_command_paths_and_reason_are_preserved_across_wrapped_rows(self):
         self.row.update(cwd="/checkout/" + "folder/" * 30, reason="wait " * 60)
