@@ -6,6 +6,7 @@ import time
 
 from . import protection, waits
 from .metrics import snapshot
+from .host_pressure import pressure_lines
 
 NOTE = ('Reasons and blocker links are the latest runner observations, not an ETA or a new '
         'admission decision. Host processes outside Buildr are not controlled. No settings, '
@@ -164,6 +165,7 @@ def lines(result):
     if result.get('queue_health'):
         from .queue_health import lines as queue_lines
         yield from queue_lines(result['queue_health'])
+    yield from pressure_lines(result.get('machine', {}))
     policy = result['protection']
     yield 'Quick protection: '+('active' if policy['effective'] else 'draining' if policy['pending'] else 'off')
     for item in policy.get('blocking_job_details', []):

@@ -3,13 +3,12 @@ from pathlib import Path
 import shutil
 import time
 
+from .host_pressure import PRESSURE_KINDS, pressure_sample
+
 
 def pressure(kind):
-    try:
-        line = Path('/proc/pressure/' + kind).read_text().splitlines()[0]
-        return float(dict(item.split('=') for item in line.split()[1:])['avg10'])
-    except (OSError, KeyError, ValueError, IndexError):
-        return None
+    sample = pressure_sample(kind)['some']
+    return sample['avg10'] if sample else None
 
 
 def snapshot(path):
@@ -21,11 +20,14 @@ def snapshot(path):
     except (OSError, ValueError):
         pass
     disk = shutil.disk_usage(path)
+    psi = {kind: pressure_sample(kind) for kind in PRESSURE_KINDS}
     return dict(cpus=os.cpu_count(), load=os.getloadavg()[0],
                 available_gb=memory.get('MemAvailable', 0),
                 total_gb=memory.get('MemTotal', 0), free_gb=disk.free / 1024**3,
-                cpu_pressure=pressure('cpu'), io_pressure=pressure('io'),
-                memory_pressure=pressure('memory'))
+                cpu_pressure=psi['cpu']['some']['avg10'] if psi['cpu']['some'] else None,
+                io_pressure=psi['io']['some']['avg10'] if psi['io']['some'] else None,
+                memory_pressure=psi['memory']['some']['avg10'] if psi['memory']['some'] else None,
+                psi=psi)
 
 
 class ProcessSampler:

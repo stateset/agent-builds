@@ -11,6 +11,7 @@ import time
 import textwrap
 
 from .metrics import ProcessSampler, snapshot
+from .host_pressure import pressure_summary
 from . import __version__
 from .runner import cancel_job
 from .store import Store, TERMINAL
@@ -454,9 +455,7 @@ def main(screen, cwd):
                     host_line='{} CPU | load {:.1f} | RAM {:.1f}/{:.1f} GiB | disk {:.1f} GiB'.format(
                         metrics['cpus'],metrics['load'],metrics['available_gb'],metrics['total_gb'],metrics['free_gb'])
                     paint(screen,1,0,metrics_read.status(time.monotonic())+' | '+host_line)
-                    fmt = lambda value: 'n/a' if value is None else '{:.0f}%'.format(value)
-                    paint(screen,3,0,'Pressure avg10: CPU {}  memory {}  I/O {} | External builds are not controlled.'.format(
-                        fmt(metrics['cpu_pressure']),fmt(metrics['memory_pressure']),fmt(metrics['io_pressure'])))
+                    paint(screen,3,0,pressure_summary(metrics)+' | External builds are not controlled.')
                 if not browser_report['initialized']:
                     paint(screen,2,0,'Managed reservations: unknown | Queue not initialized')
                     paint(screen,4,0,'Queue not initialized; explicit queue actions create state.')

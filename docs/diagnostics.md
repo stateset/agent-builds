@@ -125,3 +125,31 @@ configuration. Historical wait reasons may be stale; current arithmetic is label
 separately. Requests that cannot fit even alone require review of the original
 reservation and configuration. A four-job ceiling is a limit, not a promise that
 four arbitrary requests can overlap.
+
+## Host stalls and spare queue capacity
+
+`buildr diagnose --json` includes `machine.psi` for CPU, memory and I/O. Each
+resource has `some` and `full` readings with `avg10`, `avg60`, `avg300` percentages
+and cumulative `total_us`. Existing `cpu_pressure`, `memory_pressure` and
+`io_pressure` fields retain the partial-stall ten-second average.
+
+These are host-wide observations from Linux `/proc/pressure`, including work
+outside Buildr. `some` means at least some tasks were stalled; `full` means all
+non-idle tasks were stalled together. System-wide CPU `full` is undefined and
+remains null even when the kernel exports a compatibility zero. Missing,
+unreadable or invalid readings stay null, not zero. The ten-, sixty- and
+three-hundred-second values are averaged windows, not instantaneous samples.
+See the [kernel PSI documentation](https://docs.kernel.org/accounting/psi.html).
+
+The dashboard header shows I/O and memory partial/full percentages and partial
+CPU pressure. Press `u` for the scrollable diagnostics report, including all
+three time windows in narrow panes. Retained reports keep their snapshot age;
+painting or scrolling does not reread PSI. Older snapshots retain their existing
+partial readings while full and longer-window readings remain unknown.
+
+Free queue slots do not guarantee fast execution: high I/O or memory stalls can
+coexist with low CPU use and available reservation capacity. Review current
+host work, disk headroom and matched workload measurements before increasing
+concurrency. PSI does not attribute stalls to a job or establish their cause.
+These readings do not change admission limits, cancel work, retry commands or
+clean caches.
