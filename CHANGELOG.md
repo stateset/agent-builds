@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.26.3 (unreleased)
+
+- Show host-wide partial and full I/O/memory stalls, with 10/60/300-second
+  trends in diagnostics and a concise dashboard summary. Keep missing or invalid
+  readings unknown, CPU full undefined, and observations separate from admission.
+
 ## 0.26.2 — 2026-10-19
 
 - Distinguish loading, unavailable, confirmed empty and uncaptured focused-log

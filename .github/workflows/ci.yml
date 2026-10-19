@@ -67,7 +67,8 @@ jobs:
             tests/test_tui_read_freshness.py tests/test_tui_snapshot_freshness.py tests/test_tui_jump.py \
             agent_builds/tui_help.py tests/test_tui_help.py \
             tools/verify_tui_responsiveness.py tests/test_tui_responsiveness.py \
-            tests/test_tui_receipt_navigation.py
+            tests/test_tui_receipt_navigation.py \
+            agent_builds/host_pressure.py tests/test_host_pressure.py
           python -m agent_builds run --lane quick --jobs 1 --memory-gb 1 --timeout 120 -- python -m mypy --follow-imports=skip --check-untyped-defs agent_builds/execution_policy.py agent_builds/polling.py agent_builds/launch.py
       - name: Verify bounded admission reads with bulky evidence
         if: matrix.python == '3.12'

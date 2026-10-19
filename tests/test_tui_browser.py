@@ -47,6 +47,27 @@ class TuiBrowserTests(unittest.TestCase):
         self.store.close()
         self.temp.cleanup()
 
+    def test_header_distinguishes_partial_and_full_host_stalls(self):
+        psi = {
+            kind: dict(some=dict(avg10=80), full=dict(avg10=60))
+            for kind in ("io", "memory", "cpu")
+        }
+        psi["cpu"]["full"] = None
+        with mock.patch(
+            "agent_builds.host_pressure.pressure_sample",
+            side_effect=AssertionError("render read PSI"),
+        ):
+            frames = self.dashboard([-1, -1, ord("q")], machine_override=dict(psi=psi))
+        pressure = [frame.get(3, "") for frame in frames]
+        self.assertTrue(
+            any(
+                "I/O 80.0%/60.0%" in line and "mem 80.0%/60.0%" in line
+                for line in pressure
+            ),
+            pressure,
+        )
+        self.assertTrue(any("CPU 80.0% some" in line for line in pressure), pressure)
+
     def dashboard(
         self,
         keys,
@@ -60,6 +81,7 @@ class TuiBrowserTests(unittest.TestCase):
         link_submit=None,
         state_path=None,
         on_update=None,
+        machine_override=None,
     ):
         screen = mock.Mock()
         if callable(dimensions):
@@ -83,6 +105,8 @@ class TuiBrowserTests(unittest.TestCase):
             memory_pressure=0,
             io_pressure=0,
         )
+
+        machine.update(machine_override or {})
 
         def completed(loader, key):
             future = Future()
