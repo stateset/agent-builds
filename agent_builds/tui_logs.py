@@ -172,7 +172,8 @@ class LogView:
         self.matches = []
         self.match_set = set()
         self.match_index = None
-        self.width = None
+        self.width = self.height = None
+        self.anchor = None
         self.signature = None
         self.last_read = float("-inf")
         self.clipped = False
@@ -232,6 +233,7 @@ class LogView:
             self._jump(0, height)
 
     def _jump(self, index, height):
+        self.anchor = None
         self.follow = False
         self.match_index = index % len(self.matches)
         self.top = min(
@@ -275,16 +277,48 @@ class LogView:
         current = self.match_index + 1 if self.match_index is not None else 0
         return "Find {}/{}: {}".format(current, len(self.matches), self.query)
 
+    def _capture_anchor(self):
+        if not self.starts or not self.wrapped:
+            return None
+        row = min(max(0, self.top), len(self.wrapped) - 1)
+        line = bisect_right(self.starts, row) - 1
+        return line, sum(len(part) for part in self.wrapped[self.starts[line] : row])
+
+    def _anchor_row(self):
+        line, offset = self.anchor
+        start = self.starts[line]
+        end = (
+            self.starts[line + 1] if line + 1 < len(self.starts) else len(self.wrapped)
+        )
+        for row in range(start, end):
+            size = len(self.wrapped[row])
+            if offset < size or row == end - 1:
+                return row
+            offset -= size
+        return start
+
     def page(self, width, height):
         width, height = max(1, width), max(1, height)
+        changed = (self.width, self.height) != (width, height)
+        if (
+            changed
+            and not self.follow
+            and self.match_index is None
+            and self.anchor is None
+        ):
+            self.anchor = self._capture_anchor()
         if self.width != width:
             self.wrapped, self.starts = [], []
             for line in self.lines:
                 self.starts.append(len(self.wrapped))
                 self.wrapped.extend(wrap_line(line, width))
             self.width = width
+        if changed and not self.follow:
             if self.match_index is not None:
                 self.top = self.starts[self.matches[self.match_index]]
+            elif self.anchor is not None:
+                self.top = self._anchor_row()
+        self.height = height
         bottom = max(0, len(self.wrapped) - height)
         self.top = bottom if self.follow else min(max(0, self.top), bottom)
         return self.wrapped[self.top : self.top + height]
@@ -292,18 +326,18 @@ class LogView:
     def scroll(self, delta, width, height):
         self.page(width, height)
         self.follow = False
-        self.match_index = None
+        self.match_index = self.anchor = None
         self.top = min(
             max(0, len(self.wrapped) - max(1, height)), max(0, self.top + delta)
         )
 
     def home(self):
         self.follow, self.top = False, 0
-        self.match_index = None
+        self.match_index = self.anchor = None
 
     def end(self):
         self.follow, self.last_read = True, float("-inf")
-        self.match_index = None
+        self.match_index = self.anchor = None
 
     def toggle(self):
         if self.follow:

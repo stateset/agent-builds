@@ -227,6 +227,105 @@ class TuiLogTests(unittest.TestCase):
         self.view.next_match(1, 20, 2)
         self.assertTrue(self.view.follow)
 
+    def test_held_resize_retains_logical_line_and_character_across_round_trips(self):
+        self.write(["intro", "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"] + ["padding"] * 30)
+        self.view.poll(0)
+        self.view.home()
+        self.view.scroll(3, 10, 2)
+        self.assertEqual(self.view.page(10, 2)[0], "KLMNOPQRST")
+        with mock.patch.object(Path, "stat", side_effect=AssertionError("resize IO")):
+            self.assertEqual(self.view.page(7, 2)[0], "EFGHIJK")
+            self.assertEqual(self.view.page(19, 2)[0], "JKLMNOPQRSTUVWXYZ")
+            self.assertEqual(self.view.page(10, 2)[0], "KLMNOPQRST")
+        self.assertFalse(self.view.follow)
+
+    def test_height_clamping_is_temporary_until_manual_navigation(self):
+        self.write([str(i) for i in range(100)])
+        self.view.poll(0)
+        self.view.home()
+        self.view.scroll(90, 10, 3)
+        self.assertEqual(self.view.page(10, 20)[0], "80")
+        self.assertEqual(self.view.page(10, 3)[0], "90")
+        self.view.page(10, 20)
+        self.view.scroll(-1, 10, 20)
+        self.assertEqual(self.view.page(10, 3)[0], "79")
+
+    def test_manual_scroll_replaces_resize_anchor_and_home_end_reset_it(self):
+        self.write(["intro", "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"] + ["padding"] * 30)
+        self.view.poll(0)
+        self.view.home()
+        self.view.scroll(3, 10, 2)
+        self.view.page(7, 2)
+        self.view.scroll(1, 7, 2)
+        self.assertEqual(self.view.page(7, 2)[0], "LMNOPQR")
+        self.view.page(19, 2)
+        self.assertEqual(self.view.page(7, 2)[0], "LMNOPQR")
+        self.view.home()
+        self.assertEqual(self.view.page(19, 2)[0], "intro")
+        self.view.end()
+        self.write(["new"] * 30 + ["LIVE END"])
+        self.view.poll(1)
+        self.assertEqual(self.view.page(7, 2)[-1], "D")
+        self.assertEqual(self.view.page(19, 2)[-1], "LIVE END")
+        self.assertTrue(self.view.follow)
+
+    def test_unicode_empty_lines_and_job_switch_do_not_reuse_old_anchor(self):
+        self.write(["", "甲乙丙丁戊己庚辛壬癸"] + ["padding"] * 30)
+        self.view.poll(0)
+        self.view.home()
+        self.view.scroll(3, 4, 2)
+        self.assertEqual(self.view.page(4, 2)[0], "戊己")
+        self.assertEqual(self.view.page(6, 2)[0], "丁戊己")
+        self.assertEqual(self.view.page(4, 2)[0], "戊己")
+        self.view.home()
+        self.assertEqual(self.view.page(6, 2)[0], "")
+        self.write(["", "ae\u0301bcde\u0301fghijk"] + ["padding"] * 30)
+        self.view.end()
+        self.view.poll(1)
+        self.view.home()
+        self.view.scroll(2, 3, 2)
+        self.assertEqual(self.view.page(3, 2)[0], "cde\u0301")
+        self.assertEqual(self.view.page(4, 2)[0], "ae\u0301bc")
+        self.assertEqual(self.view.page(3, 2)[0], "cde\u0301")
+        self.view.select("other", self.path)
+        self.assertIsNone(self.view.anchor)
+        self.assertEqual(self.view.page(4, 2), [])
+        self.view.poll(1)
+        self.assertTrue(self.view.follow)
+
+    def test_selected_search_match_wins_and_clear_keeps_current_position(self):
+        self.write(
+            ["intro", "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ", "hit target"]
+            + ["padding"] * 30
+        )
+        self.view.poll(0)
+        self.view.home()
+        self.view.scroll(3, 10, 2)
+        self.view.page(7, 2)
+        self.view.search("hit", 7, 2)
+        self.assertEqual(self.view.page(19, 2)[0], "hit target")
+        self.view.search("", 19, 2)
+        self.assertEqual(self.view.page(7, 2)[0], "hit tar")
+        self.assertEqual(self.view.page(19, 2)[0], "hit target")
+        self.assertFalse(self.view.follow)
+
+    def test_idle_held_frames_reuse_wrapping_and_anchor_without_scanning(self):
+        self.write(["intro", "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"] + ["padding"] * 30)
+        self.view.poll(0)
+        self.view.home()
+        self.view.scroll(3, 10, 2)
+        expected = self.view.page(7, 2)
+        with mock.patch(
+            "agent_builds.tui_logs.wrap_line",
+            side_effect=AssertionError("idle wrapping"),
+        ), mock.patch.object(
+            self.view, "_capture_anchor", side_effect=AssertionError("idle capture")
+        ), mock.patch.object(
+            self.view, "_anchor_row", side_effect=AssertionError("idle scan")
+        ), mock.patch.object(Path, "stat", side_effect=AssertionError("idle IO")):
+            for unused in range(300):
+                self.assertEqual(self.view.page(7, 2), expected)
+
     def test_real_terminal_can_search_jump_and_quit_without_running_a_job(self):
         import fcntl
         import pty
@@ -247,7 +346,13 @@ class TuiLogTests(unittest.TestCase):
                 root, ["true"], "local", "quick", 1, 0.25, "fixture", "", 5
             )
             store.log_path(job).write_text(
-                "FIRST needle\n" + "padding\n" * 40 + "LAST needle\n"
+                "FIRST needle\n"
+                + "x" * 99
+                + "HELD-ANCHOR"
+                + "y" * 100
+                + "\n"
+                + "padding\n" * 40
+                + "LAST needle\n"
             )
             master, slave = pty.openpty()
             fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 20, 100, 0, 0))
@@ -279,7 +384,7 @@ class TuiLogTests(unittest.TestCase):
                 os.close(slave)
                 slave = None
 
-                def wait_for(needle):
+                def wait_for(needle, row=None):
                     output = b""
                     deadline = time.monotonic() + 10
                     while time.monotonic() < deadline:
@@ -287,7 +392,12 @@ class TuiLogTests(unittest.TestCase):
                             chunk = os.read(master, 65536)
                             output += chunk
                             terminal.feed(chunk)
-                        if needle.decode("utf-8") in terminal.text():
+                        rendered = (
+                            terminal.text()
+                            if row is None
+                            else "".join(terminal.cells[row])
+                        )
+                        if needle.decode("utf-8") in rendered:
                             return
                         if child.poll() is not None:
                             break
@@ -368,6 +478,22 @@ class TuiLogTests(unittest.TestCase):
                 wait_for(b"FIRST needle")
                 os.write(master, b"n")
                 wait_for(b"LAST needle")
+                os.write(master, b"/")
+                wait_for(b"Find in loaded log")
+                os.write(master, b"\x15HELD-ANCHOR\n")
+                wait_for(b"Find 1/1: HELD-ANCHOR")
+                os.write(master, b"/")
+                wait_for(b"Find in loaded log")
+                os.write(master, b"\x15\n")
+                wait_for(b"Space hold/resume")
+                os.write(master, b"j")
+                wait_for(b"HELD-ANCHOR" + b"y" * 88, row=3)
+                resize(8, 20)
+                wait_for(b"xxxxHELD-ANCHORyyyy", row=3)
+                resize(8, 40)
+                wait_for(b"x" * 21 + b"HELD-ANCHOR" + b"y" * 7, row=3)
+                resize(20, 100)
+                wait_for(b"HELD-ANCHOR" + b"y" * 88, row=3)
                 os.write(master, b"q")
                 self.assertEqual(child.wait(timeout=3), 0)
                 self.assertIsNone(store.get(job)["started"])

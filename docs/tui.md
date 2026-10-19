@@ -378,7 +378,13 @@ Loading, unavailable output and stale refreshes are labelled. Help, hidden logs,
 expanded job tables and panes without room for inline output do not start reads.
 An already pending read may finish, but changing job, view, visibility, hold or
 search intent discards its result and error. End resumes from a new observation.
-Resizing rewraps the loaded snapshot without reading the file again.
+Resizing rewraps the loaded snapshot without reading the file again. Held
+output retains its logical line and character position as width changes, so
+repeated narrow/wide resizing does not drift to unrelated output. A taller pane
+may temporarily move the top upward to fill the screen; shrinking it restores
+the inspected position. Manual scrolling or Home establishes a new position;
+End resumes following. Selected search matches remain the resize target. These
+anchors cover only the loaded snapshot and do not survive selecting another job.
 
 In log focus, `/` searches literal text, ignoring case, across the loaded logical
 lines (including text spanning a visual wrap). Enter accepts, Esc leaves the
