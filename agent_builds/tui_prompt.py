@@ -3,10 +3,77 @@
 import curses
 import textwrap
 import time
+import unicodedata
 
 from .tui_logs import clean_lines, wrap_line
 
 MAX_CONTEXT_CHARS = 16 * 1024
+
+
+def cell_width(char):
+    if not char.isprintable():
+        return 1  # paint renders control characters as spaces.
+    return (
+        0
+        if unicodedata.combining(char)
+        else 2
+        if unicodedata.east_asian_width(char) in "WF"
+        else 1
+    )
+
+
+class InputBuffer:
+    """Codepoint editing with a bounded, terminal-cell-aware display window."""
+
+    def __init__(self, value):
+        self.value = value
+        self.cursor = len(value)
+
+    def handle(self, key):
+        if key == curses.KEY_LEFT:
+            self.cursor = max(0, self.cursor - 1)
+        elif key == curses.KEY_RIGHT:
+            self.cursor = min(len(self.value), self.cursor + 1)
+        elif key in (curses.KEY_HOME, "\x01"):
+            self.cursor = 0
+        elif key in (curses.KEY_END, "\x05"):
+            self.cursor = len(self.value)
+        elif key in ("\b", "\x7f", curses.KEY_BACKSPACE):
+            if self.cursor:
+                self.value = self.value[: self.cursor - 1] + self.value[self.cursor :]
+                self.cursor -= 1
+        elif key == curses.KEY_DC:
+            self.value = self.value[: self.cursor] + self.value[self.cursor + 1 :]
+        elif key == "\x15":
+            self.value, self.cursor = "", 0
+        elif isinstance(key, str) and key.isprintable():
+            self.value = self.value[: self.cursor] + key + self.value[self.cursor :]
+            self.cursor += len(key)
+
+    def window(self, columns):
+        columns = max(1, columns)
+        # Bound work even for an unusually long run of zero-width marks.
+        limit = columns * 4 + 8
+        left = columns if self.cursor == len(self.value) else columns // 2
+        start, used, count = self.cursor, 0, 0
+        while start and count < limit:
+            size = cell_width(self.value[start - 1])
+            if used + size > left:
+                break
+            start -= 1
+            used += size
+            count += 1
+        chars, used, caret = [], 0, 0
+        for index in range(start, min(len(self.value), start + limit)):
+            char = self.value[index]
+            size = cell_width(char)
+            if used + size > columns:
+                break
+            chars.append(char if char.isprintable() else " ")
+            used += size
+            if index < self.cursor:
+                caret = used
+        return "".join(chars), caret
 
 
 class PromptContext:
@@ -84,7 +151,7 @@ def recipient_context(recipients):
 
 
 def edit(screen, title, initial, context, paint):
-    value = initial
+    buffer = InputBuffer(initial)
     context = PromptContext(context)
     # Periodic reads let ncurses process resizes even without another key.
     screen.timeout(200)
@@ -106,6 +173,14 @@ def edit(screen, title, initial, context, paint):
                 screen.erase()
                 if editable:
                     paint(screen, 0, 0, "BUILDR INPUT", curses.A_BOLD)
+                    paint(
+                        screen,
+                        1,
+                        0,
+                        "Left/Right Home/End Del"
+                        if width >= 40
+                        else "Arrows Home/End Del",
+                    )
                     for index, line in enumerate(question, 2):
                         paint(screen, index, 0, line)
                     if context:
@@ -119,7 +194,7 @@ def edit(screen, title, initial, context, paint):
                         for index, line in enumerate(page, len(question) + 4):
                             paint(screen, index, 0, line)
                         paint(screen, height - 2, 0, "PgUp/PgDn context")
-                    visible = value[-max(1, width - 3) :]
+                    visible, caret = buffer.window(max(1, width - 4))
                     paint(screen, height - 3, 0, "> " + visible)
                     paint(
                         screen,
@@ -129,7 +204,7 @@ def edit(screen, title, initial, context, paint):
                         if width >= 40
                         else "Enter OK Esc cancel",
                     )
-                    screen.move(height - 3, min(width - 2, 2 + len(visible)))
+                    screen.move(height - 3, min(width - 2, 2 + caret))
                 else:
                     paint(screen, 0, 0, "Resize to edit")
                     paint(screen, height - 1, 0, "Esc cancels")
@@ -155,16 +230,11 @@ def edit(screen, title, initial, context, paint):
             ):
                 continue
             if key in ("\n", "\r", curses.KEY_ENTER):
-                return value
+                return buffer.value
             if context and key in (curses.KEY_PPAGE, curses.KEY_NPAGE):
                 context.scroll(1 if key == curses.KEY_NPAGE else -1)
                 continue
-            if key in ("\b", "\x7f", curses.KEY_BACKSPACE):
-                value = value[:-1]
-            elif key == "\x15":
-                value = ""
-            elif isinstance(key, str) and key.isprintable():
-                value += key
+            buffer.handle(key)
     finally:
         try:
             curses.curs_set(0)

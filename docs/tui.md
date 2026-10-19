@@ -506,3 +506,10 @@ not match. Search is limited to retained report text, including its existing
 Report content distinguishes loading, an accepted empty report and a search with
 no matching lines, even at 20x8. Empty-search guidance is display-only: it never
 counts as a report line or search match. Press `/` to edit; blank restores text.
+
+Input prompts support Left/Right, Home/End (also Ctrl+A/Ctrl+E), Delete and
+Backspace at the cursor. Ctrl+U clears the value. Inserting text keeps the rest
+of the command or query. The visible window and cursor account for wide
+characters and resize without truncating the stored value. Editing uses Unicode
+codepoints rather than a full grapheme editor. Enter explicitly accepts; Esc
+cancels. Hidden prompts ignore editing and acceptance until they fit again.
