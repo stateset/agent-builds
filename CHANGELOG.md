@@ -2,6 +2,10 @@
 
 ## 0.26.3 (unreleased)
 
+- Retain full and longer-window host stalls in workflow studies, with explicit
+  reading counts, sampling gaps, bounded first samples and a final observation.
+  Preserve existing fields and native/source verification requirements.
+
 - Show host-wide partial and full I/O/memory stalls, with 10/60/300-second
   trends in diagnostics and a concise dashboard summary. Keep missing or invalid
   readings unknown, CPU full undefined, and observations separate from admission.

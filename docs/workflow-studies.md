@@ -29,8 +29,9 @@ stage. Caches and host background activity are not controlled.
 Reports retain native and verification failures, skipped work, source changes,
 verified stage completions per hour (including queue wait), short quick-check
 wait p95, per-job sampled RSS/CPU coverage, heavy-stage completion/wait data and
-sampled host pressure. Host pressure is sampled every half second; maxima/minimum
-available RAM cover all samples, while at most 300 raw samples per arm are kept.
+sampled host pressure. Host sampling requests a half-second interval; slow reads
+and scheduling can make the actual gaps longer. Maxima/minimum available RAM
+cover all samples, while the first 300 raw samples per arm remain retained.
 The host-heavy completion counter includes other agents and does not attribute
 their progress to this study. Per-job peak RSS is not an aggregate concurrent
 memory peak. Missing measurements remain missing.
@@ -66,3 +67,37 @@ The optional output contains the proposed manifest for review. Existing commands
 dependencies and the original file remain unchanged. Put short prerequisites in
 their own stages and declare success dependencies for the longer work. This is
 workflow guidance; it adds no scheduling policy or latency guarantee.
+
+
+## Host observation coverage
+
+Each arm's `pressure` record retains existing `samples`, `retained`, `max_avg10`,
+`min_available_gb` and `sampling_interval_seconds` fields. Raw observations also
+include partial/full CPU, memory and I/O PSI windows and available cumulative
+stall counters. System-wide CPU full remains undefined, not a measured zero.
+
+`max_psi_percent` contains observed maxima for each resource, partial/full scope
+and 10/60/300-second window. `valid_readings` and `unavailable_readings` give the
+per-window observation counts. Missing, invalid and inapplicable readings remain
+unknown; CPU full is always inapplicable. Memory availability has its own valid
+reading count. A zero maximum requires an actual valid zero reading.
+
+`retained_samples`, `retention_limit`, `retention` and `omitted_samples` make raw
+retention explicit. `last_observation` preserves the final sampled context after
+the first 300 raw observations have filled the buffer. Late maxima and missing
+readings still contribute to the aggregate counters.
+
+`observation_span_seconds` and `max_sample_gap_seconds` use the monotonic clock;
+wall timestamps remain available for correlation. `long_sample_gaps` counts
+adjacent observations more than the declared `gap_threshold_seconds` apart
+(currently one second). An empty collector has no measured span or maximum gap;
+a single observation has no measured gap. Counts and gaps do not estimate the
+fraction of runtime covered, interpolate missing observations or turn overlapping
+PSI averages into time-weighted stall duration.
+
+Pressure remains descriptive host context. It does not attribute a stall to a
+job, normalize a throughput ratio for contention, change comparison eligibility
+or establish a causal queue benefit. Detailed records belong to completed arms;
+if monitoring is interrupted, the progress file still identifies submitted plan
+handles and completed arms without claiming that unsaved live observations
+survived. Inspect those handles before considering any new run.

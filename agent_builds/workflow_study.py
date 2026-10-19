@@ -8,6 +8,7 @@ import uuid
 
 from . import __version__, plans
 from .metrics import snapshot
+from .study_pressure import StudyPressure
 from .source import capture, changed, normalize_inputs, digest_file
 
 NOTE=('Counterbalanced executions of explicitly supplied verification plans through the shared queue. '
@@ -157,12 +158,9 @@ def run(store,baseline_path,candidate_path,cwd,output,pairs=2,timeout=3600):
                 _checkpoint(progress,state)
                 print(json.dumps(dict(pair=pair,mode=mode,plan_id=handle)),flush=True)
                 controller=plans.spawn(store,handle)
-                pressure=[]
-                max_pressure=dict(cpu_pressure=None,memory_pressure=None,io_pressure=None)
-                min_available=None
+                pressure=StudyPressure()
                 heavy_wait_max=0
                 heavy_waiting_max=0
-                count=0
                 start=time.time()
                 while True:
                     plan=plans.get(store,handle)
@@ -170,20 +168,11 @@ def run(store,baseline_path,candidate_path,cwd,output,pairs=2,timeout=3600):
                         measured=snapshot(cwd)
                     except OSError:
                         measured={}
-                    count+=1
+                    pressure.observe(measured)
                     waiting=store.db.execute("SELECT COUNT(*),MIN(created) FROM jobs WHERE lane='heavy' AND state IN ('queued','held') AND cancel_requested=0").fetchone()
                     heavy_waiting_max=max(heavy_waiting_max,waiting[0])
                     if waiting[1] is not None:
                         heavy_wait_max=max(heavy_wait_max,time.time()-waiting[1])
-                    for key in max_pressure:
-                        value=measured.get(key)
-                        if value is not None:
-                            max_pressure[key]=max(value,max_pressure[key]) if max_pressure[key] is not None else value
-                    available=measured.get('available_gb')
-                    if available is not None:
-                        min_available=min(available,min_available) if min_available is not None else available
-                    if len(pressure)<300:
-                        pressure.append(dict(at=time.time(),**{k:measured.get(k) for k in (*max_pressure,'available_gb')}))
                     if plan['state'] in plans.PLAN_TERMINAL:
                         break
                     if controller.poll() is not None:
@@ -199,8 +188,7 @@ def run(store,baseline_path,candidate_path,cwd,output,pairs=2,timeout=3600):
                 controller.wait(timeout=3)
                 attempt.update(state=plan['state'])
                 observed=summary(plan)
-                observed.update(pair=pair,mode=mode,pressure=dict(samples=count,retained=pressure,max_avg10=max_pressure,
-                    min_available_gb=min_available,sampling_interval_seconds=.5),
+                observed.update(pair=pair,mode=mode,pressure=pressure.report(),
                     host_heavy_waiting_max=heavy_waiting_max,host_heavy_observed_wait_max_seconds=heavy_wait_max,
                     host_heavy_finished=store.db.execute("SELECT COUNT(*) FROM jobs WHERE lane='heavy' AND finished>=? AND state IN ('succeeded','failed','cancelled','lost')",(start,)).fetchone()[0])
                 records.append(observed)
