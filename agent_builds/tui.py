@@ -72,8 +72,8 @@ def compact_lines(rows, selected, plans, plan_index, view, config, height, width
         lines += [stale+'CPU {}/{} reserved'.format(reserved['cpu_slots'], config['cpu_slots']),
                   stale+'RAM {:.1f}/{}G est.'.format(reserved['memory_gb'], config['memory_gb'])]
     if queue_health:
-        from .queue_health import banner
-        lines += [('STALE ' if browser and browser.get('summary_error') else '')+banner(queue_health,compact=True) if queue_health.get('initialized',True) else 'Queue not initialized']
+        from .queue_health import dashboard_banner
+        lines += [dashboard_banner(queue_health,width,stale=bool(browser and browser.get('summary_error'))) if queue_health.get('initialized',True) else 'Queue not initialized']
     elif browser:
         lines += [browser.get('summary_status','Queue summary unavailable')]
     selected_row = None
@@ -468,9 +468,9 @@ def main(screen, cwd):
                     paint(screen,2,0,('STALE summary | ' if summary_stale else '')+'Managed reservations: {}/{} CPU slots | {:.1f}/{} GiB | {}/{} jobs | local: nice, Docker: hard limits'.format(
                         queue_health_result['reservations']['cpu_slots'],config['cpu_slots'],queue_health_result['reservations']['memory_gb'],
                         config['memory_gb'],queue_health_result['reservations']['jobs'],config['max_running']))
-                    from .queue_health import banner
+                    from .queue_health import dashboard_banner
                     color=4 if queue_health_result['status']=='disk_blocked' else 3 if queue_health_result['waiting_jobs'] else 2
-                    paint(screen,4,0,('STALE summary | ' if summary_stale else '')+summary_read.status(time.monotonic())+' | '+banner(queue_health_result),curses.A_BOLD|curses.color_pair(color))
+                    paint(screen,4,0,dashboard_banner(queue_health_result,width,stale=summary_stale,status=summary_read.status(time.monotonic())),curses.A_BOLD|curses.color_pair(color))
                 heading = 'DETAILS / TOOLS | arrows select jobs | ? help' if view >= 3 else browser_label(browser_mode,browser_query,len(rows),len(loaded_rows),browser_order,repository=browser_repository,follow=follow_head)+' | Tab table s sort'
                 if view in (11,12,14):
                     heading=VIEWS[view].name.upper()+' | j/k scroll | ? help'

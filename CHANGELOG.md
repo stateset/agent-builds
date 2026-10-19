@@ -2,6 +2,9 @@
 
 ## 0.26.3 (unreleased)
 
+- Fit queue blockers to narrow panes, retain stale warnings ahead of snapshot
+  age, and expose partial shared-state disk limits without claiming all jobs block.
+
 - Edit prompt text at the cursor with arrows, Home/End and Delete, using a
   bounded display window that respects wide-character terminal cells.
 

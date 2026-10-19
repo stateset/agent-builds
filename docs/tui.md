@@ -513,3 +513,12 @@ of the command or query. The visible window and cursor account for wide
 characters and resize without truncating the stored value. Editing uses Unicode
 codepoints rather than a full grapheme editor. Enter explicitly accepts; Esc
 cancels. Hidden prompts ignore editing and acceptance until they fit again.
+
+The queue banner fits its text to the pane instead of clipping the disk gap.
+`DISK: +6.2GiB` means the smallest waiting request needs another 6.2 GiB on the
+shared-state filesystem (`G` abbreviates GiB when space is tighter); `DISK: 1/3` means that filesystem currently limits one
+of three waiting jobs. Wider panes show the largest-request gap for partial
+limits. Other job filesystems may have additional limits. `STALE` stays first
+when observations are old or refresh fails, and pause takes priority over disk
+limits. `W` and `R` abbreviate waiting and running counts when space is tight.
+These are observations, not a new admission decision or an automatic cleanup.
