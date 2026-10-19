@@ -334,11 +334,12 @@ def main(screen, cwd):
             inspect_key=(kind,inspection_row['id'] if inspection_row else None) if kind and readable and (kind=='health' or inspection_row) else None
             inspection_data=inspection_read.get(inspect_key,time.monotonic())
             inspection_status=inspection_read.status(time.monotonic()) if kind=='health' or inspection_row else 'No job selected'
+            inspection_error=inspection_read.error if kind=='health' or inspection_row else 'No job selected'
             workbench_result=inspection_data if kind=='workbench' else None
             inspection=None
             if kind:
                 scope=(inspection_row['id'] if inspection_row else None,workbench_candidate) if kind=='workbench' else 'global' if kind=='health' else inspection_row['id'] if inspection_row else None
-                inspection=dict(widget=inspection_views[view],scope=scope,report=inspection_data,status=inspection_status,error=inspection_read.error,job=inspection_row)
+                inspection=dict(widget=inspection_views[view],scope=scope,report=inspection_data,status=inspection_status,error=inspection_error,job=inspection_row)
             tool_kind={2:'announcements',5:'workers',7:'plans',8:'advisor',9:'groups',10:'watches'}.get(view)
             tool_read.label=tool_kind or 'tool report'
             tool_read.interval=2 if view==8 else 1
@@ -503,7 +504,7 @@ def main(screen, cwd):
                         paint(screen,height-3,0,'Selected {}/{} {} | {}'.format(selected+1,len(rows),row['id'],row['reason'] or row['cwd']))
                 elif view in (11,12,14):
                     widget=inspection['widget']
-                    page=widget.display_page(inspection['scope'],inspection_data,max(1,width-1),max(1,height-log_top-4),inspection_read.error)
+                    page=widget.display_page(inspection['scope'],inspection_data,max(1,width-1),max(1,height-log_top-4),inspection_error)
                     paint(screen,log_top-1,0,VIEWS[view].name.upper()+' | '+widget.position(),curses.A_BOLD)
                     paint(screen,log_top,0,widget.status_label(inspection_status))
                     for index,line in enumerate(page):

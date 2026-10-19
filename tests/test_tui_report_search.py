@@ -248,6 +248,22 @@ class ReportSearchDashboardTests(unittest.TestCase):
                 )
                 self.assertNotIn("Find 1:", "\n".join(frames[-1].values()))
 
+    def test_missing_job_is_not_presented_as_a_loading_report(self):
+        self.store.db.execute("DELETE FROM jobs")
+        for target in (12, 14):
+            for size in ((24, 100), (8, 20)):
+                with self.subTest(target=target, size=size), mock.patch(
+                    "agent_builds.tui.choose_view", return_value=target
+                ), mock.patch(
+                    "agent_builds.tui_reads.submit_read", side_effect=completed
+                ):
+                    frames = self.dashboard(
+                        [ord("V"), -1, -1, ord("q")], dimensions=size
+                    )
+                text = "\n".join(frames[-1].values())
+                self.assertIn("No job selected", text)
+                self.assertNotIn("Loading report", text)
+
     def test_no_match_message_is_visible_in_all_report_routes(self):
         for target in (4, 11, 12, 14):
             for size in ((24, 100), (8, 20)):
