@@ -9,6 +9,7 @@ from unittest import mock
 import test_tui_browser as fixtures
 from agent_builds import tui
 from agent_builds.tui_plan_stages import PlanStages
+from agent_builds.tui_data import LazyStore
 
 
 def stage(name, handle="a" * 12, state="failed"):
@@ -103,9 +104,13 @@ class PlanStageDashboardTests(unittest.TestCase):
     def dashboard(self, keys, size=(24, 100), **kwargs):
         config = self.fixture.store.config_path.read_bytes()
         with mock.patch.object(tui, "choose_view", return_value=7), mock.patch(
-            "agent_builds.tui_data.tool", return_value=[self.report]
+            "agent_builds.tui.read_tool",
+            side_effect=lambda root, key: [copy.deepcopy(self.report)],
         ):
-            frames = self.fixture.dashboard(keys, size, **kwargs)
+            with mock.patch.object(
+                LazyStore, "writable", side_effect=AssertionError("queue mutation")
+            ):
+                frames = self.fixture.dashboard(keys, size, **kwargs)
         self.assertEqual(self.fixture.store.config_path.read_bytes(), config)
         self.assertFalse(self.fixture.prompt_calls)
         return frames
@@ -156,3 +161,29 @@ class PlanStageDashboardTests(unittest.TestCase):
         self.assertEqual(len(requests), 1)
         self.assertFalse(any(f.get(0, "").startswith("LOG ") for f in frames))
         self.assertIn("> tests", "\n".join(frames[-1].values()))
+
+    def test_refreshed_job_identity_discards_pending_log_reply(self):
+        pending, requests, now = Future(), [], [100]
+
+        def submit(loader, request):
+            requests.append(request)
+            return pending
+
+        keys = iter([ord("V"), 9, 10, -1, -1, ord("q")])
+
+        def key():
+            value = next(keys)
+            if value == -1 and now[0] == 100:
+                self.report["stages"][0] = copy.deepcopy(self.report["stages"][1])
+                self.report["stages"][0]["name"] = "lint"
+                now[0] = 102
+            elif value == -1:
+                pending.set_result(self.fixture.store.get(self.fixture.jobs[0]))
+            return value
+
+        frames = self.dashboard(key, link_submit=submit, clock=lambda: now[0])
+        self.assertEqual(len(requests), 1)
+        self.assertFalse(any(f.get(0, "").startswith("LOG ") for f in frames))
+        text = "\n".join(frames[-1].values())
+        self.assertIn("> lint", text)
+        self.assertIn("Enter " + self.fixture.jobs[2], text)

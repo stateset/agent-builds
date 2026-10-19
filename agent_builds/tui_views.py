@@ -245,7 +245,7 @@ _MEDIUM_FOOTERS = {
     0: "V views J job F follow w why R repo C clear Tab / f l ? q",
     3: "V views PgUp/Dn Home/End j/k job i jobs l logs ? q",
     4: "V views / find j/k PgUp/Dn Home/End H jobs ? q",
-    7: "V Tab stage Enter log o plan c cancel r resume e export PgUp/Dn ? q",
+    7: "V Tab stage Enter log o plan c cancel r resume e export Pg ? q",
     9: "V j/k Enter log e export PgUp/Dn v jobs ? q",
     10: "V views c stop r resume e export Enter log PgUp/Dn ? q",
     11: "V views / find j/k scroll PgUp/Dn u jobs ? q",
