@@ -374,7 +374,11 @@ refresh at most twice a second. Metadata-only observations reuse existing output
 with a bounded content recheck on the first visible poll after five seconds
 since the last accepted content read. This catches same-size rewrites even when
 metadata is unchanged. End requests fresh content immediately; metadata polls,
-failed reads and discarded results do not postpone the recheck. Held snapshots
+failed reads and discarded results do not postpone the recheck. Successful
+content reads with identical sanitized text reuse the focused viewer’s search
+index and wrapped layout. They still update content freshness, file identity,
+clipping and error/empty-state labels; actual text changes rebuild the caches.
+This saves rendering work without skipping the periodic content read. Held snapshots
 do not start new log-file reads. Following handles file replacement, truncation and
 missing files. Lines wrap to the pane width; ANSI control sequences are removed
 and carriage-return progress uses the last segment of each line. This is a text
