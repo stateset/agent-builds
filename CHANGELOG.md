@@ -2,6 +2,9 @@
 
 ## 0.26.3 (unreleased)
 
+- Reuse focused-log wrapping and search caches when accepted content is unchanged,
+  retaining periodic file rechecks, freshness, clipping and error recovery.
+
 - Fit queue blockers to narrow panes, retain stale warnings ahead of snapshot
   age, and expose partial shared-state disk limits without claiming all jobs block.
 

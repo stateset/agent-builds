@@ -30,6 +30,139 @@ class TuiLogTests(unittest.TestCase):
     def write(self, lines):
         self.path.write_text("\n".join(lines) + "\n")
 
+    def test_identical_periodic_content_rechecks_refresh_without_rewrapping(self):
+        self.write(["unchanged log " * 8] * 1000)
+        with mock.patch("agent_builds.tui_logs.os.open", wraps=os.open) as opened:
+            self.view.poll(0)
+            expected = self.view.page(19, 3)
+            layout, lines = self.view.wrapped, self.view.lines
+            with mock.patch.object(
+                self.view,
+                "_find_matches",
+                side_effect=AssertionError("same text rescanned"),
+            ), mock.patch(
+                "agent_builds.tui_logs.wrap_line",
+                side_effect=AssertionError("same text rewrapped"),
+            ):
+                for now in (5.5, 6, 10.5):
+                    self.view.poll(now)
+                    self.assertEqual(self.view.page(19, 3), expected)
+            self.assertEqual(opened.call_count, 3)
+        self.assertIs(self.view.wrapped, layout)
+        self.assertIs(self.view.lines, lines)
+        self.assertEqual(self.view.last_content_read, 10.5)
+        self.assertEqual(self.view.observed, 10.5)
+        self.assertTrue(self.view.loaded)
+        self.assertFalse(self.view.content_due(11))
+
+    def test_same_text_updates_signature_clipping_and_freshness_without_file_io(self):
+        from agent_builds.tui_log_reads import LogRequest, LogResult
+
+        request = LogRequest(0, ("focused",) + self.view.key)
+        self.view.apply(LogResult(request, (1, 2, 3, 4, 5), ("same output",)), 0)
+        self.view.page(19, 2)
+        layout, matches = self.view.wrapped, self.view.matches
+        with mock.patch.object(
+            Path, "stat", side_effect=AssertionError("apply IO")
+        ), mock.patch.object(Path, "open", side_effect=AssertionError("apply IO")):
+            self.assertTrue(
+                self.view.apply(
+                    LogResult(request, (1, 2, 3, 4, 6), ("same output",), clipped=True),
+                    1,
+                )
+            )
+            self.assertEqual(self.view.page(19, 2), ["same output"])
+        self.assertIs(self.view.wrapped, layout)
+        self.assertIs(self.view.matches, matches)
+        self.assertEqual(self.view.signature, (1, 2, 3, 4, 6))
+        self.assertTrue(self.view.clipped)
+        self.assertEqual(self.view.observed, 1)
+        self.assertEqual(self.view.last_content_read, 1)
+        self.view.apply(LogResult(request, lines=("same output",), clipped=False), 2)
+        self.assertFalse(self.view.clipped)
+        self.assertIs(self.view.wrapped, layout)
+
+    def test_changed_content_error_and_empty_recovery_update_evidence_and_notices(self):
+        from agent_builds.tui_log_reads import LogRequest, LogResult
+
+        request = LogRequest(0, ("focused",) + self.view.key)
+        self.view.apply(LogResult(request, lines=("hit one",)), 0)
+        self.view.search("hit", 19, 2)
+        self.view.end()
+        with mock.patch.object(
+            self.view, "_find_matches", wraps=self.view._find_matches
+        ) as find:
+            self.view.apply(LogResult(request, lines=("different",)), 1)
+            self.assertEqual(find.call_count, 1)
+        self.assertEqual(self.view.matches, [])
+        self.assertEqual(self.view.page(19, 2), ["different"])
+        self.view.apply(LogResult(request, lines=(), error="unavailable"), 2)
+        self.assertEqual(self.view.page(19, 2), [])
+        self.assertEqual(self.view.empty_notice(), "Log unavailable")
+        self.assertFalse(self.view.loaded)
+        self.assertEqual(self.view.last_content_read, 1)
+        with mock.patch(
+            "agent_builds.tui_logs.wrap_line",
+            side_effect=AssertionError("empty rewrapped"),
+        ):
+            self.view.apply(LogResult(request, lines=()), 3)
+            self.assertEqual(self.view.page(19, 2), [])
+        self.assertEqual(self.view.empty_notice(), "Empty log snapshot")
+        self.assertTrue(self.view.loaded)
+        self.assertIsNone(self.view.error)
+        self.assertEqual(self.view.last_content_read, 3)
+        self.view.apply(LogResult(request, lines=("hit recovered",)), 4)
+        self.assertEqual(self.view.matches, [0])
+        self.assertEqual(self.view.page(19, 2), ["hit recovered"])
+
+    def test_resume_same_text_keeps_search_cache_and_next_match_resize_work(self):
+        from agent_builds.tui_log_reads import LogRequest, LogResult
+
+        content = tuple(["x" * 30 + "needle target"] + ["padding"] * 20)
+        request = LogRequest(0, ("focused",) + self.view.key)
+        self.view.apply(LogResult(request, lines=content), 0)
+        self.view.search("needle", 19, 3)
+        matches = self.view.matches
+        self.view.end()
+        with mock.patch.object(
+            self.view,
+            "_find_matches",
+            side_effect=AssertionError("same text rescanned"),
+        ), mock.patch(
+            "agent_builds.tui_logs.wrap_line",
+            side_effect=AssertionError("same text rewrapped"),
+        ):
+            self.view.apply(LogResult(request, lines=content), 1)
+            self.assertEqual(self.view.page(19, 3), ["padding"] * 3)
+            self.view.next_match(1, 19, 3)
+            self.assertIn("needle", "".join(self.view.page(19, 3)))
+        self.assertIs(self.view.matches, matches)
+        self.assertEqual(self.view.match_target, (0, 30))
+        first = self.view.page(19, 3)
+        self.view.page(7, 2)
+        self.assertEqual(self.view.page(19, 3), first)
+
+    def test_same_text_from_another_job_never_reuses_or_accepts_previous_job_cache(
+        self,
+    ):
+        from agent_builds.tui_log_reads import LogRequest, LogResult
+
+        old_request = LogRequest(0, ("focused",) + self.view.key)
+        self.view.apply(LogResult(old_request, lines=("same text",)), 0)
+        self.view.page(19, 2)
+        old_lines, old_layout = self.view.lines, self.view.wrapped
+        self.view.select("another-job", self.path)
+        self.assertFalse(
+            self.view.apply(LogResult(old_request, lines=("same text",)), 1)
+        )
+        self.assertFalse(self.view.loaded)
+        request = LogRequest(1, ("focused",) + self.view.key)
+        self.view.apply(LogResult(request, lines=("same text",)), 2)
+        self.assertEqual(self.view.page(19, 2), ["same text"])
+        self.assertIsNot(self.view.lines, old_lines)
+        self.assertIsNot(self.view.wrapped, old_layout)
+        self.assertEqual(self.view.query, "")
+
     def test_hold_keeps_output_and_position_stable_while_file_grows(self):
         self.write([str(i) for i in range(20)])
         self.view.poll(0)

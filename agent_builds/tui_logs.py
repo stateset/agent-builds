@@ -221,13 +221,17 @@ class LogView:
         self.last_read, self.signature, self.error = now, result.signature, result.error
         self.observed = now
         if result.lines is not None:
-            self.lines = list(result.lines)
+            lines = list(result.lines)
+            changed = lines != self.lines
+            if changed:
+                self.lines = lines
             self.clipped = result.clipped
             self.loaded = result.error is None
             if not result.error:
                 self.last_content_read = now
-            self._find_matches()
-            self.width = None
+            if changed:
+                self._find_matches()
+                self.width = None
         return True
 
     def _find_matches(self):
