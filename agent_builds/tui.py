@@ -55,7 +55,7 @@ def paint(screen, y, x, text, attr=0):
         pass
 
 
-def compact_lines(rows, selected, plans, plan_index, view, config, height, width, watches=None, watch_index=0, health=None, health_offset=0, workbench=None, workbench_offset=0, queue_health=None, browser=None, tail_reader=None, details_view=None, detail_row=None, detail_error=None, history_view=None, history_repository=None, history_report=None, history_status="", inspection=None):
+def compact_lines(rows, selected, plans, plan_index, view, config, height, width, watches=None, watch_index=0, health=None, health_offset=0, workbench=None, workbench_offset=0, queue_health=None, browser=None, tail_reader=None, details_view=None, detail_row=None, detail_error=None, history_view=None, history_repository=None, history_report=None, history_status="", inspection=None, history_error=None):
     """A monitor for narrow split panes; editing actions need the full view."""
     lines = ['BUILDR ' + __version__ + (' PAUSED' if config['paused'] else '')]
     if height < 8 or width < 20:
@@ -81,8 +81,8 @@ def compact_lines(rows, selected, plans, plan_index, view, config, height, width
         lines += [VIEWS[view].name.upper(), 'Resize to 65x15', 'V chooses a view']
     elif view == 4:
         room=max(1,height-len(lines)-3)
-        page=history_view.page(history_repository,history_report,max(1,width-1),room) if history_view else []
-        lines += ["HISTORY " + (history_view.position() if history_view else ""),history_status]+page
+        page=history_view.page(history_repository,history_report,max(1,width-1),room,history_error) if history_view else []
+        lines += ["HISTORY " + (history_view.position() if history_view else ""),history_view.status_label(history_status) if history_view else history_status]+page
     elif view == 3:
         room=max(1,height-len(lines)-2)
         if details_view is not None and detail_row is not None:
@@ -103,7 +103,7 @@ def compact_lines(rows, selected, plans, plan_index, view, config, height, width
             widget.offset=legacy_offset
             page=widget.page(inspection['scope'],inspection['report'],max(1,width-1),room,inspection['error'])
         title=('WHY ' if view==14 else 'WORK ')+inspection['job']['id'] if view in (12,14) and inspection['job'] else VIEWS[view].name.upper()+' '+widget.position()
-        lines += [title,inspection['status']]+page
+        lines += [title,widget.status_label(inspection['status'])]+page
     elif view == 10:
         watches=watches or []
         lines+=[browser.get('tool_heading') if browser and browser.get('tool_heading') else 'EXTERNAL | {} shown'.format(len(watches))]
@@ -440,7 +440,7 @@ def main(screen, cwd):
                 browser=dict(mode=browser_mode,query=browser_query,loaded=len(loaded_rows),order=browser_order,expanded=jobs_expanded,repository=browser_repository,follow=follow_head,initialized=browser_report['initialized'],queue_error=browser_stale,queue_age=browser_read.status(time.monotonic()),summary_status=summary_read.status(time.monotonic()),summary_error=summary_stale,tool_status=tool_status if view in (7,10) and (tool_data is None or tool_read.error) else '',tool_heading=tool_read.status(time.monotonic(),short_label='PLANS' if view==7 else 'EXTERNAL') if view in (7,10) else '')
                 if submission_rows:
                     browser['submission_notice']=compact_notice(submission_rows[-1])
-                for index, line in enumerate(compact_lines(rows, selected, plan_rows, plan_index, view, config, height, width, watch_rows, watch_index, None,0,workbench_result,0,queue_health_result,browser,read_tail,details_view,detail_row,detail_read.error or (detail_read.status(time.monotonic()) if inspection_row else None),history_view,history_repository,history_report,history_status,inspection)):
+                for index, line in enumerate(compact_lines(rows, selected, plan_rows, plan_index, view, config, height, width, watch_rows, watch_index, None,0,workbench_result,0,queue_health_result,browser,read_tail,details_view,detail_row,detail_read.error or (detail_read.status(time.monotonic()) if inspection_row else None),history_view,history_repository,history_report,history_status,inspection,history_error=history_read.error)):
                     paint(screen, index, 0, line)
             else:
                 context = ' | Herdr ' + os.environ.get('HERDR_PANE_ID', '') if os.environ.get('HERDR_ENV') == '1' else ''
@@ -505,7 +505,7 @@ def main(screen, cwd):
                     widget=inspection['widget']
                     page=widget.page(inspection['scope'],inspection_data,max(1,width-1),max(1,height-log_top-4),inspection_read.error)
                     paint(screen,log_top-1,0,VIEWS[view].name.upper()+' | '+widget.position(),curses.A_BOLD)
-                    paint(screen,log_top,0,inspection_status)
+                    paint(screen,log_top,0,widget.status_label(inspection_status))
                     for index,line in enumerate(page):
                         paint(screen,log_top+1+index,0,line)
                 elif view == 1:
@@ -532,9 +532,9 @@ def main(screen, cwd):
                     paint(screen,log_top-1,0,'JOB DETAILS | i returns to jobs',curses.A_BOLD)
                     paint(screen,log_top,0,'Details unavailable: '+(detail_read.error or detail_read.status(time.monotonic()) if inspection_row else 'No job selected'))
                 elif view == 4:
-                    page=history_view.page(history_repository,history_report,max(1,width-1),max(1,height-log_top-4))
+                    page=history_view.page(history_repository,history_report,max(1,width-1),max(1,height-log_top-4),history_read.error)
                     paint(screen,log_top-1,0,'HISTORY | read only | '+history_view.position(),curses.A_BOLD)
-                    paint(screen,log_top,0,history_status)
+                    paint(screen,log_top,0,history_view.status_label(history_status))
                     for index,line in enumerate(page):
                         paint(screen,log_top+1+index,0,line)
                 elif view == 5:
@@ -725,6 +725,13 @@ def main(screen, cwd):
                 if view!=15:
                     follow_head=False
                 view=0 if view==15 else 15
+                continue
+            if view in (4,11,12,14) and key==ord('/'):
+                if height>=8 and width>=20:
+                    widget=history_view if view==4 else inspection_views[view]
+                    query=prompt(screen,'Find loaded report (blank clears)',widget.query)
+                    if query is not None:
+                        widget.search(query)
                 continue
             if view==15:
                 if key in (9,curses.KEY_BTAB) and height>=8 and width>=20:

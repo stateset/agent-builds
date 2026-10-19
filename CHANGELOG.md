@@ -2,6 +2,10 @@
 
 ## 0.26.3 (unreleased)
 
+- Filter loaded health, why, workbench and history report lines with literal `/`
+  search. Show query/counts in narrow panes; preserve read errors, scope boundaries
+  and cached rendering without changing job filters or reading more evidence.
+
 - Keep report reading positions stable across pane resizing and temporary height
   clamping, including health, why, workbench, history and submission receipts.
   Explicit navigation replaces the anchor; idle rendering stays cached.

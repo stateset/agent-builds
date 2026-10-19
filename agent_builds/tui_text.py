@@ -17,6 +17,10 @@ class ReportView:
         self.locations = []
         self._last_offset = None
         self._end_requested = False
+        self.query = ""
+        self.matches = None
+        self.paragraphs, self.visible = [], []
+        self._selection_dirty = True
 
     def page(self, repository, report, width, height, error=None):
         height = max(1, height)
@@ -26,6 +30,10 @@ class ReportView:
             self.logical, self.wrapped, self.locations = [], [], []
             self.anchor = self._last_offset = None
             self._end_requested = False
+            self.query = ""
+            self.matches = None
+            self.paragraphs, self.visible = [], []
+            self._selection_dirty = True
         if (
             self.locations
             and not self._end_requested
@@ -46,22 +54,31 @@ class ReportView:
                 else ([error] if error else [])
             )
             self.logical = self.bounded(content)
-        if not self.logical:
+            self.paragraphs = [
+                (line_index, paragraph_index, paragraph)
+                for line_index, line in enumerate(self.logical)
+                for paragraph_index, paragraph in enumerate(
+                    clean_lines(line.encode("utf-8", errors="replace")) or [""]
+                )
+            ]
+            self._selection_dirty = True
+        if self._selection_dirty:
+            self._select_paragraphs()
+            self.width = None
+            self._selection_dirty = False
+        if not self.visible:
             self.wrapped, self.locations = [], []
             return []
         width = max(1, width)
         if width != self.width:
             changed = True
             self.wrapped, self.locations = [], []
-            for line_index, line in enumerate(self.logical):
-                for paragraph_index, paragraph in enumerate(
-                    clean_lines(line.encode("utf-8", errors="replace")) or [""]
-                ):
-                    offset = 0
-                    for part in wrap_line(paragraph, width):
-                        self.locations.append((line_index, paragraph_index, offset))
-                        self.wrapped.append(part)
-                        offset += len(part)
+            for line_index, paragraph_index, paragraph in self.visible:
+                offset = 0
+                for part in wrap_line(paragraph, width):
+                    self.locations.append((line_index, paragraph_index, offset))
+                    self.wrapped.append(part)
+                    offset += len(part)
             self.width = width
         if self._end_requested:
             self.offset = max(0, len(self.wrapped) - self.height)
@@ -74,6 +91,50 @@ class ReportView:
             self.anchor = self.locations[self.offset]
         self._last_offset = self.offset
         return self.wrapped[self.offset : self.offset + self.height]
+
+    def _select_paragraphs(self):
+        if self.report is None:
+            self.visible = self.paragraphs
+            self.matches = None
+        else:
+            needle = self.query.casefold()
+            self.visible = [
+                row for row in self.paragraphs if needle in row[2].casefold()
+            ]
+            self.matches = len(self.visible)
+
+    def search(self, query):
+        query = query[:256]
+        if query == self.query:
+            return
+        self.query = query
+        self.matches = None
+        self.offset = 0
+        self.anchor = self._last_offset = None
+        self._end_requested = False
+        self.wrapped, self.locations = [], []
+        self.width = None
+        self._selection_dirty = True
+
+    def search_status(self):
+        if not self.query:
+            return ""
+        label = (
+            str(self.matches)
+            if self.matches is not None
+            else "unavailable"
+            if self.error
+            else "pending"
+        )
+        return "Find {}: {}".format(label, self.query)
+
+    def status_label(self, status):
+        if not self.query:
+            return status
+        stale = self.report is not None and (
+            self.error or status.casefold().startswith("stale ")
+        )
+        return ("STALE | " if stale else "") + self.search_status() + " | " + status
 
     def bounded(self, content):
         if self.limit is None:
