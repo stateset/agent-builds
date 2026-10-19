@@ -271,6 +271,26 @@ class GrowthTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'distinct plan handles'):
             workflow_study.compare(self.store,result['records'][0]['plan_id'],result['records'][0]['plan_id'])
 
+    def test_study_exports_full_pressure_and_missing_coverage_for_actual_queued_arms(self):
+        baseline,candidate=self.study_manifests()
+        measured=dict(available_gb=8,psi={kind:dict(some=dict(avg10=40,avg60=20,avg300=10),
+            full=dict(avg10=12,avg60=6,avg300=3)) for kind in ('cpu','memory','io')})
+        with mock.patch('agent_builds.workflow_study.snapshot',return_value=measured) as sampled:
+            result=workflow_study.run(self.store,baseline,candidate,self.repo,self.root/'pressure-study.json',pairs=1,timeout=30)
+        self.assertEqual(sampled.call_count,sum(arm['pressure']['samples'] for arm in result['records']))
+        for arm in result['records']:
+            evidence=arm['pressure']
+            self.assertGreater(evidence['samples'],0)
+            self.assertEqual(evidence['max_avg10']['io_pressure'],40)
+            self.assertEqual(evidence['max_psi_percent']['io']['full']['avg300'],3)
+            self.assertEqual(evidence['valid_readings']['io']['full']['avg10'],evidence['samples'])
+            self.assertEqual(evidence['unavailable_readings']['io']['full']['avg10'],0)
+            self.assertIsNone(evidence['max_psi_percent']['cpu']['full']['avg10'])
+            self.assertEqual(evidence['last_observation'],evidence['retained'][-1])
+            self.assertEqual(arm['verified_stages'],2)
+        self.assertTrue(result['comparisons'][0]['comparable'])
+        self.assertFalse(result['global_settings_changed'])
+
     def test_study_rejects_changed_commands_before_any_submission(self):
         baseline,candidate=self.study_manifests()
         value=json.loads(candidate.read_text())
