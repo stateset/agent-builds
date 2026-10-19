@@ -227,7 +227,7 @@ def choose(screen, current, has_job, paint, has_log=False):
 
 
 _FULL_FOOTERS = {
-    15: "V views J job j/k PgUp/Dn Home/End U jobs ? help q quit | read only",
+    15: "V views Tab/Shift+Tab receipt j/k PgUp/Dn Home/End J job U jobs ? q",
     14: "V views j/k PgUp/Dn Home/End w jobs i details l logs g blocker ? q",
     0: "V views  J job  U submissions  F follow  w why  R repo  C clear  Tab table  / find  f filter  l log  ? q",
     3: "V views  PgUp/Dn Home/End  j/k job  i jobs  l logs  ? help  q quit",
@@ -240,7 +240,7 @@ _FULL_FOOTERS = {
     13: "V views  J job  / find  n/N match  End live  l jobs  ? help  q quit",
 }
 _MEDIUM_FOOTERS = {
-    15: "V J job j/k PgUp/Dn Home/End U jobs ? q",
+    15: "V Tab receipt j/k Pg Home/End U jobs ? q",
     14: "V j/k PgUp/Dn Home/End w jobs i details l logs g ? q",
     0: "V views J job F follow w why R repo C clear Tab / f l ? q",
     3: "V views PgUp/Dn Home/End j/k job i jobs l logs ? q",
@@ -253,7 +253,7 @@ _MEDIUM_FOOTERS = {
     13: "V views J job / find n/N match End live l jobs ? q",
 }
 _COMPACT_FOOTERS = {
-    15: "V J j/k Pg U ? q",
+    15: "V Tab j/k Pg U ? q",
     14: "V j/k w i l g ? q",
     0: "V j/k w / f l J ? q",
     3: "V PgUp/Dn i/l ? q",

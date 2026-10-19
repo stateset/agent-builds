@@ -2,6 +2,10 @@
 
 ## 0.26.2 (unreleased)
 
+- Select individual submission receipts with Tab/Shift+Tab and open a confirmed
+  job's log with Enter, without copying IDs or changing browser filters. Keep
+  the overview, pinned receipt selection and unknown-outcome safeguards.
+
 - Add repeatable native-terminal observations against an explicit baseline,
   with paired order, full/narrow panes, stalled reads, retained partial failures
   and source checks. CI verifies and retains the measurements without treating

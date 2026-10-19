@@ -357,6 +357,9 @@ def main(screen, cwd):
             elif view==8:
                 advice_result=tool_data
             link_origin=(view,watch_id if view==10 else group_id if view==9 else plan_id if view==7 else context_row['id'] if context_row else None)
+            if view==15:
+                submission_view.current(submission_rows)
+                link_origin=(view,submission_view.selected_key)
             direct_lookup=direct_log_view==view
             linked_job=log_links.poll(('jump',view) if direct_lookup else link_origin,readable and (direct_lookup or not VIEWS[view].full or full_view),time.monotonic())
             if linked_job is not None:
@@ -388,7 +391,11 @@ def main(screen, cwd):
                     page=submission_view.page(None,submission_rows,max(1,width-1),max(1,height-3))
                     for index,line in enumerate(page):
                         paint(screen,index+1,0,line)
-                paint(screen,0,0,'SUBMISSIONS | '+submission_view.position(),curses.A_BOLD)
+                receipt_label=submission_view.selection_label(submission_rows)
+                title='SUBMISSIONS '+receipt_label if receipt_label else 'SUBMISSIONS'
+                paint(screen,0,0,title+(' | '+submission_view.position() if width>=40 or not receipt_label else ''),curses.A_BOLD)
+                if height>=8 and width>=20:
+                    paint(screen,height-2,0,submission_view.action_note(submission_rows))
                 paint(screen,height-1,0,view_footer(15,width))
             elif browser_report is None and view!=13:
                 paint(screen,0,0,'BUILDR '+__version__,curses.A_BOLD)
@@ -711,7 +718,13 @@ def main(screen, cwd):
                 view=0 if view==15 else 15
                 continue
             if view==15:
-                if key in (ord('j'),curses.KEY_DOWN,ord('k'),curses.KEY_UP,curses.KEY_NPAGE,curses.KEY_PPAGE):
+                if key in (9,curses.KEY_BTAB) and height>=8 and width>=20:
+                    submission_view.choose(submission_rows,1 if key==9 else -1)
+                elif key in (10,13,curses.KEY_ENTER) and height>=8 and width>=20:
+                    target=submission_view.log_target(submission_rows)
+                    if target:
+                        log_links.open('browser',target,(view,submission_view.selected_key),time.monotonic())
+                elif key in (ord('j'),curses.KEY_DOWN,ord('k'),curses.KEY_UP,curses.KEY_NPAGE,curses.KEY_PPAGE):
                     submission_view.scroll(1 if key in (ord('j'),curses.KEY_DOWN,curses.KEY_NPAGE) else -1,key in (curses.KEY_NPAGE,curses.KEY_PPAGE))
                 elif key==curses.KEY_HOME:
                     submission_view.home()
