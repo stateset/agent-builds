@@ -173,7 +173,7 @@ class PlanSearchDashboardTests(unittest.TestCase):
         self.assertEqual(self.fixture.prompt_calls[-1].args[2], "beta")
 
     def test_refresh_preserves_selected_match_when_newer_matches_arrive(self):
-        now, pending = [100], Future()
+        now = [100]
         keys = iter([ord("V"), ord("/"), -1, -1, ord("q")])
 
         def key():
@@ -195,3 +195,44 @@ class PlanSearchDashboardTests(unittest.TestCase):
             answers=["absent-job", "beta"],
         )
         self.assertIn("No matching jobs", "\n".join(frames[-1].values()))
+
+    def test_failed_refresh_keeps_filtered_matches_and_stale_warning(self):
+        for size in ((24, 100), (8, 20)):
+            now, reads, pending = [100], [0], Future()
+
+            def submit(loader, key):
+                if key == ("plans", None):
+                    reads[0] += 1
+                    if reads[0] > 1:
+                        return pending
+                result = Future()
+                try:
+                    result.set_result(loader(key))
+                except Exception as error:
+                    result.set_exception(error)
+                return result
+
+            keys = iter([ord("V"), ord("/"), -1, -1, ord("q")])
+
+            def key():
+                value = next(keys)
+                if value == -1 and now[0] == 100:
+                    now[0] = 103
+                elif value == -1:
+                    pending.set_exception(OSError("fixture plan read failed"))
+                return value
+
+            with self.subTest(size=size):
+                frames = self.dashboard(
+                    key,
+                    size,
+                    answers=["beta"],
+                    background_submit=submit,
+                    clock=lambda: now[0],
+                )
+                text = "\n".join(frames[-1].values())
+                self.assertIn("stale", text.casefold())
+                self.assertIn("1/2", text)
+                self.assertIn("plan-beta", text)
+                self.assertNotIn("No matching plans", text)
+                self.assertEqual(reads[0], 2)
