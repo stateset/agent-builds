@@ -31,6 +31,45 @@ class ActionPickerTests(unittest.TestCase):
         command, unused = self.picker(list("new job") + ["\n"])
         self.assertEqual(command.key, ord("n"))
 
+    def test_narrow_tall_menu_shows_complete_review_context_above_footer(self):
+        command, frames = self.picker(list("new job") + ["\x1b"], (14, 24))
+        self.assertIsNone(command)
+        frame = frames[-1]
+        self.assertEqual(frame[13], "Arrows Enter Esc")
+        self.assertIn("New job", frame[3])
+        # Availability takes priority over description until this action fits.
+        self.assertIn("Resize to 65x15", "".join(frame.values()))
+        command, frames = self.picker(
+            list("job logs") + ["\x1b"],
+            (14, 24),
+            job=dict(id="a" * 12, state="running"),
+        )
+        frame = frames[-1]
+        expected = next(
+            c.description
+            for c in commands(0, dict(id="a" * 12, state="running"))
+            if c.number == "view.13"
+        )
+        self.assertIn(expected, "".join(frame[y] for y in sorted(frame) if y >= 4))
+        self.assertEqual(frame[13], "Arrows Enter Esc")
+
+    def test_minimum_menu_marks_clipped_context_and_resize_reveals_it(self):
+        command, frames = self.picker(
+            list("job logs") + [((14, 24), -1), "\x1b"],
+            (8, 20),
+            job=dict(id="a" * 12, state="running"),
+        )
+        self.assertIsNone(command)
+        minimum = next(
+            frame
+            for frame in frames
+            if frame.get(1) == "Find: job logs" and 7 in frame and 13 not in frame
+        )
+        self.assertTrue(minimum[6].endswith("..."))
+        self.assertEqual(minimum[7], "Arrows Enter Esc")
+        self.assertNotIn("...", "".join(frames[-1].values()))
+        self.assertIn("Job logs", frames[-1][3])
+
     def test_typing_action_keys_or_quit_never_dispatches(self):
         command, frames = self.picker(list("ncapbq") + ["\n", "\x1b"])
         self.assertIsNone(command)
