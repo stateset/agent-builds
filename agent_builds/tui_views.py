@@ -1,5 +1,6 @@
 """Searchable dashboard navigation; selecting a view never executes an action."""
 
+from bisect import bisect_right
 from dataclasses import dataclass
 import curses
 import time
@@ -147,15 +148,61 @@ def choose(screen, current, has_job, paint, has_log=False):
     )
 
 
+class MenuContext:
+    """Read a captured explanation without changing the chosen entry."""
+
+    def __init__(self):
+        self.key, self.anchor = None, 0
+        self.lines, self.starts = [], []
+        self.index, self.room = 0, 1
+
+    def page(self, key, text, width, room):
+        if key != self.key:
+            self.key, self.anchor = key, 0
+        self.room = max(1, room)
+        self.lines = wrap_line(text, width)
+        if len(self.lines) > self.room:
+            # Reserve the continuation marker without hiding source characters.
+            self.lines = wrap_line(text, max(1, width - 3))
+        self.starts, cursor = [], 0
+        for line in self.lines:
+            self.starts.append(cursor)
+            cursor += len(line)
+        self.index = min(
+            max(0, bisect_right(self.starts, self.anchor) - 1),
+            max(0, len(self.lines) - self.room),
+        )
+        result = self.lines[self.index : self.index + self.room]
+        if self.index + self.room < len(self.lines):
+            result[-1] += "..."
+        return result
+
+    def move(self, direction):
+        if self.starts:
+            index = min(
+                max(0, self.index + direction * self.room),
+                max(0, len(self.lines) - self.room),
+            )
+            self.anchor = self.starts[index]
+
+    def hint(self, prefix, width):
+        if len(self.lines) <= self.room:
+            return None
+        position = "{}/{}".format(self.index + 1, len(self.lines))
+        full = prefix + " | Left/Right context " + position
+        return full if len(full) <= width else prefix + " | ←→ " + position
+
+
 def choose_menu(screen, picker, paint, title, reason):
     """A shared read-only chooser; only return an explicitly accepted entry."""
     screen.timeout(200)
     rendered = None
+    context = MenuContext()
     try:
         while True:
             height, width = screen.getmaxyx()
             usable = height >= 8 and width >= 20
-            frame = (height, width, picker.query, picker.selected)
+            frame = (height, width, picker.query, picker.selected, context.anchor)
             if frame != rendered:
                 screen.erase()
                 if not usable:
@@ -183,11 +230,21 @@ def choose_menu(screen, picker, paint, title, reason):
                     note = disabled or (
                         choice.description if choice else "Ctrl+U clears"
                     )
-                    notes = wrap_line(note, width - 1)
-                    note_room = min(4, max(1, height - 7))
-                    if len(notes) > note_room:
-                        notes = notes[:note_room]
-                        notes[-1] = wrap_line(notes[-1], width - 4)[0] + "..."
+                    notes = context.page(
+                        (choice.number if choice else None, note),
+                        note,
+                        width - 1,
+                        min(4, max(1, height - 7)),
+                    )
+                    hint = context.hint(
+                        "{}/{}".format(
+                            picker.selected + 1 if picker.matches else 0,
+                            len(picker.matches),
+                        ),
+                        width - 1,
+                    )
+                    if hint:
+                        paint(screen, 2, 0, hint)
                     note_top = height - 1 - len(notes)
                     for index, view in picker.page(note_top - 3):
                         disabled = reason(view, height, width)
@@ -219,7 +276,13 @@ def choose_menu(screen, picker, paint, title, reason):
                         paint(screen, note_top + index, 0, line)
                     paint(screen, height - 1, 0, "Arrows Enter Esc")
                 screen.refresh()
-                rendered = frame
+                rendered = (
+                    height,
+                    width,
+                    picker.query,
+                    picker.selected,
+                    context.anchor,
+                )
             try:
                 key = screen.get_wch()
             except curses.error as error:
@@ -244,6 +307,8 @@ def choose_menu(screen, picker, paint, title, reason):
                 choice = picker.choice()
                 if choice and not reason(choice, height, width):
                     return choice.number
+            elif key in (curses.KEY_LEFT, curses.KEY_RIGHT):
+                context.move(1 if key == curses.KEY_RIGHT else -1)
             elif key in (curses.KEY_DOWN, "\t", curses.KEY_UP, curses.KEY_BTAB):
                 picker.move(1 if key in (curses.KEY_DOWN, "\t") else -1)
             elif key in (curses.KEY_NPAGE, curses.KEY_PPAGE):

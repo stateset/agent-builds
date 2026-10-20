@@ -138,7 +138,13 @@ def measure(jobs, height, width):
 
             def menu(query, predicate, label):
                 action(b":", lambda t: "BUILDR ACTIONS" in t, "menu-" + label)
-                action(query.encode() + b"\r", predicate, label)
+                if width < 65 and query == "why waiting":
+                    action(query.encode(), lambda t: "←→ 1/" in t, "context-start")
+                    action(b"\x1bOC", lambda t: "←→ 2/" in t, "context-forward")
+                    action(b"\x1bOD", lambda t: "←→ 1/" in t, "context-back")
+                    action(b"\r", predicate, label)
+                else:
+                    action(query.encode() + b"\r", predicate, label)
 
             wait_for(
                 lambda t: (

@@ -611,3 +611,10 @@ Open view/action menus retain their frame while idle instead of repeatedly
 erasing the terminal. Search, navigation and resize update the display; `Ctrl+L`
 forces a redraw if the terminal needs it. Menu entries remain the captured
 context from opening the menu; repainting does not refresh queue/job state.
+
+When a selected menu explanation is longer than its available rows, use the
+Left/Right arrows to read it without resizing or accepting the entry. The status
+line shows the first visible context row and total rows. Up/Down still selects
+entries; changing the entry resets its explanation to the beginning. Resizing
+retains the source position where possible. Enter eligibility and confirmation
+steps remain unchanged, including disabled actions in minimum panes.
