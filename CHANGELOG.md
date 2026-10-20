@@ -2,6 +2,10 @@
 
 ## 0.26.3 (unreleased)
 
+- Focus selected plan-stage evidence, wrap long commands/reasons, and page bounded
+  details with PgUp/PgDn or Home/End. Retain the stage log shortcut and freshness
+  while reading; preserve text position across resizing without extra queries.
+
 - Select plan stages with Tab/Shift+Tab and open their exact recorded job logs,
   including in narrow panes. Preserve stage identity across refreshes and log
   round trips; discard obsolete lookups without submitting or retrying stages.

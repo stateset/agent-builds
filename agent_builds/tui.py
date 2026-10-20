@@ -27,6 +27,7 @@ from .tui_reads import submit_read as submit_log_status_read
 from .tui_log_reads import LogReads
 from .tui_links import LogLinks
 from .tui_plan_stages import PlanStages
+from .tui_plan_details import PlanDetails
 from .tui_help import HelpView
 from .tui_reads import submit_read as submit_link_read
 from .tui_submissions import SubmissionTracker
@@ -56,7 +57,7 @@ def paint(screen, y, x, text, attr=0):
         pass
 
 
-def compact_lines(rows, selected, plans, plan_index, view, config, height, width, watches=None, watch_index=0, health=None, health_offset=0, workbench=None, workbench_offset=0, queue_health=None, browser=None, tail_reader=None, details_view=None, detail_row=None, detail_error=None, history_view=None, history_repository=None, history_report=None, history_status="", inspection=None, history_error=None, plan_stages=None):
+def compact_lines(rows, selected, plans, plan_index, view, config, height, width, watches=None, watch_index=0, health=None, health_offset=0, workbench=None, workbench_offset=0, queue_health=None, browser=None, tail_reader=None, details_view=None, detail_row=None, detail_error=None, history_view=None, history_repository=None, history_report=None, history_status="", inspection=None, history_error=None, plan_stages=None, plan_details=None):
     """A monitor for narrow split panes; editing actions need the full view."""
     lines = ['BUILDR ' + __version__ + (' PAUSED' if config['paused'] else '')]
     if height < 8 or width < 20:
@@ -124,6 +125,13 @@ def compact_lines(rows, selected, plans, plan_index, view, config, height, width
         if stage_lines:
             lines += stage_lines[:2]
         lines += [browser.get('tool_heading') if browser and browser.get('tool_heading') else 'PLANS | {} shown'.format(len(plans))]
+        if stage_lines and plan_details:
+            if browser and browser.get('tool_status') and height>=10:
+                lines += textwrap.wrap(browser['tool_status'],max(1,width-1))[:1]
+            room=max(0,height-len(lines)-1)
+            if room:
+                lines += plan_details.page_plan(plans[plan_index],max(1,width-1),room)
+            return lines[:height-1]+[view_footer(view,width,compact=True)]
         if plans:
             selected_row = plans[plan_index]
             lines += [selected_row['id'], selected_row['state']]
@@ -263,7 +271,7 @@ def main(screen, cwd):
     plan_index = 0
     plan_id = None
     plan_stages = PlanStages()
-    plan_offset = 0
+    plan_details = PlanDetails(plan_stages)
     advice_result = None
     advice_offset = 0
     queue_health_result = None
@@ -449,7 +457,7 @@ def main(screen, cwd):
                 browser=dict(mode=browser_mode,query=browser_query,loaded=len(loaded_rows),order=browser_order,expanded=jobs_expanded,repository=browser_repository,follow=follow_head,initialized=browser_report['initialized'],queue_error=browser_stale,queue_age=browser_read.status(time.monotonic()),summary_status=summary_read.status(time.monotonic()),summary_error=summary_stale,tool_status=tool_status if view in (7,10) and (tool_data is None or tool_read.error) else '',tool_heading=tool_read.status(time.monotonic(),short_label='PLANS' if view==7 else 'EXTERNAL') if view in (7,10) else '')
                 if submission_rows:
                     browser['submission_notice']=compact_notice(submission_rows[-1])
-                for index, line in enumerate(compact_lines(rows, selected, plan_rows, plan_index, view, config, height, width, watch_rows, watch_index, None,0,workbench_result,0,queue_health_result,browser,read_tail,details_view,detail_row,detail_read.error or (detail_read.status(time.monotonic()) if inspection_row else None),history_view,history_repository,history_report,history_status,inspection,history_error=history_read.error,plan_stages=plan_stages)):
+                for index, line in enumerate(compact_lines(rows, selected, plan_rows, plan_index, view, config, height, width, watch_rows, watch_index, None,0,workbench_result,0,queue_health_result,browser,read_tail,details_view,detail_row,detail_read.error or (detail_read.status(time.monotonic()) if inspection_row else None),history_view,history_repository,history_report,history_status,inspection,history_error=history_read.error,plan_stages=plan_stages,plan_details=plan_details)):
                     paint(screen, index, 0, line)
             else:
                 context = ' | Herdr ' + os.environ.get('HERDR_PANE_ID', '') if os.environ.get('HERDR_ENV') == '1' else ''
@@ -608,34 +616,16 @@ def main(screen, cwd):
                 elif view == 7:
                     paint(screen, log_top-1, 0, 'VERIFICATION PLANS | arrows plan | Tab stage | Enter log', curses.A_BOLD)
                     paint(screen,log_top,0,tool_status)
-                    lines = ['No plans yet. Press o to submit a JSON verification plan.'] if tool_data is not None else []
+                    prefix=plan_stages.lines(plan_rows[plan_index])[:2] if plan_rows else []
+                    for index,line in enumerate(prefix):
+                        paint(screen,log_top+1+index,0,line,curses.A_BOLD)
+                    visible=max(1,height-log_top-4-len(prefix))
                     if plan_rows:
-                        plan = plan_rows[plan_index]
-                        stage_lines = plan_stages.lines(plan)
-                        lines = ['{} | {} | {}'.format(plan['id'], plan['state'], plan['name']),
-                                 'Stages: {} succeeded / {} total | elapsed {:.1f}s'.format(
-                                     sum(s['state']=='succeeded' for s in plan['stages']), len(plan['stages']), plan['elapsed_seconds'])]
-                        lines = stage_lines + lines
-                        if plan['state'] not in ('succeeded', 'failed', 'cancelled') and plan['controller_alive'] is False:
-                            lines += ['Controller is not running; r resumes monitoring without retrying submitted stages.']
-                        elif plan['state'] not in ('succeeded', 'failed', 'cancelled') and plan['controller_alive'] is None:
-                            lines += ['Controller liveness is not verified by read-only inspection.']
-                        if plan['reason']:
-                            lines += [plan['reason']]
-                        for stage in plan['stages']:
-                            job = stage['job']
-                            lines += ['{}{} {:11} | {} | {}'.format('> ' if stage['name']==plan_stages.name else '  ', stage['name'], stage['state'], stage['job_id'] or 'not submitted',
-                                stage['reason'] or (job['reason'] if job else 'waiting for prerequisites'))]
-                            if job:
-                                lines += ['  waited {:.1f}s | ran {:.1f}s | exit {} | {}'.format(job['wait_seconds'], job['elapsed_seconds'], job['exit_code'], job['command_display'])]
-                                if job['source'].get('changed_since_submission') or job['source'].get('changed_during_run'):
-                                    lines += ['  Source changes observed; inspect plan evidence before relying on the result.']
-                                elif job['started'] and job['source'].get('start', {}).get('status') != 'captured':
-                                    lines += ['  Source identity unavailable or not yet captured.']
-                    visible = max(1, height-log_top-4)
-                    plan_offset = min(max(0, plan_offset), max(0, len(lines)-visible))
-                    for index, line in enumerate(lines[plan_offset:plan_offset+visible]):
-                        paint(screen, log_top+1+index, 0, line)
+                        lines=plan_details.page_plan(plan_rows[plan_index],max(1,width-1),visible)
+                    else:
+                        lines=['No plans yet. Press o to submit a JSON verification plan.'] if tool_data is not None else []
+                    for index,line in enumerate(lines):
+                        paint(screen,log_top+1+len(prefix)+index,0,line)
                 elif rows:
                     row = rows[selected]
                     paint(screen, log_top - 1, 0, '{} | {} | {}'.format(row['id'], row['cwd'], row['reason'] or 'live output'), curses.A_BOLD)
@@ -764,7 +754,7 @@ def main(screen, cwd):
                 continue
             if view==7 and key in (9,curses.KEY_BTAB) and height>=8 and width>=20:
                 plan_stages.choose(plan_rows[plan_index] if plan_rows else None,1 if key==9 else -1)
-                plan_offset=0
+                plan_details.home()
                 continue
             if view==0:
                 if key==ord('F'):
@@ -1040,7 +1030,7 @@ def main(screen, cwd):
                 elif view == 7:
                     plan_index = min(plan_index+1, max(0, len(plan_rows)-1))
                     plan_id = plan_rows[plan_index]['id'] if plan_rows else None
-                    plan_offset = 0
+                    plan_details.home()
                 else:
                     selected = focus.move(rows,1) if view==3 else min(selected + 1, max(0, len(rows) - 1))
                     selected_id = rows[selected]['id'] if rows else None
@@ -1058,7 +1048,7 @@ def main(screen, cwd):
                 elif view == 7:
                     plan_index = max(0, plan_index-1)
                     plan_id = plan_rows[plan_index]['id'] if plan_rows else None
-                    plan_offset = 0
+                    plan_details.home()
                 else:
                     selected = focus.move(rows,-1) if view==3 else max(0, selected - 1)
                     selected_id = rows[selected]['id'] if rows else None
@@ -1122,13 +1112,20 @@ def main(screen, cwd):
                     definition = read_manifest(manifest, location, store.writable().config())
                     plan_id = create(store.writable(), definition)
                     children.append(spawn_plan(store.writable(), plan_id))
-                    view, plan_offset = 7, 0
+                    view = 7
+                    plan_details.home()
                     tool_read.next_read=0
                     message = 'Submitted verification plan '+plan_id
                 except (ValueError, OSError, sqlite3.Error) as error:
                     message = 'Plan rejected: '+str(error)
-            elif view == 7 and key in (curses.KEY_NPAGE, curses.KEY_PPAGE):
-                plan_offset += max(1, height-10)*(1 if key == curses.KEY_NPAGE else -1)
+            elif view == 7 and key in (curses.KEY_NPAGE, curses.KEY_PPAGE,curses.KEY_HOME,curses.KEY_END):
+                if not compact or (plan_stages.name is not None and height>8):
+                    if key==curses.KEY_HOME:
+                        plan_details.home()
+                    elif key==curses.KEY_END:
+                        plan_details.end()
+                    else:
+                        plan_details.scroll(1 if key==curses.KEY_NPAGE else -1,pages=True)
             elif view == 7 and plan_rows and key in (ord('x'), ord('c'), ord('r'), ord('e')):
                 try:
                     from .plans import cancel as cancel_plan, export, spawn as spawn_plan, write_export

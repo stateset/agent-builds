@@ -81,6 +81,14 @@ across snapshot refreshes and reordering; removing the stage or changing plans
 returns to the overview. `b` returns from the log to the selected stage. These
 controls also work in a 20-by-8 split and do not submit or retry stages.
 
+Selecting a stage focuses its evidence: state, recorded reason, job outcome,
+wait/runtime, command and source warnings. Long lines wrap instead of clipping.
+PgUp/PgDn and Home/End scroll these bounded details, while the stage name, exact
+log shortcut and snapshot freshness remain visible. Taller narrow panes show the
+same detail page; at 20-by-8 the stage/log controls take priority. Resizing keeps
+the reviewed text position; selecting another stage or a new recorded job starts
+at its beginning. The overview retains all stages and plan controller warnings.
+
 In `U` submissions, Tab/Shift+Tab cycles the overview and individual receipts,
 newest first. The selected receipt's number stays visible; j/k, paging and
 Home/End scroll its details. Selection remains pinned as other attempts update
