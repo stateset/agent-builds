@@ -2,6 +2,9 @@
 
 ## 0.26.4 (unreleased)
 
+- Keep view/action menus still during idle input waits. Navigation, search and
+  resize repaint the menu; Ctrl+L explicitly redraws it.
+
 - Wrap selected menu explanations into available rows, preserving target IDs,
   availability guidance and navigation. Mark context clipped in short panes.
 
