@@ -67,7 +67,10 @@ FIXTURE = textwrap.dedent("""
             guards.enter_context(patch.object(Store,name,side_effect=forbidden))
         guards.enter_context(patch('subprocess.Popen',side_effect=forbidden))
         guards.enter_context(patch.object(tui,'read_tool',side_effect=lambda root,key: [plan] if key[0]=='plans' else original(root,key)))
-        runpy.run_module('agent_builds',run_name='__main__')
+        try:
+            runpy.run_module('agent_builds',run_name='__main__')
+        except SystemExit as outcome:
+            assert outcome.code in (None,0), outcome.code
     assert before==snapshot() and config==(state/'config.json').read_bytes()
     result.write_text(json.dumps(dict(queue_unchanged=True,native_commands=0,jobs=count,selected_job=jobs[0],stage_job=jobs[2])))
 """)
@@ -217,6 +220,12 @@ def run(output):
         for jobs in (30, 100):
             for height, width in ((24, 100), (8, 20)):
                 result["records"].append(measure(jobs, height, width))
+                print(
+                    json.dumps(
+                        dict(jobs=jobs, height=height, width=width, result="passed")
+                    ),
+                    flush=True,
+                )
         assert identity(ROOT) == expected
         result["result"] = "passed"
         result["source_changed"] = False
