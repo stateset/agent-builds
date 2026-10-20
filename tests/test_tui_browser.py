@@ -130,7 +130,9 @@ class TuiBrowserTests(unittest.TestCase):
         ), mock.patch(
             "agent_builds.tui.submit_link_read", side_effect=link_submit or completed
         ), mock.patch.dict(
-            os.environ, AGENT_BUILDS_STATE=str(state_path or self.store.root)
+            os.environ,
+            AGENT_BUILDS_STATE=str(state_path or self.store.root),
+            XDG_CONFIG_HOME=str(self.root / "user-config"),
         ), mock.patch(
             "agent_builds.tui.time.monotonic", side_effect=clock or (lambda: 100)
         ), mock.patch("agent_builds.tui.curses.curs_set"), mock.patch(

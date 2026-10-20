@@ -108,6 +108,7 @@ def measure(root, expected, mode, pair):
             TERM="xterm-256color",
             PYTHONPATH=str(root),
             AGENT_BUILDS_STATE=str(state),
+            XDG_CONFIG_HOME=str(fixture / "user-config"),
         )
         for name in (
             "AGENT_BUILDS_JOB_ID",

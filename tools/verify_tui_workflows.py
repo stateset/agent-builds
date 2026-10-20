@@ -4,6 +4,8 @@ import argparse
 import errno
 import fcntl
 import json
+import math
+import statistics
 import os
 from pathlib import Path
 import pty
@@ -57,6 +59,7 @@ FIXTURE = textwrap.dedent("""
             reader.close()
     before=snapshot(); config=(state/'config.json').read_bytes()
     os.environ['AGENT_BUILDS_STATE']=str(state)
+    os.environ['XDG_CONFIG_HOME']=str(root/'user-config')
     def forbidden(*args,**kwargs):
         raise AssertionError('Native command or queue write from workflow')
     original=tui.read_tool
@@ -72,7 +75,11 @@ FIXTURE = textwrap.dedent("""
         except SystemExit as outcome:
             assert outcome.code in (None,0), outcome.code
     assert before==snapshot() and config==(state/'config.json').read_bytes()
-    result.write_text(json.dumps(dict(queue_unchanged=True,native_commands=0,jobs=count,selected_job=jobs[0],stage_job=jobs[2])))
+    preference=root/'user-config/buildr/tui.json'
+    saved=preference.exists()
+    if saved:
+        assert json.loads(preference.read_text())==dict(version=1,focused=True,table=False)
+    result.write_text(json.dumps(dict(queue_unchanged=True,native_commands=0,jobs=count,selected_job=jobs[0],stage_job=jobs[2],layout_saved=saved)))
 """)
 
 
@@ -170,6 +177,7 @@ def measure(jobs, height, width):
             action(b"b", lambda t: "failed > verif" in t, "return-to-stage")
             if width >= 65:
                 menu("focus reading", lambda t: "[focus:" in t, "focus-content")
+                action(b"Z", lambda t: "Layout saved" in t, "save-display-layout")
                 menu("new job", lambda t: "Working directory" in t, "review-new-job")
                 action(
                     b"\x1b",
@@ -209,7 +217,9 @@ def measure(jobs, height, width):
                 os.close(slave)
 
 
-def run(output):
+def run(output, max_action_seconds=5.0):
+    if not math.isfinite(max_action_seconds) or max_action_seconds <= 0:
+        raise ValueError("Use a finite positive action budget")
     output = Path(output).resolve()
     if output.exists() or ROOT == output or ROOT in output.parents:
         raise ValueError("Use a new output outside the checkout")
@@ -219,6 +229,7 @@ def run(output):
         result="incomplete",
         outer_reservation=budget,
         source=expected,
+        max_action_seconds=max_action_seconds,
         records=[],
         note="Owned xterm PTYs with 30/100 synthetic stored jobs. No real agents, native jobs or coding-productivity measurement.",
     )
@@ -232,6 +243,25 @@ def run(output):
                     ),
                     flush=True,
                 )
+        times = sorted(
+            sample["seconds"]
+            for record in result["records"]
+            for sample in record["samples"]
+        )
+        result["timing"] = dict(
+            samples=len(times),
+            median_seconds=statistics.median(times),
+            p95_seconds=times[math.ceil(0.95 * len(times)) - 1],
+            max_seconds=max(times),
+            p95_method="nearest-rank",
+        )
+        assert all(
+            math.isfinite(value) and 0 <= value <= max_action_seconds for value in times
+        ), "Workflow action exceeded the controlled response budget"
+        assert all(
+            record["layout_saved"] == (record["width"] >= 65)
+            for record in result["records"]
+        )
         assert identity(ROOT) == expected
         result["result"] = "passed"
         result["source_changed"] = False
@@ -247,8 +277,9 @@ def run(output):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", required=True)
+    parser.add_argument("--max-action-seconds", type=float, default=5.0)
     args = parser.parse_args()
-    result = run(args.output)
+    result = run(args.output, args.max_action_seconds)
     print(
         json.dumps(
             dict(

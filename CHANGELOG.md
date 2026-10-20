@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.26.5 (unreleased)
+
+- Explicitly remember focus/table display layout with Shift+Z, independently of
+  queue configuration. Shorten Jobs hints while retaining search and actions.
+
 ## 0.26.4 — 2026-10-20
 
 - Read clipped menu explanations with Left/Right, keeping the chosen entry and

@@ -31,6 +31,7 @@ from .tui_plan_stages import PlanStages
 from .tui_plan_details import PlanDetails
 from .tui_plan_filter import PlanFilter
 from .tui_help import HelpView
+from .tui_preferences import Layout, load as load_layout, save as save_layout
 from .tui_reads import submit_read as submit_link_read
 from .tui_submissions import SubmissionTracker
 from .tui_reads import submit_read as submit_submission_read
@@ -197,7 +198,8 @@ def poll_read(reader, key, now, retain=True):
 
 
 def main(screen, cwd):
-    focus_mode, focus_render = False, False
+    layout, layout_notice = load_layout()
+    focus_mode, focus_render = layout.focused, False
     def draw(screen, y, x, text, attr=0):
         if focus_render:
             if y in (1, 3):
@@ -214,11 +216,11 @@ def main(screen, cwd):
     store = LazyStore()
     selected = 0
     focus = InspectionFocus()
-    message = ': actions | z focus | V views | ? help | q quit (jobs continue)'
+    message = layout_notice or ': actions | z focus | Z save layout | ? help | q quit (jobs continue)'
     browser_mode, browser_query = 'all',''
     browser_repository = None
     follow_head = False
-    browser_order,jobs_expanded='queue',False
+    browser_order,jobs_expanded='queue',layout.table
     help_active, help_view = False,HelpView(HELP)
     loaded_rows, metrics = [],None
     browser_read=SnapshotRead(lambda key: read_browser(store.root),interval=1,submit=submit_read,label='queue snapshot')
@@ -727,6 +729,14 @@ def main(screen, cwd):
                         continue
                 else:
                     continue
+            if key==ord('Z'):
+                if view<13 and not compact:
+                    try:
+                        save_layout(Layout(focus_mode, jobs_expanded))
+                        message='Layout saved for future dashboards (focus and table only).'
+                    except OSError:
+                        message='Layout kept for this session; could not save preferences.'
+                continue
             if key==ord('z'):
                 if view<13 and not compact:
                     focus_mode=not focus_mode

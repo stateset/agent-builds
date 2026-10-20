@@ -42,6 +42,7 @@ class LinkedLogTerminalTests(unittest.TestCase):
             env = dict(
                 os.environ,
                 AGENT_BUILDS_STATE=str(store.root),
+                XDG_CONFIG_HOME=str(Path(store.root).parent / "user-config"),
                 TERM="xterm-256color",
             )
             env.pop("AGENT_BUILDS_JOB_ID", None)

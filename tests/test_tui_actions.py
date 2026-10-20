@@ -1,5 +1,6 @@
 """Action discovery is read-only; accepted choices use established review flows."""
 
+from concurrent.futures import Future
 import curses
 import unittest
 from unittest import mock
@@ -201,7 +202,13 @@ class ActionRoutingTests(unittest.TestCase):
         self.assertFalse(self.fixture.prompt_calls)
 
     def test_view_action_reuses_existing_inspection_pinning(self):
-        frames = self.dashboard([ord(":"), ord("q")], "view.14")
+        def completed(loader, key):
+            future = Future()
+            future.set_result(loader(key))
+            return future
+
+        with mock.patch("agent_builds.tui_reads.submit_read", side_effect=completed):
+            frames = self.dashboard([ord(":"), ord("q")], "view.14")
         self.assertIn("WHY WAITING", "\n".join(frames[-1].values()))
         self.assertIn(self.fixture.jobs[0], "\n".join(frames[-1].values()))
 
