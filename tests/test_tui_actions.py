@@ -47,7 +47,7 @@ class ActionPickerTests(unittest.TestCase):
         frame = frames[-1]
         expected = next(
             c.description
-            for c in commands(0, dict(id="a" * 12, state="running")))
+            for c in commands(0, dict(id="a" * 12, state="running"))
             if c.number == "view.13"
         )
         self.assertIn(expected, "".join(frame[y] for y in sorted(frame) if y >= 4))
