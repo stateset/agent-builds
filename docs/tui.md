@@ -588,3 +588,16 @@ position. This keeps the same captured snapshot and typed response; it does not
 refresh job or recipient state or accept a confirmation. Existing context bounds
 and resize requirements remain in effect. Idle and height-only frames reuse
 the wrapped snapshot.
+
+## Controlled workflow verification
+
+Run through the queue: `buildr run --lane quick --jobs 1 --memory-gb 2 -- python3
+tools/verify_tui_workflows.py --output /tmp/tui-workflows.json` (one command line).
+The output must be new and outside the checkout. Four owned xterm terminals
+exercise 30/100 synthetic stored jobs at 100×24 and 20×8: diagnose a wait, inspect
+its recorded blocker, find a failed stage, open its output, return to context,
+and review or decline a submission. Full panes also exercise focused layout.
+The verifier forbids queue writes and native commands during interaction and
+compares the fixture database/configuration afterward. These task-completion
+and timing observations are controlled fixtures, not live-agent or human
+productivity measurements. CI retains their JSON evidence.

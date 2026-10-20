@@ -306,7 +306,7 @@ def footer(view, width, compact=False):
         )
     )
     if not compact:
-        options = tuple(text + " : actions" for text in options) + options
+        options = tuple(text + " : actions" for text in options[:-1]) + options
     return next(
         (
             text
