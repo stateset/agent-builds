@@ -224,6 +224,7 @@ HELP = (
     "PgUp/PgDn scroll detail views. Narrow panes support jobs, plans, watches, history, health and workbench.",
     "Plans: arrows select plan; Tab/Shift+Tab selects stage or overview; Enter opens its recorded log.",
     "Plans: / filters loaded IDs, names, stages, job commands and reasons literally; blank clears, Esc cancels. Counts cover only the loaded snapshot.",
+    "Plans: [ and ] jump to the previous/next failed or lost stage, wrapping. No such stages leaves selection and reading position unchanged. This never retries or opens logs automatically.",
     "Plan details: PgUp/PgDn and Home/End scroll wrapped evidence; the selected stage log stays visible.",
     "DELIBERATE ACTIONS (FULL VIEW)",
     "n: new job; o: submit plan; t: saved task",

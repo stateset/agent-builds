@@ -80,6 +80,14 @@ No matches shows guidance instead of claiming there are no plans. A matching
 selection stays pinned across refreshes and clearing the search. Search does not
 change job-browser filters or fetch additional plans.
 
+In Plans, `]` jumps to the next stage explicitly marked failed or lost; `[`
+jumps to the previous one. Navigation wraps in recorded stage order, skips
+successful/pending/skipped/cancelled stages, and opens no logs automatically.
+Without a failed/lost stage, or with only the current stage matching, selection
+and reading position stay unchanged. A lost stage retains its unknown outcome;
+a stage may fail evidence checks even when its native command exited zero.
+Press Enter separately to inspect the selected recorded job log.
+
 In Plans, arrows or j/k select a plan. Tab/Shift+Tab cycles its stages and the
 overview; Enter opens the selected stage's recorded job log. The overview keeps
 the existing preference for a live stage, then a failed stage, then a recent

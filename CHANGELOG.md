@@ -2,6 +2,10 @@
 
 ## 0.26.3 (unreleased)
 
+- Jump between observed failed/lost plan stages with `[` and `]`, wrapping in
+  recorded order without inferring native outcomes, opening logs, or retrying
+  work. No matching stages preserves the current selection and reading position.
+
 - Search loaded plans with `/`, preserving matching plan/stage selections and
   cached filtering. Keep snapshot uncertainty and no-match guidance visible in
   narrow panes without reading more plans or changing job-browser filters.
