@@ -80,6 +80,13 @@ No matches shows guidance instead of claiming there are no plans. A matching
 selection stays pinned across refreshes and clearing the search. Search does not
 change job-browser filters or fetch additional plans.
 
+Selected stage headers put the recorded stage state before the name, so it
+remains visible even with long names in a 20-by-8 pane. The exact log handle and
+snapshot freshness stay visible beside it. This is the stage outcome: evidence
+validation can fail while the native job exits zero, and a lost stage remains
+an unknown outcome. A failed refresh retains the last observed state with a
+stale warning.
+
 In Plans, `]` jumps to the next stage explicitly marked failed or lost; `[`
 jumps to the previous one. Navigation wraps in recorded stage order, skips
 successful/pending/skipped/cancelled stages, and opens no logs automatically.

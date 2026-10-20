@@ -5,6 +5,20 @@ import re
 _HANDLE = re.compile(r"[0-9a-f]{12}\Z")
 
 
+def _log_target(stage):
+    if stage is None:
+        return None
+    handle, job = stage.get("job_id"), stage.get("job")
+    if (
+        isinstance(handle, str)
+        and _HANDLE.fullmatch(handle)
+        and job
+        and job.get("id") == handle
+    ):
+        return handle
+    return None
+
+
 class PlanStages:
     def __init__(self):
         self.plan_id = None
@@ -58,27 +72,15 @@ class PlanStages:
         return changed
 
     def log_target(self, plan):
-        stage = self.current(plan)
-        if stage is None:
-            return None
-        handle, job = stage.get("job_id"), stage.get("job")
-        if (
-            isinstance(handle, str)
-            and _HANDLE.fullmatch(handle)
-            and job
-            and job.get("id") == handle
-        ):
-            return handle
-        return None
+        return _log_target(self.current(plan))
 
     def lines(self, plan):
         stage = self.current(plan)
         if stage is None:
             return []
+        target = _log_target(stage)
         return [
-            "> " + stage["name"],
-            "Enter " + self.log_target(plan)
-            if self.log_target(plan)
-            else "No recorded log",
+            "{} > {}".format(stage["state"], stage["name"]),
+            "Enter " + target if target else "No recorded log",
             stage["state"],
         ]

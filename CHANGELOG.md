@@ -2,6 +2,10 @@
 
 ## 0.26.3 (unreleased)
 
+- Keep the recorded stage state ahead of long names in minimum-size panes while
+  retaining exact log handles and snapshot freshness. Reuse the selected stage
+  when resolving its header target instead of repeating selection scans.
+
 - Jump between observed failed/lost plan stages with `[` and `]`, wrapping in
   recorded order without inferring native outcomes, opening logs, or retrying
   work. No matching stages preserves the current selection and reading position.
