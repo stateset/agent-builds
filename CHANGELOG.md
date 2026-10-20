@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.26.4 (unreleased)
+## 0.26.4 — 2026-10-20
 
 - Read clipped menu explanations with Left/Right, keeping the chosen entry and
   search intact. Continuation markers no longer hide source characters.
