@@ -74,7 +74,9 @@ jobs:
             agent_builds/tui_plan_stages.py tests/test_tui_plan_stages.py \
             tests/test_tui_stage_issues.py tests/test_tui_stage_header.py \
             agent_builds/tui_plan_details.py tests/test_tui_plan_details.py \
-            agent_builds/tui_plan_filter.py tests/test_tui_plan_filter.py
+            agent_builds/tui_plan_filter.py tests/test_tui_plan_filter.py \
+            agent_builds/tui_actions.py tests/test_tui_actions.py tests/test_tui_focus.py \
+            tools/verify_tui_workflows.py
           python -m agent_builds run --lane quick --jobs 1 --memory-gb 1 --timeout 120 -- python -m mypy --follow-imports=skip --check-untyped-defs agent_builds/execution_policy.py agent_builds/polling.py agent_builds/launch.py
       - name: Verify bounded admission reads with bulky evidence
         if: matrix.python == '3.12'
@@ -159,6 +161,19 @@ jobs:
           name: tui-responsiveness
           path: ${{ runner.temp }}/tui-responsiveness.json
           if-no-files-found: warn
+          retention-days: 14
+      - name: Verify native discovery and navigation workflows
+        if: matrix.python == '3.12'
+        run: >-
+          python -m agent_builds run --lane quick --jobs 1 --memory-gb 2 --timeout 180 --
+          python tools/verify_tui_workflows.py --output '${{ runner.temp }}/tui-workflows.json'
+      - name: Retain native workflow evidence
+        if: always() && matrix.python == '3.12'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: tui-workflows
+          path: ${{ runner.temp }}/tui-workflows.json
+          if-no-files-found: error
           retention-days: 14
       - name: Independently verify dashboard cache evidence
         if: matrix.python == '3.12'

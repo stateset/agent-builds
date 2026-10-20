@@ -84,10 +84,11 @@ def unavailable(view, height, width, has_job, has_log=False):
 
 
 class ViewPicker:
-    def __init__(self, current):
+    def __init__(self, current, entries=None):
+        self.entries = tuple(VIEWS if entries is None else entries)
         self.current = current
         self.query = ""
-        self.matches = list(VIEWS)
+        self.matches = list(self.entries)
         self.selected = next(
             (i for i, view in enumerate(self.matches) if view.number == current), 0
         )
@@ -99,7 +100,7 @@ class ViewPicker:
         tokens = self.query.casefold().split()
         self.matches = [
             view
-            for view in VIEWS
+            for view in self.entries
             if all(
                 token in (view.name + " " + view.description).casefold()
                 for token in tokens
@@ -135,7 +136,19 @@ class ViewPicker:
 
 def choose(screen, current, has_job, paint, has_log=False):
     """Consume all picker input, returning an explicitly accepted eligible view."""
-    picker = ViewPicker(current)
+    return choose_menu(
+        screen,
+        ViewPicker(current),
+        paint,
+        "BUILDR VIEWS",
+        lambda choice, height, width: unavailable(
+            choice, height, width, has_job, has_log
+        ),
+    )
+
+
+def choose_menu(screen, picker, paint, title, reason):
+    """A shared read-only chooser; only return an explicitly accepted entry."""
     screen.timeout(200)
     try:
         while True:
@@ -146,26 +159,30 @@ def choose(screen, current, has_job, paint, has_log=False):
                 paint(screen, 0, 0, "Resize: views 20x8")
                 paint(screen, height - 1, 0, "Esc back")
             else:
-                paint(screen, 0, 0, "BUILDR VIEWS", curses.A_BOLD)
+                paint(screen, 0, 0, title, curses.A_BOLD)
                 query_tail = wrap_line(picker.query, max(1, width - 7))[-1]
                 paint(screen, 1, 0, "Find: " + query_tail)
                 paint(
                     screen,
                     2,
                     0,
-                    "{}/{} | * current".format(
+                    (
+                        "{}/{} | * current"
+                        if picker.current is not None
+                        else "{}/{} | Enter selects"
+                    ).format(
                         picker.selected + 1 if picker.matches else 0,
                         len(picker.matches),
                     ),
                 )
                 for index, view in picker.page(height - 5):
-                    reason = unavailable(view, height, width, has_job, has_log)
+                    disabled = reason(view, height, width)
                     selected = index == picker.selected
                     line = (
                         (">" if selected else " ")
-                        + ("!" if reason else " ")
+                        + ("!" if disabled else " ")
                         + view.name
-                        + ("*" if view.number == current else "")
+                        + ("*" if view.number == picker.current else "")
                     )
                     paint(
                         screen,
@@ -173,16 +190,20 @@ def choose(screen, current, has_job, paint, has_log=False):
                         0,
                         line,
                         (curses.A_REVERSE if selected else 0)
-                        | (curses.A_DIM if reason else 0),
+                        | (curses.A_DIM if disabled else 0),
                     )
                 choice = picker.choice()
                 if choice:
-                    note = (
-                        unavailable(choice, height, width, has_job, has_log)
-                        or choice.description
-                    )
+                    note = reason(choice, height, width) or choice.description
                 else:
-                    paint(screen, 3, 0, "No matching views")
+                    paint(
+                        screen,
+                        3,
+                        0,
+                        "No matching views"
+                        if picker.current is not None
+                        else "No matching actions",
+                    )
                     note = "Ctrl+U clears"
                 paint(screen, height - 2, 0, note)
                 paint(screen, height - 1, 0, "Arrows Enter Esc")
@@ -206,7 +227,7 @@ def choose(screen, current, has_job, paint, has_log=False):
                 continue
             if key in ("\n", "\r", curses.KEY_ENTER):
                 choice = picker.choice()
-                if choice and not unavailable(choice, height, width, has_job, has_log):
+                if choice and not reason(choice, height, width):
                     return choice.number
             elif key in (curses.KEY_DOWN, "\t", curses.KEY_UP, curses.KEY_BTAB):
                 picker.move(1 if key in (curses.KEY_DOWN, "\t") else -1)
@@ -269,6 +290,12 @@ _COMPACT_FOOTERS = {
 def footer(view, width, compact=False):
     """Use complete hints that fit; never clip the quit/navigation controls."""
     brief = _COMPACT_FOOTERS.get(view, "V views v ? q")
+    if compact:
+        brief = {
+            0: "V : j/k / l ? q",
+            7: "V : / Tab [/] ? q",
+            10: "V views : j/k q",
+        }.get(view, brief.replace("V ", "V : ", 1))
     options = (
         (brief,)
         if compact
@@ -278,6 +305,8 @@ def footer(view, width, compact=False):
             brief,
         )
     )
+    if not compact:
+        options = tuple(text + " : actions" for text in options[:-1]) + options
     return next(
         (
             text

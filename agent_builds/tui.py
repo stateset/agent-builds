@@ -26,6 +26,7 @@ from .tui_reads import submit_read as submit_log_read
 from .tui_reads import submit_read as submit_log_status_read
 from .tui_log_reads import LogReads
 from .tui_links import LogLinks
+from .tui_actions import choose as choose_action
 from .tui_plan_stages import PlanStages
 from .tui_plan_details import PlanDetails
 from .tui_plan_filter import PlanFilter
@@ -196,6 +197,13 @@ def poll_read(reader, key, now, retain=True):
 
 
 def main(screen, cwd):
+    focus_mode, focus_render = False, False
+    def draw(screen, y, x, text, attr=0):
+        if focus_render:
+            if y in (1, 3):
+                return
+            y -= 1 if y == 2 else 2 if y >= 4 else 0
+        paint(screen, y, x, text, attr)
     curses.curs_set(0)
     if curses.has_colors():
         curses.start_color()
@@ -206,7 +214,7 @@ def main(screen, cwd):
     store = LazyStore()
     selected = 0
     focus = InspectionFocus()
-    message = 'V views | ? help | / search | f filter | l logs | q quit (jobs continue)'
+    message = ': actions | z focus | V views | ? help | q quit (jobs continue)'
     browser_mode, browser_query = 'all',''
     browser_repository = None
     follow_head = False
@@ -410,28 +418,31 @@ def main(screen, cwd):
             screen.erase()
             height, width = screen.getmaxyx()
             compact = height < 15 or width < 65
+            focus_render=focus_mode and not compact and not help_active and view<13 and browser_report is not None
+            if focus_render:
+                height+=2
             log_visible=False
             if help_active:
                 pass  # Only the help overlay below is visible.
             elif view==15:
                 if height<8 or width<20:
-                    paint(screen,1,0,'Resize: 20x8 min')
+                    draw(screen,1,0,'Resize: 20x8 min')
                 else:
                     page=submission_view.page(None,submission_rows,max(1,width-1),max(1,height-3))
                     for index,line in enumerate(page):
-                        paint(screen,index+1,0,line)
+                        draw(screen,index+1,0,line)
                 receipt_label=submission_view.selection_label(submission_rows)
                 title='SUBMISSIONS '+receipt_label if receipt_label else 'SUBMISSIONS'
-                paint(screen,0,0,title+(' | '+submission_view.position() if width>=40 or not receipt_label else ''),curses.A_BOLD)
+                draw(screen,0,0,title+(' | '+submission_view.position() if width>=40 or not receipt_label else ''),curses.A_BOLD)
                 if height>=8 and width>=20:
-                    paint(screen,height-2,0,submission_view.action_note(submission_rows))
-                paint(screen,height-1,0,view_footer(15,width))
+                    draw(screen,height-2,0,submission_view.action_note(submission_rows))
+                draw(screen,height-1,0,view_footer(15,width))
             elif browser_report is None and view!=13:
-                paint(screen,0,0,'BUILDR '+__version__,curses.A_BOLD)
+                draw(screen,0,0,'BUILDR '+__version__,curses.A_BOLD)
                 pending=browser_read.status(time.monotonic())
                 for index,line in enumerate(textwrap.wrap(pending,max(1,width-1))[:max(1,height-3)]):
-                    paint(screen,index+1,0,line)
-                paint(screen,height-1,0,'V views ? help q quit' if width>=24 else 'V ? q')
+                    draw(screen,index+1,0,line)
+                draw(screen,height-1,0,'V views ? help q quit' if width>=24 else 'V ? q')
             elif view == 13:
                 if log_view.follow and log_job and height>=8 and width>=20:
                     log_visible=True
@@ -439,8 +450,8 @@ def main(screen, cwd):
                     refresh_log('focused',log_job['id'],log_view.path,log_view,now,log_view.content_due(now))
                 log_page=log_view.page(max(1,width-1),max(1,height-4))
                 mode='LIVE' if log_view.follow else 'HELD (output only)'
-                paint(screen,0,0,'LOG '+mode+' | '+log_view.position(max(1,height-4)),curses.A_BOLD | curses.color_pair(1 if log_view.follow else 3))
-                paint(screen,1,0,log_job['id']+' '+log_job['state'] if log_job else 'No job selected')
+                draw(screen,0,0,'LOG '+mode+' | '+log_view.position(max(1,height-4)),curses.A_BOLD | curses.color_pair(1 if log_view.follow else 3))
+                draw(screen,1,0,log_job['id']+' '+log_job['state'] if log_job else 'No job selected')
                 note='No job selected' if log_job is None else log_view.error or (log_view.search_label() if log_view.query else 'Space hold/resume | / find | End live')
                 if log_view.follow and log_job is not None and log_view.error is None:
                     if log_view.signature is None:
@@ -451,13 +462,13 @@ def main(screen, cwd):
                     note='Recent 256 KiB only | '+note
                 if state_note:
                     note=state_note+' | '+note
-                paint(screen,2,0,note)
+                draw(screen,2,0,note)
                 if not log_page:
-                    paint(screen,3,0,log_view.empty_notice(),curses.A_DIM)
+                    draw(screen,3,0,log_view.empty_notice(),curses.A_DIM)
                 for index,line in enumerate(log_page):
                     match=log_view.match_kind(index)
-                    paint(screen,index+3,0,line,curses.A_REVERSE if match==2 else curses.color_pair(3) if match else 0)
-                paint(screen,height-1,0,view_footer(13,width))
+                    draw(screen,index+3,0,line,curses.A_REVERSE if match==2 else curses.color_pair(3) if match else 0)
+                draw(screen,height-1,0,view_footer(13,width))
             elif compact:
                 browser=dict(mode=browser_mode,query=browser_query,loaded=len(loaded_rows),order=browser_order,expanded=jobs_expanded,repository=browser_repository,follow=follow_head,initialized=browser_report['initialized'],queue_error=browser_stale,queue_age=browser_read.status(time.monotonic()),summary_status=summary_read.status(time.monotonic()),summary_error=summary_stale,tool_status=tool_status if view in (7,10) and (tool_data is None or tool_read.error) else '',tool_heading=tool_read.status(time.monotonic(),short_label='PLANS' if view==7 else 'EXTERNAL') if view in (7,10) else '')
                 if view==7 and plan_filter.query:
@@ -467,35 +478,36 @@ def main(screen, cwd):
                 if submission_rows:
                     browser['submission_notice']=compact_notice(submission_rows[-1])
                 for index, line in enumerate(compact_lines(rows, selected, plan_rows, plan_index, view, config, height, width, watch_rows, watch_index, None,0,workbench_result,0,queue_health_result,browser,read_tail,details_view,detail_row,detail_read.error or (detail_read.status(time.monotonic()) if inspection_row else None),history_view,history_repository,history_report,history_status,inspection,history_error=history_read.error,plan_stages=plan_stages,plan_details=plan_details)):
-                    paint(screen, index, 0, line)
+                    draw(screen, index, 0, line)
             else:
                 context = ' | Herdr ' + os.environ.get('HERDR_PANE_ID', '') if os.environ.get('HERDR_ENV') == '1' else ''
                 title = 'BUILDR v' + __version__ + (' [PAUSED]' if config['paused'] else '')
                 title += ' [STALE queue]' if browser_stale else ' [not initialized]' if not browser_report['initialized'] else ''
                 title += ' [quick protected]' if config.get('protected_quick') else ' [protection draining]' if config.get('protected_quick_pending') else ''
-                paint(screen, 0, 0, title+' | '+browser_read.status(time.monotonic())+' | shared queue'+context, curses.A_BOLD | curses.color_pair(1))
+                title += ' [focus: z metrics]' if focus_render else ''
+                draw(screen, 0, 0, title+' | '+browser_read.status(time.monotonic())+' | shared queue'+context, curses.A_BOLD | curses.color_pair(1))
                 if metrics is None:
-                    paint(screen,1,0,metrics_read.status(time.monotonic()))
-                    paint(screen,3,0,'Pressure: unknown | External builds are not controlled.')
+                    draw(screen,1,0,metrics_read.status(time.monotonic()))
+                    draw(screen,3,0,'Pressure: unknown | External builds are not controlled.')
                 else:
                     host_line='{} CPU | load {:.1f} | RAM {:.1f}/{:.1f} GiB | disk {:.1f} GiB'.format(
                         metrics['cpus'],metrics['load'],metrics['available_gb'],metrics['total_gb'],metrics['free_gb'])
-                    paint(screen,1,0,metrics_read.status(time.monotonic())+' | '+host_line)
-                    paint(screen,3,0,pressure_summary(metrics)+' | External builds are not controlled.')
+                    draw(screen,1,0,metrics_read.status(time.monotonic())+' | '+host_line)
+                    draw(screen,3,0,pressure_summary(metrics)+' | External builds are not controlled.')
                 if not browser_report['initialized']:
-                    paint(screen,2,0,'Managed reservations: unknown | Queue not initialized')
-                    paint(screen,4,0,'Queue not initialized; explicit queue actions create state.')
+                    draw(screen,2,0,'Managed reservations: unknown | Queue not initialized')
+                    draw(screen,4,0,'Queue not initialized; explicit queue actions create state.')
                 elif queue_health_result is None or not queue_health_result.get('initialized',True):
                     summary_note=summary_read.status(time.monotonic()) if queue_health_result is None else 'Queue not initialized in summary snapshot; refreshing'
-                    paint(screen,2,0,'Managed reservations: unknown | '+summary_note)
-                    paint(screen,4,0,summary_note)
+                    draw(screen,2,0,'Managed reservations: unknown | '+summary_note)
+                    draw(screen,4,0,summary_note)
                 else:
-                    paint(screen,2,0,('STALE summary | ' if summary_stale else '')+'Managed reservations: {}/{} CPU slots | {:.1f}/{} GiB | {}/{} jobs | local: nice, Docker: hard limits'.format(
+                    draw(screen,2,0,('STALE summary | ' if summary_stale else '')+'Managed reservations: {}/{} CPU slots | {:.1f}/{} GiB | {}/{} jobs | local: nice, Docker: hard limits'.format(
                         queue_health_result['reservations']['cpu_slots'],config['cpu_slots'],queue_health_result['reservations']['memory_gb'],
                         config['memory_gb'],queue_health_result['reservations']['jobs'],config['max_running']))
                     from .queue_health import dashboard_banner
                     color=4 if queue_health_result['status']=='disk_blocked' else 3 if queue_health_result['waiting_jobs'] else 2
-                    paint(screen,4,0,dashboard_banner(queue_health_result,width,stale=summary_stale,status=summary_read.status(time.monotonic())),curses.A_BOLD|curses.color_pair(color))
+                    draw(screen,4,0,dashboard_banner(queue_health_result,width,stale=summary_stale,status=summary_read.status(time.monotonic())),curses.A_BOLD|curses.color_pair(color))
                 heading = 'DETAILS / TOOLS | arrows select jobs | ? help' if view >= 3 else browser_label(browser_mode,browser_query,len(rows),len(loaded_rows),browser_order,repository=browser_repository,follow=follow_head)+' | Tab table s sort'
                 if view in (11,12,14):
                     heading=VIEWS[view].name.upper()+' | j/k scroll | ? help'
@@ -507,64 +519,64 @@ def main(screen, cwd):
                     heading='DETAILS | repo: '+browser_repository
                 if browser_read.error:
                     heading=browser_read.status(time.monotonic())+' | '+heading
-                paint(screen, 5, 0, heading, curses.A_BOLD)
+                draw(screen, 5, 0, heading, curses.A_BOLD)
                 expanded=view==0 and jobs_expanded
                 count = 0 if view >= 3 else page_size(height,expanded=expanded)
                 start = max(0, selected - count + 1)
                 if expanded:
-                    paint(screen,6,0,columns(width),curses.A_BOLD)
+                    draw(screen,6,0,columns(width),curses.A_BOLD)
                 for index, row in enumerate(rows[start:start + count], start):
                     text = job_line(row,width) if expanded else '{} {:11} {:>2} {:>3g}  {:7}  {} / {}'.format(
                         row['id'], row['state'], row['slots'], row['memory_gb'], row['backend'],
                         Path(row['cwd']).name, shlex.join(json.loads(row['command'])))
                     color = 2 if row['state'] == 'succeeded' else (4 if row['state'] in ('failed', 'lost') else 3)
                     attr = curses.A_REVERSE if index == selected else curses.color_pair(color)
-                    paint(screen, (7 if expanded else 6) + index - start, 0, text, attr)
+                    draw(screen, (7 if expanded else 6) + index - start, 0, text, attr)
                 if not rows:
-                    paint(screen, 7 if expanded else 6, 0, 'No matching jobs; C clears filters, R removes repository focus.' if browser_query or browser_mode!='all' or browser_repository is not None else 'No jobs yet. Press n, or run: agent-builds run -- cargo check')
+                    draw(screen, 7 if expanded else 6, 0, 'No matching jobs; C clears filters, R removes repository focus.' if browser_query or browser_mode!='all' or browser_repository is not None else 'No jobs yet. Press n, or run: agent-builds run -- cargo check')
                 log_top = 7 + count
                 if expanded:
                     if rows:
                         row=rows[selected]
-                        paint(screen,height-3,0,'Selected {}/{} {} | {}'.format(selected+1,len(rows),row['id'],row['reason'] or row['cwd']))
+                        draw(screen,height-3,0,'Selected {}/{} {} | {}'.format(selected+1,len(rows),row['id'],row['reason'] or row['cwd']))
                 elif view in (11,12,14):
                     widget=inspection['widget']
                     page=widget.display_page(inspection['scope'],inspection_data,max(1,width-1),max(1,height-log_top-4),inspection_error)
-                    paint(screen,log_top-1,0,VIEWS[view].name.upper()+' | '+widget.position(),curses.A_BOLD)
-                    paint(screen,log_top,0,widget.status_label(inspection_status))
+                    draw(screen,log_top-1,0,VIEWS[view].name.upper()+' | '+widget.position(),curses.A_BOLD)
+                    draw(screen,log_top,0,widget.status_label(inspection_status))
                     for index,line in enumerate(page):
-                        paint(screen,log_top+1+index,0,line)
+                        draw(screen,log_top+1+index,0,line)
                 elif view == 1:
-                    paint(screen, log_top - 1, 0, 'SYSTEM PROCESSES (your user; read only; 100% CPU = one logical core)', curses.A_BOLD)
-                    paint(screen, log_top, 0, process_read.status(time.monotonic()))
-                    paint(screen, log_top + 1, 0, 'PID     CPU%   RSS MiB  PROCESS / DIRECTORY')
+                    draw(screen, log_top - 1, 0, 'SYSTEM PROCESSES (your user; read only; 100% CPU = one logical core)', curses.A_BOLD)
+                    draw(screen, log_top, 0, process_read.status(time.monotonic()))
+                    draw(screen, log_top + 1, 0, 'PID     CPU%   RSS MiB  PROCESS / DIRECTORY')
                     for index, process in enumerate(processes[:max(1, height - log_top - 5)]):
                         cpu = 'warmup' if process['cpu'] is None else '{:.0f}'.format(process['cpu'])
-                        paint(screen, log_top + 2 + index, 0, '{:<7} {:>6} {:>8.0f}  {} / {}'.format(
+                        draw(screen, log_top + 2 + index, 0, '{:<7} {:>6} {:>8.0f}  {} / {}'.format(
                             process['pid'], cpu, process['rss_mb'], process['name'], process['cwd']))
                 elif view == 2:
-                    paint(screen, log_top - 1, 0, 'ANNOUNCEMENTS | submitted means input sent; adoption is not yet confirmed', curses.A_BOLD)
-                    paint(screen,log_top,0,tool_status)
+                    draw(screen, log_top - 1, 0, 'ANNOUNCEMENTS | submitted means input sent; adoption is not yet confirmed', curses.A_BOLD)
+                    draw(screen,log_top,0,tool_status)
                     for index, delivery in enumerate((tool_data or [])[:max(1, height - log_top - 4)]):
-                        paint(screen, log_top + 1 + index, 0, '{} {:10} {} | {}'.format(
+                        draw(screen, log_top + 1 + index, 0, '{} {:10} {} | {}'.format(
                             delivery['pane'], delivery['state'], Path(delivery['repository']).name, delivery['detail']))
                 elif view == 3 and detail_row is not None:
                     row = detail_row
                     page=details_view.page(row,max(1,width-1),max(1,height-log_top-3))
-                    paint(screen,log_top-1,0,'JOB DETAILS | '+details_view.position()+' | '+detail_read.status(time.monotonic())+' | i jobs',curses.A_BOLD)
+                    draw(screen,log_top-1,0,'JOB DETAILS | '+details_view.position()+' | '+detail_read.status(time.monotonic())+' | i jobs',curses.A_BOLD)
                     for index,line in enumerate(page):
-                        paint(screen,log_top+index,0,line)
+                        draw(screen,log_top+index,0,line)
                 elif view == 3:
-                    paint(screen,log_top-1,0,'JOB DETAILS | i returns to jobs',curses.A_BOLD)
-                    paint(screen,log_top,0,'Details unavailable: '+(detail_read.error or detail_read.status(time.monotonic()) if inspection_row else 'No job selected'))
+                    draw(screen,log_top-1,0,'JOB DETAILS | i returns to jobs',curses.A_BOLD)
+                    draw(screen,log_top,0,'Details unavailable: '+(detail_read.error or detail_read.status(time.monotonic()) if inspection_row else 'No job selected'))
                 elif view == 4:
                     page=history_view.display_page(history_repository,history_report,max(1,width-1),max(1,height-log_top-4),history_read.error)
-                    paint(screen,log_top-1,0,'HISTORY | read only | '+history_view.position(),curses.A_BOLD)
-                    paint(screen,log_top,0,history_view.status_label(history_status))
+                    draw(screen,log_top-1,0,'HISTORY | read only | '+history_view.position(),curses.A_BOLD)
+                    draw(screen,log_top,0,history_view.status_label(history_status))
                     for index,line in enumerate(page):
-                        paint(screen,log_top+1+index,0,line)
+                        draw(screen,log_top+1+index,0,line)
                 elif view == 5:
-                    paint(screen, log_top - 1, 0, 'REMOTE WORKERS | explicit dispatch only; no automatic SSH connections', curses.A_BOLD)
+                    draw(screen, log_top - 1, 0, 'REMOTE WORKERS | explicit dispatch only; no automatic SSH connections', curses.A_BOLD)
                     records=tool_data['records'] if tool_data else []
                     lines=[tool_status]
                     if tool_data:
@@ -573,18 +585,18 @@ def main(screen, cwd):
                     if tool_data is not None and not records:
                         lines += ['No remote submissions. No host is configured automatically.']
                     for index, line in enumerate(lines[:max(1, height - log_top - 3)]):
-                        paint(screen, log_top + index, 0, line)
+                        draw(screen, log_top + index, 0, line)
                 elif view == 6:
-                    paint(screen, log_top - 1, 0, 'DISK INVENTORY | d scans selected repo | caches are never deleted here', curses.A_BOLD)
+                    draw(screen, log_top - 1, 0, 'DISK INVENTORY | d scans selected repo | caches are never deleted here', curses.A_BOLD)
                     lines = ['Scanning...' if disk_future else 'Press d to scan the selected repository.']
                     if disk_result:
                         lines += ['{} GiB | {}'.format('{:.2f}'.format(r['bytes']/1024**3) if r['bytes'] is not None else '?', r['path']) for r in disk_result['paths']]
                     lines += ['Old queue logs: agent-builds clean (preview); --apply deletes eligible logs.']
                     for index, line in enumerate(lines[:max(1, height - log_top - 3)]):
-                        paint(screen, log_top + index, 0, line)
+                        draw(screen, log_top + index, 0, line)
                 elif view == 9:
-                    paint(screen,log_top-1,0,'EXISTING JOB GROUPS | arrows select | Enter opens a job log | e exports evidence',curses.A_BOLD)
-                    paint(screen,log_top,0,tool_status)
+                    draw(screen,log_top-1,0,'EXISTING JOB GROUPS | arrows select | Enter opens a job log | e exports evidence',curses.A_BOLD)
+                    draw(screen,log_top,0,tool_status)
                     lines=['Create with: agent-builds group create JOB... --name NAME'] if tool_data is not None else []
                     if group_rows:
                         group=group_rows[group_index]
@@ -594,11 +606,11 @@ def main(screen, cwd):
                     visible=max(1,height-log_top-4)
                     group_offset=min(max(0,group_offset),max(0,len(lines)-visible))
                     for index,line in enumerate(lines[group_offset:group_offset+visible]):
-                        paint(screen,log_top+1+index,0,line)
+                        draw(screen,log_top+1+index,0,line)
                 elif view == 10:
                     from .external import lines as watch_lines
-                    paint(screen,log_top-1,0,'EXTERNAL COMPLETION | idle watches hold no build reservations',curses.A_BOLD)
-                    paint(screen,log_top,0,tool_status)
+                    draw(screen,log_top-1,0,'EXTERNAL COMPLETION | idle watches hold no build reservations',curses.A_BOLD)
+                    draw(screen,log_top,0,tool_status)
                     lines=['No external watches. Use buildr watch start or MCP buildr_watch_submit.'] if tool_data is not None else []
                     if watch_rows:
                         watch=watch_rows[watch_index]
@@ -611,67 +623,71 @@ def main(screen, cwd):
                     visible=max(1,height-log_top-4)
                     watch_offset=min(max(0,watch_offset),max(0,len(lines)-visible))
                     for index,line in enumerate(lines[watch_offset:watch_offset+visible]):
-                        paint(screen,log_top+1+index,0,line)
+                        draw(screen,log_top+1+index,0,line)
                 elif view == 8:
                     from .advice import lines as advice_lines
                     content=list(advice_lines(advice_result)) if advice_result is not None else []
                     lines=[part for line in content for part in (textwrap.wrap(line,max(1,width-1)) or [''])]
-                    paint(screen, log_top-1, 0, 'QUEUE ADVISOR | global | scroll with arrows / PgUp / PgDn | h returns to logs', curses.A_BOLD)
-                    paint(screen,log_top,0,tool_status)
+                    draw(screen, log_top-1, 0, 'QUEUE ADVISOR | global | scroll with arrows / PgUp / PgDn | h returns to logs', curses.A_BOLD)
+                    draw(screen,log_top,0,tool_status)
                     visible = max(1, height-log_top-4)
                     advice_offset = min(max(0, advice_offset), max(0, len(lines)-visible))
                     for index, line in enumerate(lines[advice_offset:advice_offset+visible]):
-                        paint(screen, log_top+1+index, 0, line)
+                        draw(screen, log_top+1+index, 0, line)
                 elif view == 7:
-                    paint(screen, log_top-1, 0, 'VERIFICATION PLANS | / find | arrows plan | Tab stage | Enter log', curses.A_BOLD)
-                    paint(screen,log_top,0,plan_filter.label(tool_status,tool_data))
+                    draw(screen, log_top-1, 0, 'VERIFICATION PLANS | / find | arrows plan | Tab stage | Enter log', curses.A_BOLD)
+                    draw(screen,log_top,0,plan_filter.label(tool_status,tool_data))
                     prefix=plan_stages.lines(plan_rows[plan_index])[:2] if plan_rows else []
                     for index,line in enumerate(prefix):
-                        paint(screen,log_top+1+index,0,line,curses.A_BOLD)
+                        draw(screen,log_top+1+index,0,line,curses.A_BOLD)
                     visible=max(1,height-log_top-4-len(prefix))
                     if plan_rows:
                         lines=plan_details.page_plan(plan_rows[plan_index],max(1,width-1),visible)
                     else:
                         lines=plan_filter.empty(tool_data,tool_read.error) if plan_filter.query else ['No plans yet. Press o to submit a JSON verification plan.'] if tool_data is not None else []
                     for index,line in enumerate(lines):
-                        paint(screen,log_top+1+len(prefix)+index,0,line)
+                        draw(screen,log_top+1+len(prefix)+index,0,line)
                 elif rows:
                     row = rows[selected]
-                    paint(screen, log_top - 1, 0, '{} | {} | {}'.format(row['id'], row['cwd'], row['reason'] or 'live output'), curses.A_BOLD)
+                    draw(screen, log_top - 1, 0, '{} | {} | {}'.format(row['id'], row['cwd'], row['reason'] or 'live output'), curses.A_BOLD)
                     offset = 0
                     context = inline_context or {}
                     if context_read.error:
-                        paint(screen,log_top,0,'Wait details unavailable: '+context_read.error)
+                        draw(screen,log_top,0,'Wait details unavailable: '+context_read.error)
                         offset=1
                     elif context and all(key in context for key in ('disk_free_gb','required_free_gb','measured_at')):
-                        paint(screen, log_top, 0, 'Wait {:.1f}s | disk {:.1f}/{:.1f} GiB free/needed | measured {}'.format(
+                        draw(screen, log_top, 0, 'Wait {:.1f}s | disk {:.1f}/{:.1f} GiB free/needed | measured {}'.format(
                             row['wait_seconds'], context['disk_free_gb'], context['required_free_gb'],
                             time.strftime('%H:%M:%S', time.localtime(context['measured_at']))))
                         offset = 1
                         blocker = context.get('blocking_job')
                         if blocker:
-                            paint(screen, log_top + offset, 0, 'Blocker {}: waited {:.1f}s, ran {:.1f}s | {} | g logs'.format(
+                            draw(screen, log_top + offset, 0, 'Blocker {}: waited {:.1f}s, ran {:.1f}s | {} | g logs'.format(
                                 blocker['id'], blocker.get('wait_seconds', 0), blocker['elapsed_seconds'], blocker['command_display']))
                             offset += 1
                     for index, line in enumerate(read_tail(Path(row['log_path']), max(1, height - log_top - offset - 3))):
-                        paint(screen, log_top + offset + index, 0, line)
-                paint(screen, height - 2, 0, 'Read only | runner observations are not an ETA or a new admission decision.' if view==14 else message)
-                paint(screen, height - 1, 0, view_footer(view, width))
+                        draw(screen, log_top + offset + index, 0, line)
+                draw(screen, height - 2, 0, 'Read only | runner observations are not an ETA or a new admission decision.' if view==14 else message)
+                draw(screen, height - 1, 0, view_footer(view, width))
+            display_height=height
+            focus_render=False
+            height,width=screen.getmaxyx()
+            compact=height<15 or width<65
             if help_active:
                 screen.erase()
                 query_rows=1 if help_view.query else 0
                 content=help_view.page(max(1,width-2),max(1,height-3-query_rows))
-                paint(screen,0,0,'BUILDR HELP | '+help_view.position(),curses.A_BOLD)
+                draw(screen,0,0,'BUILDR HELP | '+help_view.position(),curses.A_BOLD)
                 if help_view.query:
-                    paint(screen,1,0,'Find: '+help_view.query)
+                    draw(screen,1,0,'Find: '+help_view.query)
                 for index,line in enumerate(content):
-                    paint(screen,index+1+query_rows,0,line)
+                    draw(screen,index+1+query_rows,0,line)
                 if not content:
-                    paint(screen,1+query_rows,0,'No matching help')
-                paint(screen,height-2,0,'/ search | blank clears' if width>=25 else '/ find blank clears')
-                paint(screen,height-1,0,'Esc/?/q back | j/k PgUp/PgDn Home/End' if width>=40 else 'Esc back j/k Pg ? q')
+                    draw(screen,1+query_rows,0,'No matching help')
+                draw(screen,height-2,0,'/ search | blank clears' if width>=25 else '/ find blank clears')
+                draw(screen,height-1,0,'Esc/?/q back | j/k PgUp/PgDn Home/End' if width>=40 else 'Esc back j/k Pg ? q')
             elif log_links.status and height>=8 and width>=20:
-                paint(screen,height-2,0,log_links.status)
+                draw(screen,height-2,0,log_links.status)
             if not log_visible:
                 log_reads.get(None,None,False,time.monotonic())
             screen.refresh()
@@ -691,6 +707,30 @@ def main(screen, cwd):
                     query=prompt(screen,'Find help (blank clears)',help_view.query)
                     if query is not None:
                         help_view.search(query)
+                continue
+            palette_view=None
+            if key==ord(':'):
+                if height>=8 and width>=20:
+                    log_links.cancel()
+                    direct_log_view=None
+                    action_plan=plan_rows[plan_index] if view==7 and plan_rows else None
+                    action_job=context_row
+                    if view==7:
+                        stage=plan_stages.current(action_plan) if action_plan else None
+                        action_job=stage['job'] if stage and plan_stages.log_target(action_plan) else None
+                    command=choose_action(screen,view,action_job,action_plan,focus_mode,draw)
+                    if command is not None:
+                        context_row=action_job
+                        palette_view=command.view
+                        key=ord('V') if palette_view is not None else command.key
+                    else:
+                        continue
+                else:
+                    continue
+            if key==ord('z'):
+                if view<13 and not compact:
+                    focus_mode=not focus_mode
+                    message='Focus layout: host metric rows hidden; queue warnings and reservations retained.' if focus_mode else 'Host metric rows restored.'
                 continue
             if key==ord('?'):
                 help_active=True
@@ -714,7 +754,7 @@ def main(screen, cwd):
                 continue
             if key==ord('V'):
                 if height>=8 and width>=20:
-                    target=choose_view(screen,view,context_row is not None,paint,has_log=view==13 and log_job is not None)
+                    target=palette_view if palette_view is not None else choose_view(screen,view,context_row is not None,draw,has_log=view==13 and log_job is not None)
                     if target is not None:
                         if target==13 and view!=13:
                             remember_log_origin()
@@ -927,7 +967,7 @@ def main(screen, cwd):
                     selected,selected_id=0,None
                 continue
             if view==0 and key in (curses.KEY_HOME,curses.KEY_END,curses.KEY_NPAGE,curses.KEY_PPAGE):
-                page=page_size(height,compact,jobs_expanded)
+                page=page_size(display_height,compact,jobs_expanded)
                 if key==curses.KEY_HOME:
                     selected=0
                 elif key==curses.KEY_END:
@@ -1082,11 +1122,11 @@ def main(screen, cwd):
                 advice_offset=0
                 tool_read.next_read=0
             elif view == 8 and key in (curses.KEY_NPAGE, curses.KEY_PPAGE):
-                advice_offset += max(1, height-10)*(1 if key == curses.KEY_NPAGE else -1)
+                advice_offset += max(1, display_height-10)*(1 if key == curses.KEY_NPAGE else -1)
             elif view == 9 and key in (curses.KEY_NPAGE,curses.KEY_PPAGE):
-                group_offset+=max(1,height-10)*(1 if key==curses.KEY_NPAGE else -1)
+                group_offset+=max(1,display_height-10)*(1 if key==curses.KEY_NPAGE else -1)
             elif view == 10 and key in (curses.KEY_NPAGE,curses.KEY_PPAGE):
-                watch_offset+=max(1,height-10)*(1 if key==curses.KEY_NPAGE else -1)
+                watch_offset+=max(1,display_height-10)*(1 if key==curses.KEY_NPAGE else -1)
             elif view == 10 and watch_rows and key in (ord('c'),ord('r'),ord('e')):
                 from . import external
                 from .plans import write_export

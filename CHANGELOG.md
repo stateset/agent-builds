@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.26.4 (unreleased)
+
+- Discover views and reviewed actions through a searchable `:` menu, with explicit
+  availability and existing confirmation flows. Toggle `z` to reclaim two rows
+  for content while retaining global queue warnings and reservation totals.
+
 ## 0.26.3 — 2026-10-20
 
 - Keep the recorded stage state ahead of long names in minimum-size panes while
