@@ -28,6 +28,7 @@ from .tui_log_reads import LogReads
 from .tui_links import LogLinks
 from .tui_plan_stages import PlanStages
 from .tui_plan_details import PlanDetails
+from .tui_plan_filter import PlanFilter
 from .tui_help import HelpView
 from .tui_reads import submit_read as submit_link_read
 from .tui_submissions import SubmissionTracker
@@ -131,6 +132,9 @@ def compact_lines(rows, selected, plans, plan_index, view, config, height, width
             room=max(0,height-len(lines)-1)
             if room:
                 lines += plan_details.page_plan(plans[plan_index],max(1,width-1),room)
+            return lines[:height-1]+[view_footer(view,width,compact=True)]
+        if not plans and browser and browser.get('plan_empty'):
+            lines += browser['plan_empty']
             return lines[:height-1]+[view_footer(view,width,compact=True)]
         if plans:
             selected_row = plans[plan_index]
@@ -271,6 +275,7 @@ def main(screen, cwd):
     plan_index = 0
     plan_id = None
     plan_stages = PlanStages()
+    plan_filter = PlanFilter()
     plan_details = PlanDetails(plan_stages)
     advice_result = None
     advice_offset = 0
@@ -360,7 +365,7 @@ def main(screen, cwd):
             tool_data=poll_read(tool_read,tool_key,time.monotonic())
             tool_status=tool_read.status(time.monotonic())
             if view==7:
-                plan_rows=tool_data if tool_data is not None else []
+                plan_rows=plan_filter.get(tool_data)
                 plan_index=next((i for i,p in enumerate(plan_rows) if p['id']==plan_id),min(plan_index,max(0,len(plan_rows)-1)))
                 if tool_data is not None:
                     plan_id=plan_rows[plan_index]['id'] if plan_rows else None
@@ -455,6 +460,10 @@ def main(screen, cwd):
                 paint(screen,height-1,0,view_footer(13,width))
             elif compact:
                 browser=dict(mode=browser_mode,query=browser_query,loaded=len(loaded_rows),order=browser_order,expanded=jobs_expanded,repository=browser_repository,follow=follow_head,initialized=browser_report['initialized'],queue_error=browser_stale,queue_age=browser_read.status(time.monotonic()),summary_status=summary_read.status(time.monotonic()),summary_error=summary_stale,tool_status=tool_status if view in (7,10) and (tool_data is None or tool_read.error) else '',tool_heading=tool_read.status(time.monotonic(),short_label='PLANS' if view==7 else 'EXTERNAL') if view in (7,10) else '')
+                if view==7 and plan_filter.query:
+                    browser['tool_heading']=plan_filter.label(browser['tool_heading'],tool_data,compact=True)
+                    if not plan_rows:
+                        browser['plan_empty']=plan_filter.empty(tool_data,tool_read.error)
                 if submission_rows:
                     browser['submission_notice']=compact_notice(submission_rows[-1])
                 for index, line in enumerate(compact_lines(rows, selected, plan_rows, plan_index, view, config, height, width, watch_rows, watch_index, None,0,workbench_result,0,queue_health_result,browser,read_tail,details_view,detail_row,detail_read.error or (detail_read.status(time.monotonic()) if inspection_row else None),history_view,history_repository,history_report,history_status,inspection,history_error=history_read.error,plan_stages=plan_stages,plan_details=plan_details)):
@@ -614,8 +623,8 @@ def main(screen, cwd):
                     for index, line in enumerate(lines[advice_offset:advice_offset+visible]):
                         paint(screen, log_top+1+index, 0, line)
                 elif view == 7:
-                    paint(screen, log_top-1, 0, 'VERIFICATION PLANS | arrows plan | Tab stage | Enter log', curses.A_BOLD)
-                    paint(screen,log_top,0,tool_status)
+                    paint(screen, log_top-1, 0, 'VERIFICATION PLANS | / find | arrows plan | Tab stage | Enter log', curses.A_BOLD)
+                    paint(screen,log_top,0,plan_filter.label(tool_status,tool_data))
                     prefix=plan_stages.lines(plan_rows[plan_index])[:2] if plan_rows else []
                     for index,line in enumerate(prefix):
                         paint(screen,log_top+1+index,0,line,curses.A_BOLD)
@@ -623,7 +632,7 @@ def main(screen, cwd):
                     if plan_rows:
                         lines=plan_details.page_plan(plan_rows[plan_index],max(1,width-1),visible)
                     else:
-                        lines=['No plans yet. Press o to submit a JSON verification plan.'] if tool_data is not None else []
+                        lines=plan_filter.empty(tool_data,tool_read.error) if plan_filter.query else ['No plans yet. Press o to submit a JSON verification plan.'] if tool_data is not None else []
                     for index,line in enumerate(lines):
                         paint(screen,log_top+1+len(prefix)+index,0,line)
                 elif rows:
@@ -726,6 +735,12 @@ def main(screen, cwd):
                 if view!=15:
                     follow_head=False
                 view=0 if view==15 else 15
+                continue
+            if view==7 and key==ord('/'):
+                if height>=8 and width>=20:
+                    query=prompt(screen,'Find loaded plans (blank clears)',plan_filter.query)
+                    if query is not None:
+                        plan_filter.search(query)
                 continue
             if view in (4,11,12,14) and key==ord('/'):
                 if height>=8 and width>=20:
@@ -1113,6 +1128,7 @@ def main(screen, cwd):
                     plan_id = create(store.writable(), definition)
                     children.append(spawn_plan(store.writable(), plan_id))
                     view = 7
+                    plan_filter.search('')
                     plan_details.home()
                     tool_read.next_read=0
                     message = 'Submitted verification plan '+plan_id
