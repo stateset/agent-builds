@@ -112,6 +112,32 @@ def job_line(row, width):
     return text + (" / " + row.get("command_display", "") if width >= 65 else "")
 
 
+def empty_jobs(filtered=False, initialized=True, stale=False, compact=False):
+    """Offer a next step without claiming an empty cached snapshot is current."""
+    title = "No matching jobs" if filtered else "No jobs yet"
+    if stale:
+        title += " (last snapshot)"
+    hint = "C clear : actions" if filtered else ": actions | ? help"
+    if compact:
+        return [title, hint]
+    lines = [title]
+    if stale:
+        lines.append("Queue snapshot is stale; current jobs may differ.")
+    elif not initialized:
+        lines.append("No queue state exists. Opening this dashboard creates nothing.")
+    lines.append(
+        "C clears search, job filter and repository focus."
+        if filtered
+        else ": actions > New job reviews a command before submission."
+    )
+    lines.append(
+        ": actions > Search jobs finds text in the loaded snapshot."
+        if filtered
+        else "? opens keyboard help; q exits while existing jobs continue."
+    )
+    return lines
+
+
 def filter_rows(rows, mode="all", query="", repository=None):
     query = query.casefold()
     if mode == "all" and not query and repository is None:

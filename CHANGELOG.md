@@ -2,6 +2,9 @@
 
 ## 0.26.5 (unreleased)
 
+- Recover empty job searches through discoverable browsing actions. Show compact
+  next steps while retaining stale-snapshot and missing-queue context.
+
 - Explicitly remember focus/table display layout with Shift+Z, independently of
   queue configuration. Shorten Jobs hints while retaining search and actions.
 

@@ -638,3 +638,10 @@ This is a coarse regression budget for these private terminal fixtures, not a
 latency guarantee under live builds. Full-size cases also save display layout to
 their private user configuration and check its exact contents; queue rows and
 queue settings must remain unchanged.
+
+The Jobs/Job details action menu includes Search jobs, Clear browsing filters,
+Change job filter and Change display order. Jobs also offers Toggle jobs table.
+These reuse the existing local browsing controls and never change scheduler
+order or submit work. Clear browsing filters removes search, status filtering
+and repository focus while retaining display order/table layout. Empty Jobs
+views show a next step; stale snapshots remain labelled as observations.
