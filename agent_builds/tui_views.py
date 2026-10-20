@@ -232,7 +232,7 @@ _FULL_FOOTERS = {
     0: "V views  J job  U submissions  F follow  w why  R repo  C clear  Tab table  / find  f filter  l log  ? q",
     3: "V views  PgUp/Dn Home/End  j/k job  i jobs  l logs  ? help  q quit",
     4: "V views / find  j/k scroll  PgUp/PgDn page  Home/End  H jobs  v views  ? help  q quit",
-    7: "V views Tab/Shift+Tab stage Enter log o plan c cancel r resume e export PgUp/Dn ? q",
+    7: "V views Tab/Shift+Tab stage Enter log o plan c cancel r resume e export Pg/Home/End ? q",
     9: "V views j/k Enter log e export PgUp/Dn v jobs ? q",
     10: "V views  c stop observation  r resume controller  e export  Enter probe log  v next  q quit",
     11: "V views / find  j/k scroll  PgUp/PgDn page  u jobs  v next  q quit | read only",
