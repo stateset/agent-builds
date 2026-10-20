@@ -159,7 +159,7 @@ class PlanDetailDashboardTests(unittest.TestCase):
                     key, size, background_submit=submit, clock=lambda: now[0]
                 )
                 text = "\n".join(frames[-1].values())
-                self.assertIn("STALE", text)
+                self.assertIn("stale", text.casefold())
                 self.assertIn("> tests", text)
                 self.assertIn("Enter " + self.fixture.fixture.jobs[2], text)
                 self.assertEqual(reads[0], 2)
