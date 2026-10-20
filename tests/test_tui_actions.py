@@ -107,6 +107,26 @@ class ActionPickerTests(unittest.TestCase):
         self.assertIn("←→ 1/", frames[-1][2])
         self.assertTrue(frames[-1][6].startswith("a" * 12))
 
+    def test_context_position_survives_temporary_expansion_and_scrolls_back(self):
+        command, frames = self.picker(
+            list("job logs")
+            + [
+                curses.KEY_RIGHT,
+                ((14, 24), curses.KEY_RESIZE),
+                ((8, 20), curses.KEY_RESIZE),
+                curses.KEY_LEFT,
+                "\x1b",
+            ],
+            (8, 20),
+            job=dict(id="a" * 12, state="running"),
+        )
+        self.assertIsNone(command)
+        small = [f for f in frames if f.get(1) == "Find: job logs" and 13 not in f]
+        self.assertEqual(small[1][6], small[2][6])
+        self.assertIn("←→ 2/", small[2][2])
+        self.assertEqual(small[0][6], small[-1][6])
+        self.assertIn("←→ 1/", small[-1][2])
+
     def test_typing_action_keys_or_quit_never_dispatches(self):
         command, frames = self.picker(list("ncapbq") + ["\n", "\x1b"])
         self.assertIsNone(command)
