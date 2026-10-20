@@ -150,70 +150,76 @@ def choose(screen, current, has_job, paint, has_log=False):
 def choose_menu(screen, picker, paint, title, reason):
     """A shared read-only chooser; only return an explicitly accepted entry."""
     screen.timeout(200)
+    rendered = None
     try:
         while True:
             height, width = screen.getmaxyx()
             usable = height >= 8 and width >= 20
-            screen.erase()
-            if not usable:
-                paint(screen, 0, 0, "Resize: views 20x8")
-                paint(screen, height - 1, 0, "Esc back")
-            else:
-                paint(screen, 0, 0, title, curses.A_BOLD)
-                query_tail = wrap_line(picker.query, max(1, width - 7))[-1]
-                paint(screen, 1, 0, "Find: " + query_tail)
-                paint(
-                    screen,
-                    2,
-                    0,
-                    (
-                        "{}/{} | * current"
-                        if picker.current is not None
-                        else "{}/{} | Enter selects"
-                    ).format(
-                        picker.selected + 1 if picker.matches else 0,
-                        len(picker.matches),
-                    ),
-                )
-                choice = picker.choice()
-                disabled = reason(choice, height, width) if choice else ""
-                note = disabled or (choice.description if choice else "Ctrl+U clears")
-                notes = wrap_line(note, width - 1)
-                note_room = min(4, max(1, height - 7))
-                if len(notes) > note_room:
-                    notes = notes[:note_room]
-                    notes[-1] = wrap_line(notes[-1], width - 4)[0] + "..."
-                note_top = height - 1 - len(notes)
-                for index, view in picker.page(note_top - 3):
-                    disabled = reason(view, height, width)
-                    selected = index == picker.selected
-                    line = (
-                        (">" if selected else " ")
-                        + ("!" if disabled else " ")
-                        + view.name
-                        + ("*" if view.number == picker.current else "")
-                    )
+            frame = (height, width, picker.query, picker.selected)
+            if frame != rendered:
+                screen.erase()
+                if not usable:
+                    paint(screen, 0, 0, "Resize: views 20x8")
+                    paint(screen, height - 1, 0, "Esc back")
+                else:
+                    paint(screen, 0, 0, title, curses.A_BOLD)
+                    query_tail = wrap_line(picker.query, max(1, width - 7))[-1]
+                    paint(screen, 1, 0, "Find: " + query_tail)
                     paint(
                         screen,
-                        3 + index - picker.top,
+                        2,
                         0,
-                        line,
-                        (curses.A_REVERSE if selected else 0)
-                        | (curses.A_DIM if disabled else 0),
+                        (
+                            "{}/{} | * current"
+                            if picker.current is not None
+                            else "{}/{} | Enter selects"
+                        ).format(
+                            picker.selected + 1 if picker.matches else 0,
+                            len(picker.matches),
+                        ),
                     )
-                if not choice:
-                    paint(
-                        screen,
-                        3,
-                        0,
-                        "No matching views"
-                        if picker.current is not None
-                        else "No matching actions",
+                    choice = picker.choice()
+                    disabled = reason(choice, height, width) if choice else ""
+                    note = disabled or (
+                        choice.description if choice else "Ctrl+U clears"
                     )
-                for index, line in enumerate(notes):
-                    paint(screen, note_top + index, 0, line)
-                paint(screen, height - 1, 0, "Arrows Enter Esc")
-            screen.refresh()
+                    notes = wrap_line(note, width - 1)
+                    note_room = min(4, max(1, height - 7))
+                    if len(notes) > note_room:
+                        notes = notes[:note_room]
+                        notes[-1] = wrap_line(notes[-1], width - 4)[0] + "..."
+                    note_top = height - 1 - len(notes)
+                    for index, view in picker.page(note_top - 3):
+                        disabled = reason(view, height, width)
+                        selected = index == picker.selected
+                        line = (
+                            (">" if selected else " ")
+                            + ("!" if disabled else " ")
+                            + view.name
+                            + ("*" if view.number == picker.current else "")
+                        )
+                        paint(
+                            screen,
+                            3 + index - picker.top,
+                            0,
+                            line,
+                            (curses.A_REVERSE if selected else 0)
+                            | (curses.A_DIM if disabled else 0),
+                        )
+                    if not choice:
+                        paint(
+                            screen,
+                            3,
+                            0,
+                            "No matching views"
+                            if picker.current is not None
+                            else "No matching actions",
+                        )
+                    for index, line in enumerate(notes):
+                        paint(screen, note_top + index, 0, line)
+                    paint(screen, height - 1, 0, "Arrows Enter Esc")
+                screen.refresh()
+                rendered = frame
             try:
                 key = screen.get_wch()
             except curses.error as error:
@@ -225,6 +231,9 @@ def choose_menu(screen, picker, paint, title, reason):
                 raise
             if key == "\x1b":
                 return None
+            if key in (curses.KEY_RESIZE, "\x0c"):
+                rendered = None
+                continue
             if (
                 not usable
                 or screen.getmaxyx() != (height, width)

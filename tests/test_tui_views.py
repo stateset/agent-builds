@@ -178,3 +178,33 @@ class ViewPickerTerminalTests(unittest.TestCase):
         self.assertEqual(self.sleeps, [mock.call(0.05)])
         with self.assertRaisesRegex(curses.error, "disconnected"):
             self.picker([curses.error("disconnected")])
+
+    def test_idle_waits_do_not_erase_or_repaint_unchanged_menu(self):
+        result, frames = self.picker([curses.error("no input")] * 5 + ["\x1b"])
+        self.assertIsNone(result)
+        self.assertEqual(len(frames), 1)
+        self.assertEqual(len(self.sleeps), 5)
+
+    def test_navigation_search_resize_and_manual_redraw_update_menu(self):
+        result, frames = self.picker(
+            [
+                curses.KEY_DOWN,
+                "h",
+                curses.error("no input"),
+                ((8, 20), curses.KEY_RESIZE),
+                "\x0c",
+                "\x1b",
+            ]
+        )
+        self.assertIsNone(result)
+        self.assertEqual(len(frames), 5)
+        self.assertIn("Processes", frames[1][4])
+        self.assertEqual(frames[2][1], "Find: h")
+        self.assertEqual(frames[3][7], "Arrows Enter Esc")
+        self.assertEqual(frames[4], frames[3])
+
+    def test_resize_event_redraws_even_when_terminal_dimensions_are_unchanged(self):
+        result, frames = self.picker([curses.KEY_RESIZE, "\x1b"])
+        self.assertIsNone(result)
+        self.assertEqual(len(frames), 2)
+        self.assertEqual(frames[0], frames[1])

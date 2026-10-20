@@ -606,3 +606,8 @@ Selected view/action explanations wrap into up to four rows when the pane has
 room, keeping at least three list rows and the navigation footer. Availability
 guidance takes priority for disabled entries. Short panes mark omitted context
 with `...`; resizing reveals more without accepting the selection.
+
+Open view/action menus retain their frame while idle instead of repeatedly
+erasing the terminal. Search, navigation and resize update the display; `Ctrl+L`
+forces a redraw if the terminal needs it. Menu entries remain the captured
+context from opening the menu; repainting does not refresh queue/job state.
