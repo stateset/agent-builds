@@ -72,7 +72,8 @@ jobs:
             agent_builds/study_pressure.py tests/test_study_pressure.py \
             tests/test_tui_report_anchor.py tests/test_tui_report_search.py \
             agent_builds/tui_plan_stages.py tests/test_tui_plan_stages.py \
-            agent_builds/tui_plan_details.py tests/test_tui_plan_details.py
+            agent_builds/tui_plan_details.py tests/test_tui_plan_details.py \
+            agent_builds/tui_plan_filter.py tests/test_tui_plan_filter.py
           python -m agent_builds run --lane quick --jobs 1 --memory-gb 1 --timeout 120 -- python -m mypy --follow-imports=skip --check-untyped-defs agent_builds/execution_policy.py agent_builds/polling.py agent_builds/launch.py
       - name: Verify bounded admission reads with bulky evidence
         if: matrix.python == '3.12'

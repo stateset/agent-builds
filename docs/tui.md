@@ -72,6 +72,14 @@ history likewise keeps its checkout until you leave the view.
 | `r` | Selected-job workbench |
 | `v` | Cycle views |
 
+In Plans, `/` searches the loaded snapshot by plan ID/name/state/reason, stage
+name/state/job ID, and confirmed job command/reason/checkout. Matching is literal
+and ignores case. Blank clears the search; Esc retains it. Counts cover only
+the loaded plans, and a `/` marker in narrow headings indicates an active filter.
+No matches shows guidance instead of claiming there are no plans. A matching
+selection stays pinned across refreshes and clearing the search. Search does not
+change job-browser filters or fetch additional plans.
+
 In Plans, arrows or j/k select a plan. Tab/Shift+Tab cycles its stages and the
 overview; Enter opens the selected stage's recorded job log. The overview keeps
 the existing preference for a live stage, then a failed stage, then a recent

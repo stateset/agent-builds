@@ -2,6 +2,10 @@
 
 ## 0.26.3 (unreleased)
 
+- Search loaded plans with `/`, preserving matching plan/stage selections and
+  cached filtering. Keep snapshot uncertainty and no-match guidance visible in
+  narrow panes without reading more plans or changing job-browser filters.
+
 - Focus selected plan-stage evidence, wrap long commands/reasons, and page bounded
   details with PgUp/PgDn or Home/End. Retain the stage log shortcut and freshness
   while reading; preserve text position across resizing without extra queries.
