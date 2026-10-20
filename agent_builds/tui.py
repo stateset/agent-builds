@@ -767,6 +767,10 @@ def main(screen, cwd):
                 continue
             if browser_report is None and view!=13:
                 continue
+            if view==7 and key in (ord('['),ord(']')) and height>=8 and width>=20:
+                if plan_stages.issue(plan_rows[plan_index] if plan_rows else None,1 if key==ord(']') else -1):
+                    plan_details.home()
+                continue
             if view==7 and key in (9,curses.KEY_BTAB) and height>=8 and width>=20:
                 plan_stages.choose(plan_rows[plan_index] if plan_rows else None,1 if key==9 else -1)
                 plan_details.home()
