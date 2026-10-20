@@ -106,7 +106,12 @@ class TuiSubmissionTerminalTests(unittest.TestCase):
             native_argv = [sys.executable, "-c", native_code, str(marker), str(release)]
             command = shlex.join(native_argv)
             self.assertNotIn("\n", command)
-            env = dict(os.environ, AGENT_BUILDS_STATE=str(state), XDG_CONFIG_HOME=str(Path(state).parent / "user-config"), TERM="xterm-256color")
+            env = dict(
+                os.environ,
+                AGENT_BUILDS_STATE=str(state),
+                XDG_CONFIG_HOME=str(Path(state).parent / "user-config"),
+                TERM="xterm-256color",
+            )
             env.pop("AGENT_BUILDS_JOB_ID", None)
             env.pop("HERDR_ENV", None)
             env.pop("HERDR_PANE_ID", None)

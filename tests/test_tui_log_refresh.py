@@ -500,7 +500,10 @@ class TuiLogRefreshTests(unittest.TestCase):
         child = None
         terminal = TerminalScreen(20, 100)
         env = dict(
-            os.environ, AGENT_BUILDS_STATE=str(self.store.root), XDG_CONFIG_HOME=str(Path(self.store.root).parent / "user-config"), TERM="xterm-256color"
+            os.environ,
+            AGENT_BUILDS_STATE=str(self.store.root),
+            XDG_CONFIG_HOME=str(Path(self.store.root).parent / "user-config"),
+            TERM="xterm-256color",
         )
         env.pop("AGENT_BUILDS_JOB_ID", None)
         try:
