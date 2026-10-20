@@ -1,5 +1,6 @@
 """Action discovery is read-only; accepted choices use established review flows."""
 
+import curses
 import unittest
 from unittest import mock
 
@@ -69,6 +70,42 @@ class ActionPickerTests(unittest.TestCase):
         self.assertEqual(minimum[7], "Arrows Enter Esc")
         self.assertNotIn("...", "".join(frames[-1].values()))
         self.assertIn("Job logs", frames[-1][3])
+
+    def test_minimum_menu_reads_entire_context_without_accepting_or_changing_search(
+        self,
+    ):
+        job = dict(id="a" * 12, state="running")
+        expected = next(
+            c.description for c in commands(0, job) if c.number == "view.13"
+        )
+        command, frames = self.picker(
+            list("job logs") + [curses.KEY_RIGHT] * 12 + ["\x1b"], (8, 20), job=job
+        )
+        self.assertIsNone(command)
+        shown = [f for f in frames if f.get(1) == "Find: job logs"]
+        parts = [f[6][:-3] if f[6].endswith("...") else f[6] for f in shown]
+        self.assertEqual("".join(parts), expected)
+        self.assertTrue(all("Job logs" in f[3] for f in shown))
+        self.assertTrue(all("←→" in f[2] for f in shown))
+        self.assertLessEqual(len(shown[-1][2]), 19)
+
+    def test_context_navigation_resets_for_another_entry_and_preserves_enter_gate(self):
+        command, frames = self.picker(
+            list("new job") + [curses.KEY_RIGHT, "\n", "\x1b"], (8, 20)
+        )
+        self.assertIsNone(command)
+        self.assertIn("Resize to 65x15", "".join(frames[-1].values()))
+        command, frames = self.picker(
+            list("job logs")
+            + [curses.KEY_RIGHT, "\x15"]
+            + list("why waiting")
+            + ["\x1b"],
+            (8, 20),
+            job=dict(id="a" * 12, state="running"),
+        )
+        self.assertIsNone(command)
+        self.assertIn("←→ 1/", frames[-1][2])
+        self.assertTrue(frames[-1][6].startswith("a" * 12))
 
     def test_typing_action_keys_or_quit_never_dispatches(self):
         command, frames = self.picker(list("ncapbq") + ["\n", "\x1b"])

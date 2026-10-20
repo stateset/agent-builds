@@ -2,6 +2,9 @@
 
 ## 0.26.4 (unreleased)
 
+- Read clipped menu explanations with Left/Right, keeping the chosen entry and
+  search intact. Continuation markers no longer hide source characters.
+
 - Keep view/action menus still during idle input waits. Navigation, search and
   resize repaint the menu; Ctrl+L explicitly redraws it.
 
