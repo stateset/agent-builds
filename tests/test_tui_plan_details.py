@@ -3,6 +3,7 @@
 import copy
 import curses
 import unittest
+from concurrent.futures import Future
 from unittest import mock
 
 import test_tui_plan_stages as fixtures
@@ -127,3 +128,38 @@ class PlanDetailDashboardTests(unittest.TestCase):
         self.assertIn("BEGIN-REASON", text)
         self.assertIn("Stage tests", text)
         self.assertNotIn("Stage lint", text)
+
+    def test_failed_refresh_keeps_selected_evidence_labelled_stale(self):
+        now, reads = [100], [0]
+
+        def submit(loader, key):
+            future = Future()
+            try:
+                if key == ("plans", None):
+                    reads[0] += 1
+                    if reads[0] > 1:
+                        raise OSError("fixture plan read failed")
+                future.set_result(loader(key))
+            except Exception as error:
+                future.set_exception(error)
+            return future
+
+        for size in ((24, 100), (14, 40), (8, 20)):
+            now[0], reads[0] = 100, 0
+            keys = iter([ord("V"), 9, 9, -1, -1, ord("q")])
+
+            def key():
+                value = next(keys)
+                if value == -1:
+                    now[0] = 103
+                return value
+
+            with self.subTest(size=size):
+                frames = self.fixture.dashboard(
+                    key, size, background_submit=submit, clock=lambda: now[0]
+                )
+                text = "\n".join(frames[-1].values())
+                self.assertIn("STALE", text)
+                self.assertIn("> tests", text)
+                self.assertIn("Enter " + self.fixture.fixture.jobs[2], text)
+                self.assertEqual(reads[0], 2)
