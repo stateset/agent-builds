@@ -208,6 +208,8 @@ HELP = (
     "g: jump to the selected job's recorded blocker",
     "Filters search at most 200 loaded jobs. Queue health and reservations remain global.",
     "READ-ONLY VIEWS",
+    ": opens searchable actions: views, job logs, focus layout, and reviewed job/plan/budget flows. Typing never dispatches; Enter selects, Esc returns. Unavailable entries explain their requirement.",
+    "z toggles a focused full-pane layout: two host rows give space back to content; queue warnings, reservations and freshness remain visible. Narrow panes already use compact headers.",
     "l: focused logs; j/k or PgUp/PgDn scroll, Home shows oldest loaded output",
     "In logs: b returns to the source view; l returns to jobs; q quits (jobs continue)",
     "In logs: Space holds/resumes output; End returns live. Jumping J from a log keeps its original source.",

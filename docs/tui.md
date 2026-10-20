@@ -1,5 +1,20 @@
 # Buildr dashboard
 
+Press `:` to discover views and actions by name. Type words such as “why waiting”,
+“job logs”, “new job” or “focus reading area”; Enter selects, Esc returns, and
+Ctrl+U clears. Typing action letters does not execute them. Disabled entries
+explain their selection or size requirement and need another Enter after resize.
+New-job, plan, task, budget and cancellation entries enter the existing review
+flows. Cancellation still requires typing `yes`. The menu performs no queue
+reads or writes itself. From Plans, job views use the selected stage's confirmed
+job; an overview or unconfirmed stage cannot open an unrelated browser job.
+
+Press `z` in a full dashboard pane to focus the working area. Two host-metric
+rows give their space to content, while queue warnings, global reservation totals,
+and snapshot freshness remain visible. Press `z` again to restore metrics.
+The preference survives view/log/help round trips; logs and minimum panes retain
+their existing layouts. This changes presentation, not scheduling or budgets.
+
 Run `buildr tui` in Ghostty, Herdr or another terminal. The dashboard adapts to
 split panes down to 20 columns by 8 rows. `q` closes it while jobs continue.
 Keyboard input is checked every 200 ms. Jobs/settings, host metrics and the global
