@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.26.5 (unreleased)
+## 0.26.5 — 2026-10-20
 
 - Recover empty job searches through discoverable browsing actions. Show compact
   next steps while retaining stale-snapshot and missing-queue context.
