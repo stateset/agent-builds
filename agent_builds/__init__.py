@@ -1,2 +1,2 @@
 """A shared build queue and terminal UI for a developer's Linux workstation."""
-__version__ = '0.26.3.dev0'
+__version__ = '0.26.3'
