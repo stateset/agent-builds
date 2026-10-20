@@ -330,7 +330,7 @@ def choose_menu(screen, picker, paint, title, reason):
 _FULL_FOOTERS = {
     15: "V views Tab/Shift+Tab receipt j/k PgUp/Dn Home/End J job U jobs ? q",
     14: "V views / find j/k PgUp/Dn Home/End w jobs i details l logs g blocker ? q",
-    0: "V views  J job  U submissions  F follow  w why  R repo  C clear  Tab table  / find  f filter  l log  ? q",
+    0: "V views  / find  l logs  w why  ? help  q quit",
     3: "V views  PgUp/Dn Home/End  j/k job  i jobs  l logs  ? help  q quit",
     4: "V views / find  j/k scroll  PgUp/PgDn page  Home/End  H jobs  v views  ? help  q quit",
     7: "V / find Tab stage [/] failed/lost Enter log o plan c cancel r resume e export Pg/Home/End ? q",
@@ -343,7 +343,7 @@ _FULL_FOOTERS = {
 _MEDIUM_FOOTERS = {
     15: "V Tab receipt j/k Pg Home/End U jobs ? q",
     14: "V / j/k PgUp/Dn Home/End w jobs i details l logs g ? q",
-    0: "V views J job F follow w why R repo C clear Tab / f l ? q",
+    0: "V views / find l logs w why ? help q quit",
     3: "V views PgUp/Dn Home/End j/k job i jobs l logs ? q",
     4: "V views / find j/k PgUp/Dn Home/End H jobs ? q",
     7: "V / Tab [/] Enter log c cancel r resume e export Pg ? q",

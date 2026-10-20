@@ -184,6 +184,8 @@ HELP = (
     "In picker: arrows/Tab or PgUp/PgDn select; Home/End first/last; Enter opens; Esc returns",
     "Backspace edits the query; Ctrl+U clears. ! marks a size/job requirement; * is current.",
     "Picker consumes action keys as search text. Cancelling preserves following and inspection.",
+    "z: focus reading area; Shift+Z explicitly saves focus/table layout for future dashboards (65x15 minimum)",
+    "Menu Left/Right reads clipped explanations; Ctrl+L redraws; typing always filters.",
     "BROWSE JOBS",
     "j/k or arrows: select a job",
     "F: follow the first matching displayed job as snapshots refresh; F again pins it",

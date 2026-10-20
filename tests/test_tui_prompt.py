@@ -321,7 +321,7 @@ class PromptTerminalTests(unittest.TestCase):
                             os.environ,
                             TERM="xterm-256color",
                             PYTHONUTF8="1",
-                            AGENT_BUILDS_STATE=str(state),
+                            AGENT_BUILDS_STATE=str(state), XDG_CONFIG_HOME=str(Path(state).parent / "user-config"),
                         )
                         child = subprocess.Popen(
                             [sys.executable, "-c", code, str(output), initial],

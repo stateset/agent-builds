@@ -53,6 +53,16 @@ def commands(view, job=None, plan=None, focused=False):
             ),
         ]
     )
+    result.append(
+        Command(
+            "save_layout",
+            "Remember display layout",
+            "Shift+Z saves only focus and table layout for future dashboards",
+            key=ord("Z"),
+            full=True,
+            reason="Use a dashboard view" if view >= 13 else "",
+        )
+    )
     if view in (0, 3):
         result.append(
             Command(

@@ -618,3 +618,23 @@ line shows the first visible context row and total rows. Up/Down still selects
 entries; changing the entry resets its explanation to the beginning. Resizing
 retains the source position where possible. Enter eligibility and confirmation
 steps remain unchanged, including disabled actions in minimum panes.
+
+## Remembering a reading layout
+
+`z` toggles focus mode and Tab changes the Jobs table for this session. Press
+`Shift+Z` in a full dashboard view, or choose **Remember display layout** from
+`:`, to save those two display preferences for future dashboards. They live in
+`$XDG_CONFIG_HOME/buildr/tui.json` (default `~/.config/buildr/tui.json`), separate
+from queue state. Opening a dashboard never creates the preferences file.
+Only an explicit save writes it, atomically; missing or invalid settings use
+defaults, and a failed save keeps the current session usable. Selection, filters,
+commands, log following and queue budgets are never saved. Restart the dashboard
+to read changes made by another dashboard. Remove this file to restore defaults.
+
+The controlled workflow verifier reports median, nearest-rank p95 and maximum
+input-to-observed-screen times across its recorded actions. Its default gate is
+5 seconds per action (`--max-action-seconds` overrides it for explicit studies).
+This is a coarse regression budget for these private terminal fixtures, not a
+latency guarantee under live builds. Full-size cases also save display layout to
+their private user configuration and check its exact contents; queue rows and
+queue settings must remain unchanged.

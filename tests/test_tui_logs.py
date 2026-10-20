@@ -663,7 +663,7 @@ class TuiLogTests(unittest.TestCase):
             master, slave = pty.openpty()
             fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 20, 100, 0, 0))
             env = dict(
-                os.environ, AGENT_BUILDS_STATE=str(store.root), TERM="xterm-256color"
+                os.environ, AGENT_BUILDS_STATE=str(store.root), XDG_CONFIG_HOME=str(Path(store.root).parent / "user-config"), TERM="xterm-256color"
             )
             env.pop("AGENT_BUILDS_JOB_ID", None)
             child = None
