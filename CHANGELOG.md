@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.26.3 (unreleased)
+## 0.26.3 — 2026-10-20
 
 - Keep the recorded stage state ahead of long names in minimum-size panes while
   retaining exact log handles and snapshot freshness. Reuse the selected stage
