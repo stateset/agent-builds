@@ -160,6 +160,21 @@ def measure(jobs, height, width):
                     and ("JOBS" in t or "Jobs" in t or "jobs" in t)
                 )
             )
+            action(b"/", lambda t: "Search" in t, "open-job-search")
+            action(
+                b"NO_MATCH_IN_THIS_FIXTURE\r",
+                lambda t: "No matching jobs" in t,
+                "empty-job-search",
+            )
+            menu(
+                "clear browsing filters",
+                lambda t: (
+                    "ACTIONS" not in t
+                    and "No matching jobs" not in t
+                    and ("queued" in t or "running" in t)
+                ),
+                "recover-empty-search",
+            )
             menu(
                 "why waiting",
                 lambda t: "WHY" in t and "ACTIONS" not in t,

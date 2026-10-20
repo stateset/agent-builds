@@ -64,6 +64,44 @@ def commands(view, job=None, plan=None, focused=False):
         )
     )
     if view in (0, 3):
+        result.extend(
+            [
+                Command(
+                    "search_jobs",
+                    "Search jobs",
+                    "Find text in the loaded job snapshot; blank clears the search",
+                    key=ord("/"),
+                ),
+                Command(
+                    "clear_filters",
+                    "Clear browsing filters",
+                    "C clears search, job filter and repository focus; queue and display order stay unchanged",
+                    key=ord("C"),
+                ),
+                Command(
+                    "filter_jobs",
+                    "Change job filter",
+                    "f cycles all, active, waiting and problems; browsing only",
+                    key=ord("f"),
+                ),
+                Command(
+                    "sort_jobs",
+                    "Change display order",
+                    "s cycles queue, wait, runtime and repository; scheduling order is unchanged",
+                    key=ord("s"),
+                ),
+            ]
+        )
+    if view == 0:
+        result.append(
+            Command(
+                "table",
+                "Toggle jobs table",
+                "Tab switches between table and inline output; display only",
+                key=9,
+            )
+        )
+    if view in (0, 3):
         result.append(
             Command(
                 "blocker",

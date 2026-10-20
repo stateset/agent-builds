@@ -15,7 +15,7 @@ from .host_pressure import pressure_summary
 from . import __version__
 from .runner import cancel_job
 from .store import Store, TERMINAL
-from .tui_browser import MODES, ORDERS, BrowserCache, SelectedJobRead, filter_rows, sort_rows, page_size, columns, job_line, label as browser_label, HELP
+from .tui_browser import MODES, ORDERS, BrowserCache, SelectedJobRead, empty_jobs, filter_rows, sort_rows, page_size, columns, job_line, label as browser_label, HELP
 from .tui_logs import LogView, TailCache, TAIL_RECHECK_SECONDS, strip_escapes
 from .tui_details import DetailsView
 from .tui_history import HistoryRead, HistoryView, inspect_history
@@ -151,12 +151,14 @@ def compact_lines(rows, selected, plans, plan_index, view, config, height, width
         else:
             lines += ['No plans yet']
     elif view==0 and browser and browser.get('expanded') and (not browser.get('submission_notice') or height>=9):
-        lines += [browser_label(browser['mode'],browser['query'],len(rows),browser['loaded'],browser.get('order','queue'),short=True,repository=browser.get('repository'),follow=browser.get('follow',False)),' '+columns(width-1)]
+        lines += [browser_label(browser['mode'],browser['query'],len(rows),browser['loaded'],browser.get('order','queue'),short=True,repository=browser.get('repository'),follow=browser.get('follow',False))]
+        if rows:
+            lines += [' '+columns(width-1)]
         count=max(1,height-len(lines)-1-bool(browser.get('submission_notice')))
         start=max(0,selected-count+1)
         lines += [('>' if index==selected else ' ')+job_line(row,width-1) for index,row in enumerate(rows[start:start+count],start)]
         if not rows:
-            lines += ['No matching jobs']
+            lines += empty_jobs(bool(browser['query'] or browser['mode']!='all' or browser.get('repository') is not None), browser.get('initialized',True), bool(browser.get('queue_error')), compact=True)
     else:
         lines += [browser_label(browser['mode'],browser['query'],len(rows),browser['loaded'],browser.get('order','queue'),short=True,repository=browser.get('repository'),follow=browser.get('follow',False)) if browser else 'JOBS | {} shown'.format(len(rows))]
         if rows:
@@ -173,7 +175,7 @@ def compact_lines(rows, selected, plans, plan_index, view, config, height, width
             if room>0:
                 lines += (tail_reader or tail)(Path(selected_row['log_path']),room)
         else:
-            lines += ['No matching jobs' if browser and (browser['query'] or browser['mode']!='all' or browser.get('repository') is not None) else 'No jobs yet']
+            lines += empty_jobs(bool(browser and (browser['query'] or browser['mode']!='all' or browser.get('repository') is not None)), browser.get('initialized',True) if browser else True, bool(browser and browser.get('queue_error')), compact=True)
     footer = view_footer(view, width, compact=True)
     notification=browser.get('submission_notice') if browser and view==0 else None
     if notification:
@@ -534,8 +536,12 @@ def main(screen, cwd):
                     color = 2 if row['state'] == 'succeeded' else (4 if row['state'] in ('failed', 'lost') else 3)
                     attr = curses.A_REVERSE if index == selected else curses.color_pair(color)
                     draw(screen, (7 if expanded else 6) + index - start, 0, text, attr)
-                if not rows:
-                    draw(screen, 7 if expanded else 6, 0, 'No matching jobs; C clears filters, R removes repository focus.' if browser_query or browser_mode!='all' or browser_repository is not None else 'No jobs yet. Press n, or run: agent-builds run -- cargo check')
+                if not rows and view==0:
+                    empty_top=7 if expanded else 6
+                    guidance=empty_jobs(bool(browser_query or browser_mode!='all' or browser_repository is not None), browser_report['initialized'], bool(browser_stale))
+                    lines=[part for line in guidance for part in (textwrap.wrap(line,max(1,width-1)) or [''])]
+                    for offset,line in enumerate(lines[:max(0,height-empty_top-2)]):
+                        draw(screen,empty_top+offset,0,line)
                 log_top = 7 + count
                 if expanded:
                     if rows:
