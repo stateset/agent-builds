@@ -294,7 +294,7 @@ def footer(view, width, compact=False):
         brief = {
             0: "V : j/k / l ? q",
             7: "V : / Tab [/] ? q",
-            10: "V views : Enter q",
+            10: "V views : j/k q",
         }.get(view, brief.replace("V ", "V : ", 1))
     options = (
         (brief,)
