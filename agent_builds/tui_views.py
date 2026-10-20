@@ -175,7 +175,16 @@ def choose_menu(screen, picker, paint, title, reason):
                         len(picker.matches),
                     ),
                 )
-                for index, view in picker.page(height - 5):
+                choice = picker.choice()
+                disabled = reason(choice, height, width) if choice else ""
+                note = disabled or (choice.description if choice else "Ctrl+U clears")
+                notes = wrap_line(note, width - 1)
+                note_room = min(4, max(1, height - 7))
+                if len(notes) > note_room:
+                    notes = notes[:note_room]
+                    notes[-1] = wrap_line(notes[-1], width - 4)[0] + "..."
+                note_top = height - 1 - len(notes)
+                for index, view in picker.page(note_top - 3):
                     disabled = reason(view, height, width)
                     selected = index == picker.selected
                     line = (
@@ -192,10 +201,7 @@ def choose_menu(screen, picker, paint, title, reason):
                         (curses.A_REVERSE if selected else 0)
                         | (curses.A_DIM if disabled else 0),
                     )
-                choice = picker.choice()
-                if choice:
-                    note = reason(choice, height, width) or choice.description
-                else:
+                if not choice:
                     paint(
                         screen,
                         3,
@@ -204,8 +210,8 @@ def choose_menu(screen, picker, paint, title, reason):
                         if picker.current is not None
                         else "No matching actions",
                     )
-                    note = "Ctrl+U clears"
-                paint(screen, height - 2, 0, note)
+                for index, line in enumerate(notes):
+                    paint(screen, note_top + index, 0, line)
                 paint(screen, height - 1, 0, "Arrows Enter Esc")
             screen.refresh()
             try:

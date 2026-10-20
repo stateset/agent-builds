@@ -2,6 +2,9 @@
 
 ## 0.26.4 (unreleased)
 
+- Wrap selected menu explanations into available rows, preserving target IDs,
+  availability guidance and navigation. Mark context clipped in short panes.
+
 - Discover views and reviewed actions through a searchable `:` menu, with explicit
   availability and existing confirmation flows. Toggle `z` to reclaim two rows
   for content while retaining global queue warnings and reservation totals.

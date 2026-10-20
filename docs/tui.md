@@ -601,3 +601,8 @@ The verifier forbids queue writes and native commands during interaction and
 compares the fixture database/configuration afterward. These task-completion
 and timing observations are controlled fixtures, not live-agent or human
 productivity measurements. CI retains their JSON evidence.
+
+Selected view/action explanations wrap into up to four rows when the pane has
+room, keeping at least three list rows and the navigation footer. Availability
+guidance takes priority for disabled entries. Short panes mark omitted context
+with `...`; resizing reveals more without accepting the selection.
